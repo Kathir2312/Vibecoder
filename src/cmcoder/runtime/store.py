@@ -37,6 +37,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from ..config.settings import config_dir
+from .serde import checkpoint_serde
 
 DB_NAME = "sessions.db"
 
@@ -179,7 +180,7 @@ class _StoreContext:
 
     async def __aenter__(self) -> SessionStore:
         if not self.persist:  # `persistSessions: false`: nothing touches the disk
-            return SessionStore(InMemorySaver(), None)
+            return SessionStore(InMemorySaver(serde=checkpoint_serde()), None)
         folder = sessions_dir(self.project_root)
         folder.mkdir(parents=True, exist_ok=True)
         _owner_only(folder, stat.S_IRWXU)
@@ -187,7 +188,7 @@ class _StoreContext:
         db.touch(exist_ok=True)
         _owner_only(db, stat.S_IRUSR | stat.S_IWUSR)
         self._conn = await aiosqlite.connect(db)
-        saver = AsyncSqliteSaver(self._conn)
+        saver = AsyncSqliteSaver(self._conn, serde=checkpoint_serde())
         await saver.setup()  # LangGraph's own tables (checkpoints, writes)
         await self._conn.execute(_SCHEMA)
         await self._conn.commit()

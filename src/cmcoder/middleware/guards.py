@@ -29,7 +29,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from ..core.steer import file_work_redirect
-from .permission import denied
+from .permission import call_key, denied
 
 MAX_IDENTICAL_CALLS = 3
 
@@ -131,7 +131,7 @@ class BashFileWorkMiddleware(AgentMiddleware):
         self, request: ToolCallRequest, handler: ToolHandler
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
-        call_id = call["id"] or ""
+        call_id = call_key(call)
         if not self.enabled or call["name"] != "Bash" or call_id in self._passed:
             return await handler(request)
         command = str(call["args"].get("command", ""))
@@ -161,7 +161,7 @@ class LoopGuardMiddleware(AgentMiddleware):
         self, request: ToolCallRequest, handler: ToolHandler
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
-        call_id = call["id"] or ""
+        call_id = call_key(call)
         if call_id not in self._seen_ids:  # count each call once, even when re-run
             self._seen_ids.add(call_id)
             key = json.dumps([call["name"], call["args"]], sort_keys=True, default=str)

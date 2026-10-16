@@ -82,6 +82,7 @@ from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
+from ..runtime.serde import checkpoint_serde
 from ..sandbox import Sandbox, make_sandbox
 from ..telemetry import Telemetry
 from ..telemetry import from_settings as telemetry_from_settings
@@ -381,7 +382,7 @@ def build_agent(
         system_prompt=system_prompt,
         middleware=middleware,
         context_schema=RunContext,
-        checkpointer=checkpointer or InMemorySaver(),
+        checkpointer=checkpointer or InMemorySaver(serde=checkpoint_serde()),
         name="cmcoder",
     )
     return Agent(

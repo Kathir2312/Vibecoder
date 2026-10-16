@@ -33,6 +33,7 @@ LangGraph.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -59,6 +60,18 @@ def denied(call: ToolCall, text: str) -> ToolMessage:
     )
 
 
+def call_key(call: ToolCall) -> str:
+    """One tool call, for "this call was seen / let through" caches.
+
+    LangGraph runs a tool call's middleware again when it resumes after a
+    permission prompt, so some answers are cached per call. The id alone is
+    not enough: it comes from the model server, and a server that reuses ids
+    (some number them call_0, call_1, ... per reply) would make an answer for
+    one call apply to a different one. The name and arguments go in too."""
+    args = json.dumps(call["args"], sort_keys=True, default=str)
+    return f"{call['id'] or ''}|{call['name']}|{args}"
+
+
 class PermissionMiddleware(AgentMiddleware):
     """Checks every tool call against the permission policy; asks when needed.
 
@@ -80,7 +93,7 @@ class PermissionMiddleware(AgentMiddleware):
         super().__init__()
         self.hooks = hooks
         self.approve_hook = approve_hook
-        # PreToolUse answers by tool-call id. When LangGraph resumes after a
+        # PreToolUse answers per tool call (`call_key`). When LangGraph resumes after a
         # permission prompt it runs this middleware again for the same call;
         # the hook (a user's command, maybe with side effects) must not run twice.
         self._pre_hook: dict[str, Any] = {}
@@ -114,7 +127,7 @@ class PermissionMiddleware(AgentMiddleware):
             and self.hooks.has("PreToolUse")
             and check.decision != Decision.DENY
         ):
-            outcome = self._pre_hook.get(call["id"] or "")
+            outcome = self._pre_hook.get(call_key(call))
             if outcome is None:
                 outcome = await self.hooks.run(
                     "PreToolUse",
@@ -122,7 +135,7 @@ class PermissionMiddleware(AgentMiddleware):
                     match=tool.name,
                     approve_fn=self.approve_hook,
                 )
-                self._pre_hook[call["id"] or ""] = outcome
+                self._pre_hook[call_key(call)] = outcome
                 for w in outcome.warnings:
                     warn(w)
             if outcome.block:

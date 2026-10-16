@@ -157,3 +157,54 @@ async def test_session_start_runs_once(mock_server, project: Path) -> None:
         await session.agent.close()
     users = [m["content"] for m in server.requests[-1]["messages"] if m["role"] == "user"]
     assert sum("Today is Friday" in u for u in users) == 1
+
+
+async def test_a_reused_tool_call_id_doesnt_reuse_a_hooks_answer(
+    mock_server, project: Path
+) -> None:
+    """Some servers number tool calls call_0, call_1, ... in every reply. The
+    hook's "allow" for one call must not carry over to another call that got
+    the same id (the answer is cached so a resumed call doesn't run it twice)."""
+    allow = json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}})
+    same_id = "call_0"
+    server = mock_server(
+        [
+            {
+                "tool_calls": [
+                    {
+                        "id": same_id,
+                        "name": "Write",
+                        "arguments": {"file_path": "ok.txt", "content": "x"},
+                    }
+                ]
+            },
+            {
+                "tool_calls": [
+                    {
+                        "id": same_id,
+                        "name": "Write",
+                        "arguments": {"file_path": "other.txt", "content": "y"},
+                    }
+                ]
+            },
+            {"content": "done"},
+        ]
+    )
+    # The hook allows writing ok.txt only.
+    settings = hooks(
+        "PreToolUse", f"grep -q '\"ok.txt\"' && echo '{allow}' || true", matcher="Write"
+    )
+    asked: list[ev.PermissionRequest] = []
+
+    async def ask(req: ev.PermissionRequest) -> dict:
+        asked.append(req)
+        return {"allow": False}
+
+    session = make_session(server.base_url, project, ask=ask, settings=settings)
+    try:
+        await run_turn(session, "write both")
+    finally:
+        await session.agent.close()
+    assert (project / "ok.txt").exists()
+    assert [r.input["file_path"] for r in asked] == ["other.txt"]  # asked, not waved through
+    assert not (project / "other.txt").exists()
