@@ -58,3 +58,13 @@ def test_print_mode_allowed_tools(configured, project: Path) -> None:
     assert result.exit_code == 0, result.output
     assert (project / "new.txt").read_text() == "x"
     assert os.environ["CMCODER_MODEL"] == "qwen3-27b"
+
+
+def test_cli_module_does_not_import_langchain() -> None:
+    """`cmcoder --version` and `--help` stay fast: the engine is imported lazily."""
+    import subprocess
+    import sys
+
+    code = "import sys, cmcoder.cli.main; print(any(m.startswith(('langchain', 'langgraph')) for m in sys.modules))"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "False"

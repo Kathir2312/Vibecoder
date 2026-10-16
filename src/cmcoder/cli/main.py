@@ -83,11 +83,13 @@ def main(
     verbose: Annotated[bool, typer.Option("--verbose", help="With -p: show tool calls.")] = False,
     version: Annotated[bool, typer.Option("--version", help="Print the version.")] = False,
 ) -> None:
-    from ..agents.main import AgentOptions
-
     if version:
         print(VERSION_TEXT)
         raise typer.Exit()
+    # Imported here, not at the top: LangChain + LangGraph take about a second
+    # to import, and `--version` / `--help` shouldn't pay for it.
+    from ..agents.main import AgentOptions
+
     if permission_mode and permission_mode not in MODES:
         err.print(f"[red]error:[/red] --permission-mode must be one of {', '.join(MODES)}")
         raise typer.Exit(2)

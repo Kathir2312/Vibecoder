@@ -158,22 +158,25 @@ Embeddings through the gateway, local and Chroma-HTTP `VectorStore`s, incrementa
 - IDE release gate (G-list) in every IDE using the bundled standalone `cmcoder`, with no Python on the test machine's path.
 - `cmcoder doctor` against the real gateway on the company network.
 
-## Phase 0 status (in progress)
+## Phase 0 status: complete (except the real-gateway check)
 
 Done:
-- Project setup: `uv`, the pinned LangChain/LangGraph stack, ruff, pyright and pytest; CI on Linux, macOS and Windows.
+- Project setup: `uv`, the pinned LangChain/LangGraph stack, ruff, pyright and pytest; CI on Linux, macOS and Windows (lint, types, tests, mock evals).
 - Reused from cmcoderagent without changes: `protocol/`, `config/`, `core/` (permissions, risk, readonly, prompt, steer), `providers/` (auth, profiles, transport), `tools/`, `sandbox/`, `testing/mock_server.py`, plus their tests.
 - `models/`: `CmcoderChatModel` (keeps `reasoning_content`, chooses `max_tokens` or `max_completion_tokens`, company TLS through our httpx client), `<think>` splitting, error hints.
 - `tools/adapter.py`: the cmcoder tools as LangChain `BaseTool`s.
 - `middleware/`: permissions with `interrupt()`/`Command(resume)`, a per-call `max_tokens` budget, tool-call repair, loop guard, steering shell file work to the file tools, reasoning cleanup.
-- `agents/main.py`: `create_agent` with an `InMemorySaver` checkpointer. `runtime/session.py`: streaming to protocol events, interrupts and repair after Ctrl+C.
+- `agents/main.py`: `create_agent`. `runtime/session.py`: streaming to protocol events, interrupts and repair after Ctrl+C.
 - CLI: REPL, `-p` (text/json/stream-json), `doctor`, `login`, `logout`.
+- Evals: 25 tasks copied; the 20 that need only Phase 0/1 features pass with `evals/run.py --mock` (5 are marked for Phases 3 and 5: subagents, MCP, custom commands, critic, code search).
+- Standalone build (`packaging/build.py`, PyInstaller onedir), measured on Linux x86-64:
+  - size **113 MB** (largest parts: zstandard 23 MB, cryptography 14 MB, libpython 7 MB);
+  - `cmcoder --version`: **0.45 s** (the engine is imported lazily);
+  - first `-p` call up to the first request: about **2.1 s**, almost all of it importing LangChain, LangGraph and the OpenAI SDK (about 1.2 s in a normal Python). That is over the ~1 s goal. It matters less for the IDEs, which start cmcoder once per session. Next steps if it bothers users: import the engine in the background while the REPL prompt is shown, and trim unused optional packages from the bundle.
+  - Runs with no Python on the PATH (`packaging/no_python.py run -- dist/cmcoder/cmcoder -p ...`).
 - Learning guide: [docs/learn/README.md](learn/README.md).
 
-Not done yet, still in Phase 0:
-- Copy the eval tasks and runner (`evals/`), and run them against the mock server.
-- Measure the standalone (PyInstaller) build's size and startup time.
-- Run against the real LiteLLM gateway and Qwen3 models (`cmcoder doctor`); this environment can't reach it.
+Not done (needs the company network): running `cmcoder doctor` and `evals/run.py` against the real LiteLLM gateway and Qwen3 models.
 
 Changes from the plan:
 - Reused modules keep their original paths (`core/`, `providers/`) rather than moving to `security/`. This keeps imports and tests identical to cmcoderagent.

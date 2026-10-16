@@ -23,3 +23,4 @@ jobs:
       - run: uv run ruff format --check src tests
       - run: uv run pyright
       - run: uv run pytest -q
+      - run: uv run python evals/run.py --mock
