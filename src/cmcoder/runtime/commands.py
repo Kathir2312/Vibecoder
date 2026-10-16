@@ -16,6 +16,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core.commands import (
+    CommandSource,
+    SlashCommand,
+    mcp_prompt_commands,
+    prompt_arguments,
+    substitute,
+)
+from ..core.commands import help_lines as custom_help_lines
 from ..core.permissions import ModeNotAllowed
 from .session import Session
 from .store import SessionInfo
@@ -45,13 +53,44 @@ class CommandResult:
     lines: list[str] = field(default_factory=list)
     prompt: str | None = None  # text to put back in the input box (after /rewind)
     exit: bool = False
+    # A custom command or MCP prompt: send this as the user's message, with
+    # these allow rules for that turn only (the command's `allowed-tools`).
+    send: str | None = None
+    allow: list[str] = field(default_factory=list)
 
 
-def help_lines() -> list[str]:
+def help_lines(custom: dict[str, SlashCommand] | None = None) -> list[str]:
     width = max(len(f"/{n} {a}") for n, a, _ in BUILT_IN)
     lines = [f"  {f'/{n} {a}'.ljust(width)}  {d}" for n, a, d in BUILT_IN]
     lines.append(f"  {'# note'.ljust(width)}  Add a line to the project's CMCODER.md")
+    if custom:
+        lines += ["", "Custom commands and MCP prompts:", *custom_help_lines(custom)]
     return lines
+
+
+def custom_commands(session: Session) -> dict[str, SlashCommand]:
+    """Markdown commands (.cmcoder/commands, ~/.cmcoder/commands) and MCP prompts.
+
+    Read again on each use, so a new or edited file works without a restart."""
+    a = session.agent
+    settings = a.spec.get("settings")
+    trusted = bool(settings and settings.project_trusted)
+    found = CommandSource(a.ctx.project_root, trusted).load()
+    mcp = a.spec.get("mcp")
+    if mcp is not None:
+        found.update(mcp_prompt_commands(mcp.connected()))
+    return found
+
+
+async def expand(command: SlashCommand, arguments: str) -> CommandResult:
+    if command.mcp is not None:
+        from ..mcp.manager import prompt_text
+
+        server, prompt = command.mcp
+        names = [x.name for x in (prompt.arguments or [])]
+        text = await prompt_text(server, prompt.name, prompt_arguments(names, arguments))
+        return CommandResult(send=text)
+    return CommandResult(send=substitute(command.body, arguments), allow=command.allowed_tools)
 
 
 def age(seconds: float) -> str:
@@ -88,7 +127,7 @@ async def run_command(
     if name in ("exit", "quit"):
         return CommandResult(exit=True)
     if name == "help":
-        return CommandResult(help_lines())
+        return CommandResult(help_lines(custom_commands(session)))
     if name == "clear":
         await session.clear()
         return CommandResult(["Started a new conversation."])
@@ -189,4 +228,6 @@ async def run_command(
                 f"Auto-compaction at {int(a.auto_compact_threshold * 100)}%."
             ]
         )
+    if (command := custom_commands(session).get(name)) is not None:
+        return await expand(command, arg)
     return CommandResult([f"Unknown command /{name}. /help lists them."])

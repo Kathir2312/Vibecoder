@@ -109,7 +109,8 @@ class Session:
         self.turn = 0  # the number of the last user turn
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0}
         self._titled = False
-        self._background: set[asyncio.Task[None]] = set()
+        self._session_started = False  # SessionStart hooks have run
+        self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
 
     # --- threads ---------------------------------------------------------------
@@ -166,16 +167,69 @@ class Session:
 
     # --- one user turn -----------------------------------------------------------
     async def run(
-        self, prompt: str, *, note: str | None = None, images: list[Image] | None = None
+        self,
+        prompt: str,
+        *,
+        note: str | None = None,
+        images: list[Image] | None = None,
+        allow: list[str] | None = None,
     ) -> AsyncIterator[ev.Event]:
         """Run one user turn; yields protocol events, ending with a `result` event.
 
         `note`: context for the model that isn't part of the prompt (the IDE's
         open file, selection and problems), sent before it in the same message.
         `images`: sent as image content blocks when the model can see images.
+        `allow`: permission rules for this turn only (a custom command's `allowed-tools`).
         """
+        self.agent.policy.set_turn_allow(allow or [])
+        try:
+            async for event in self._run(prompt, note=note, images=images):
+                yield event
+        finally:
+            self.agent.policy.set_turn_allow([])
+
+    async def _run(
+        self, prompt: str, *, note: str | None, images: list[Image] | None
+    ) -> AsyncIterator[ev.Event]:
         started = time.monotonic()
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        # Hooks that run outside the graph: SessionStart (once) and
+        # UserPromptSubmit (may block the prompt or add context).
+        extra: list[str] = []
+        hooks = self.agent.hooks
+        if hooks is not None:
+            opts = self.agent.spec.get("opts")
+            approve = opts.approve_hook if opts is not None else None
+            if not self._session_started and hooks.has("SessionStart"):
+                out = await hooks.run(
+                    "SessionStart",
+                    {"source": "resume" if self.turn else "startup"},
+                    approve_fn=approve,
+                )
+                extra += out.context
+                for w in out.warnings:
+                    yield ev.Warning(message=w)
+            if hooks.has("UserPromptSubmit"):
+                out = await hooks.run("UserPromptSubmit", {"prompt": prompt}, approve_fn=approve)
+                for w in out.warnings:
+                    yield ev.Warning(message=w)
+                if out.block:
+                    reason = f"A UserPromptSubmit hook blocked the prompt: {out.reason}"
+                    yield ev.Error(kind="hook", message=reason)
+                    yield ev.Result(
+                        subtype="error",
+                        is_error=True,
+                        result=reason,
+                        num_turns=0,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        usage=usage,
+                        session_id=self.session_id,
+                    )
+                    return
+                extra += out.context
+        self._session_started = True
+        if extra:
+            note = "\n\n".join(x for x in (note, *extra) if x)
         self.turn += 1
         context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
         state = _TurnState(await self.messages())
@@ -223,6 +277,11 @@ class Session:
                         change=ev.FileChange(**value["change"]) if value.get("change") else None,
                     )
                     yield request
+                    if hooks is not None and hooks.has("Notification"):
+                        msg = f"cmcoder needs your permission to use {request.label}"
+                        task = asyncio.create_task(hooks.run("Notification", {"message": msg}))
+                        self._background.add(task)  # type: ignore[arg-type]
+                        task.add_done_callback(self._background.discard)  # type: ignore[arg-type]
                     answer = await self.ask(request)
                     answers[intr.id] = answer
                     if not answer.get("allow"):
@@ -283,7 +342,8 @@ class Session:
             # "tasks" says when a node *starts*: the tools node starting means
             # the model's reply is final, so its tool calls can be shown now,
             # before a long command finishes.
-            stream_mode=["messages", "updates", "tasks"],
+            # "custom": what middleware writes with get_stream_writer() (warnings).
+            stream_mode=["messages", "updates", "tasks", "custom"],
             version="v2",
         ):
             if part["type"] == "messages":
@@ -291,6 +351,11 @@ class Session:
                 if isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == MODEL_NODE:
                     for event in state.on_token(chunk):
                         yield event
+                continue
+            if part["type"] == "custom":
+                data = part["data"]
+                if isinstance(data, dict) and data.get("type") == "warning":
+                    yield ev.Warning(message=str(data.get("message")))
                 continue
             if part["type"] == "tasks":
                 data = part["data"]

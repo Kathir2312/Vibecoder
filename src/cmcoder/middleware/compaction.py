@@ -37,6 +37,8 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
 from langgraph.runtime import Runtime
 
+from ..core.hooks import HookRunner
+
 # Recognised by the mock server in tests; harmless to real models.
 COMPACTION_TAG = "<cmcoder-compaction>"
 SUMMARY_SOURCE = "summarization"  # LangChain marks its summary message with this
@@ -66,8 +68,11 @@ class CompactionMiddleware(SummarizationMiddleware):
         overhead_tokens: int = 0,
         focus: str | None = None,
         always: bool = False,
+        hooks: HookRunner | None = None,
     ) -> None:
         self.overhead_tokens = overhead_tokens
+        self.hooks = hooks
+        self.trigger_name = "manual" if always else "auto"
         prompt = f"{COMPACTION_TAG}\n{DEFAULT_SUMMARY_PROMPT}"
         if focus:
             # `{messages}` is filled in by LangChain; keep it last.
@@ -107,6 +112,10 @@ class CompactionMiddleware(SummarizationMiddleware):
             # Only the current request would go, and it is kept anyway: a
             # summary would add tokens, not save them. Leave the state as it is.
             return None
+        if self.hooks is not None and self.hooks.has("PreCompact"):
+            outcome = await self.hooks.run("PreCompact", {"trigger": self.trigger_name})
+            if outcome.block:  # the hook said no: keep the conversation as it is
+                return None
         if request is not None and request.id not in kept_ids:
             # [RemoveMessage, summary, *kept]: put the request right after the summary.
             new.insert(2, HumanMessage(content=request.content, id=request.id))

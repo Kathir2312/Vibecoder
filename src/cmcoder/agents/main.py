@@ -61,8 +61,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
 from ..config.settings import Settings, SettingsError, find_project_root
+from ..core.hooks import ApproveHookFn, HookRunner
 from ..core.permissions import ModeNotAllowed, PermissionPolicy
 from ..core.prompt import build_system_prompt, load_memory_files
+from ..core.skills import SkillTool, load_skills, skills_prompt
 from ..mcp import McpManager
 from ..middleware.checkpoint import FileCheckpointMiddleware
 from ..middleware.compaction import CompactionMiddleware
@@ -72,6 +74,7 @@ from ..middleware.guards import (
     PlainToolTextMiddleware,
     ToolCallRepairMiddleware,
 )
+from ..middleware.hooks import HooksMiddleware
 from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, ReasoningMiddleware
 from ..middleware.permission import PermissionMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
@@ -94,6 +97,8 @@ class AgentOptions:
     max_turns: int | None = None
     interactive: bool = True  # False: -p mode, nobody answers permission prompts
     on_rule_saved: Callable[[str], None] | None = None
+    # Asked before a project's hook first runs (it runs with the user's rights).
+    approve_hook: ApproveHookFn | None = None
 
 
 @dataclass
@@ -109,6 +114,7 @@ class Agent:
     max_turns: int
     auto_compact_threshold: float = 0.8
     has_small_model: bool = False  # smallFastModel is configured
+    hooks: HookRunner | None = None  # the user's hook commands (core/hooks.py)
     # How it was built, so `rebuild_agent` can build it again with changes.
     spec: dict[str, Any] = field(default_factory=dict)
 
@@ -186,7 +192,14 @@ def build_agent(
     tools = {t.name: t for t in default_tools() if t.name != "TodoWrite"}
     # Tools an IDE runs for the agent (getDiagnostics, openFile; core/ide.py).
     tools.update({t.name: t for t in extra_tools or []})
+    # Skills (SKILL.md folders): only their descriptions go in the prompt; the
+    # Skill tool loads one when the model decides it needs it.
+    skills = load_skills(root)
+    if skills:
+        tools["Skill"] = SkillTool(skills)
     policy = build_policy(settings, opts)
+    runner = HookRunner(settings, root)
+    hooks = runner if runner.hooks else None
 
     # 2. System prompt: stable instructions first, then CMCODER.md memory, then
     #    the environment. Keeping the start identical between calls lets the
@@ -197,6 +210,7 @@ def build_agent(
         tier=profile.prompt_tier,
         model=bundle.name,
         memory=load_memory_files(cwd, root),
+        skills=skills_prompt(skills),
     )
 
     # 3. Middleware: see the module docstring for the order.
@@ -222,6 +236,7 @@ def build_agent(
             small.model,
             threshold=settings.auto_compact_threshold,
             overhead_tokens=fixed_prompt_tokens(system_prompt, lc_tools),
+            hooks=hooks,
         )
         middleware.append(compaction)
     middleware += [
@@ -243,7 +258,10 @@ def build_agent(
             tools,
             interactive=opts.interactive,
             on_rule_saved=opts.on_rule_saved,
+            hooks=hooks,
+            approve_hook=opts.approve_hook,
         ),
+        *([HooksMiddleware(hooks, opts.approve_hook)] if hooks else []),
         FileCheckpointMiddleware(ctx, tools),
         *(extra_middleware or []),
     ]
@@ -268,6 +286,7 @@ def build_agent(
         max_turns=max_turns,
         auto_compact_threshold=settings.auto_compact_threshold,
         has_small_model=small is not bundle,
+        hooks=hooks,
         spec={
             "settings": settings,
             "opts": opts,

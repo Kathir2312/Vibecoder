@@ -103,6 +103,8 @@ class McpServer:
     status: Status = "starting"
     error: str = ""
     tools: list[BaseTool] = field(default_factory=list)
+    prompts: list[Any] = field(default_factory=list)  # MCP prompts, offered as /commands
+    session: Any = None  # the open ClientSession, while connected
     _task: asyncio.Task[None] | None = None
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
     _ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -227,6 +229,11 @@ class McpManager:
                     text = (t.description or t.name).strip()
                     t.description = f"[MCP server {s.name}] {text}"[:MAX_DESCRIPTION_CHARS]
                 s.tools = tools
+                try:  # prompts are optional: servers without them answer with an error
+                    s.prompts = list((await session.list_prompts()).prompts)
+                except Exception:
+                    s.prompts = []
+                s.session = session
                 s.status = "connected"
                 s._ready.set()
                 await s._stop.wait()
@@ -235,6 +242,7 @@ class McpManager:
         except BaseException as e:  # noqa: BLE001 - anyio raises exception groups
             s.status, s.error = "failed", _describe(e)
         finally:
+            s.session = None
             if s.status == "connected":
                 s.status = "disabled"
             s._ready.set()
@@ -324,3 +332,14 @@ def status_lines(manager: McpManager | None) -> list[str]:
         names = ", ".join(t.name for t in s.tools)
         lines.append(f"  {s.name} tools: {names}" if names else f"  {s.name}: no tools")
     return lines
+
+
+async def prompt_text(server: McpServer, prompt: str, arguments: dict[str, str]) -> str:
+    """An MCP prompt as one text: `load_mcp_prompt` returns LangChain messages."""
+    from langchain_mcp_adapters.prompts import load_mcp_prompt
+
+    if server.session is None:
+        raise RuntimeError(f"MCP server {server.name} is not connected")
+    messages = await load_mcp_prompt(server.session, prompt, arguments=arguments)
+    parts = [m.text if m.type == "human" else f"[assistant]\n{m.text}" for m in messages]
+    return "\n\n".join(p for p in parts if p.strip())

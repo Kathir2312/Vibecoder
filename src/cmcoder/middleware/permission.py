@@ -42,8 +42,10 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
-from ..core.permissions import Decision, PermissionPolicy, suggest_rules
+from ..core.hooks import ApproveHookFn, HookRunner
+from ..core.permissions import Decision, PermissionCheck, PermissionPolicy, suggest_rules
 from ..tools.base import Tool, ToolContext
+from .hooks import warn
 
 # The `kind` field of our interrupt payload, so the runtime can tell
 # permission requests from other interrupts (IDE tools in Phase 2).
@@ -72,8 +74,16 @@ class PermissionMiddleware(AgentMiddleware):
         *,
         interactive: bool,
         on_rule_saved: Callable[[str], None] | None = None,
+        hooks: HookRunner | None = None,
+        approve_hook: ApproveHookFn | None = None,
     ) -> None:
         super().__init__()
+        self.hooks = hooks
+        self.approve_hook = approve_hook
+        # PreToolUse answers by tool-call id. When LangGraph resumes after a
+        # permission prompt it runs this middleware again for the same call;
+        # the hook (a user's command, maybe with side effects) must not run twice.
+        self._pre_hook: dict[str, Any] = {}
         self.policy = policy
         self.ctx = ctx
         # Not `self.tools`: on AgentMiddleware that attribute means "extra tools
@@ -98,6 +108,40 @@ class PermissionMiddleware(AgentMiddleware):
             return await handler(request)
 
         check = self.policy.check(tool, args, self.ctx)
+        hook_asks = False
+        if (
+            self.hooks is not None
+            and self.hooks.has("PreToolUse")
+            and check.decision != Decision.DENY
+        ):
+            outcome = self._pre_hook.get(call["id"] or "")
+            if outcome is None:
+                outcome = await self.hooks.run(
+                    "PreToolUse",
+                    {"tool_name": tool.name, "tool_input": args.model_dump()},
+                    match=tool.name,
+                    approve_fn=self.approve_hook,
+                )
+                self._pre_hook[call["id"] or ""] = outcome
+                for w in outcome.warnings:
+                    warn(w)
+            if outcome.block:
+                return denied(
+                    call, f"Permission denied: blocked by a PreToolUse hook: {outcome.reason}"
+                )
+            # A hook may skip a normal prompt (never a deny rule or a high-risk
+            # command), or ask for one where the rules would allow.
+            if (
+                outcome.permission == "allow"
+                and check.decision == Decision.ASK
+                and not check.high_risk
+            ):
+                check = PermissionCheck(Decision.ALLOW, "allowed by a PreToolUse hook")
+            elif outcome.permission == "ask" and check.decision == Decision.ALLOW:
+                hook_asks = True
+                check = PermissionCheck(
+                    Decision.ASK, outcome.reason or "a PreToolUse hook asks to confirm"
+                )
         if check.decision == Decision.DENY:
             return denied(call, f"Permission denied: {check.reason}")
         if check.decision == Decision.ALLOW:
@@ -121,7 +165,7 @@ class PermissionMiddleware(AgentMiddleware):
             return denied(call, f"Permission denied: {reason}")
 
         change = tool.proposed_change(args, self.ctx)
-        can_remember = not check.high_risk and not self.policy.allow_rules_locked
+        can_remember = not check.high_risk and not self.policy.allow_rules_locked and not hook_asks
         # ---- the graph pauses here until the user answers ----
         answer: dict[str, Any] = interrupt(
             {

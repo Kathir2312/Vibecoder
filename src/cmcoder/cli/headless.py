@@ -14,6 +14,7 @@ from ..agents.main import AgentOptions, build_agent
 from ..config.settings import Settings, find_project_root
 from ..mcp import McpManager
 from ..protocol import events as ev
+from ..runtime.commands import run_command
 from ..runtime.session import Session
 from ..runtime.store import SessionStore
 
@@ -63,7 +64,12 @@ async def _run(session: Session, prompt: str, output_format: OutputFormat, verbo
     try:
         if output_format == "stream-json":
             _emit(session.init_event())
-        async for event in session.run(prompt):
+        allow: list[str] = []
+        if prompt.startswith("/"):  # a custom command or an MCP prompt
+            result = await run_command(session, prompt)
+            if result.send is not None:
+                prompt, allow = result.send, result.allow
+        async for event in session.run(prompt, allow=allow):
             if output_format == "stream-json":
                 _emit(event)
             if isinstance(event, ev.Result):

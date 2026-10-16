@@ -41,6 +41,7 @@ from pydantic import ValidationError
 
 from ..agents.main import Agent, AgentOptions, build_agent, rebuild_agent
 from ..config.settings import Settings, SettingsError, add_local_allow_rule, find_project_root
+from ..core.hooks import Hook
 from ..core.ide import IDE_TOOLS, format_ide_context
 from ..core.permissions import MODES, Decision, ModeNotAllowed
 from ..images import Image, ImageError, from_base64
@@ -141,6 +142,7 @@ class StdioServer:
             add_local_allow_rule(root, rule)
 
         self.opts.on_rule_saved = save_rule
+        self.opts.approve_hook = self._approve_hook
         async with SessionStore.open(root, persist=self.settings.persist_sessions) as store:
             self.store = store
             try:
@@ -296,6 +298,25 @@ class StdioServer:
         if self.mcp.connected():
             await self._rebuild()
 
+    async def _approve_hook(self, hook: Hook) -> bool:
+        request = ev.PermissionRequest(
+            request_id=f"hook-{hook.event}-{uuid.uuid4().hex[:6]}",
+            tool_use_id=f"hook-{hook.event}",
+            name="Hook",
+            label=f"Run this project's {hook.event} hook",
+            input={
+                "event": hook.event,
+                "matcher": hook.matcher or "*",
+                "command": hook.command.command,
+            },
+            suggested_rule="",
+            reason=f"This project's settings want to run a command on every {hook.event} "
+            "event; it runs with your permissions. Allowing is remembered until the command changes.",
+            can_remember=False,
+        )
+        self.emit(request)
+        return bool((await self.ask(request)).get("allow"))
+
     async def _approve_server(self, server: McpServer) -> bool:
         request = ev.PermissionRequest(
             request_id=f"mcp-{server.name}-{uuid.uuid4().hex[:6]}",
@@ -357,7 +378,12 @@ class StdioServer:
                 self.emit(self._result("success", "", False, started))
             else:
                 await self._start_mcp()
-                async for event in session.run(text, note=note, images=images):
+                allow: list[str] = []
+                if name:  # maybe a custom command or an MCP prompt; else a plain prompt
+                    result = await run_command(session, text)
+                    if result.send is not None:
+                        text, allow = result.send, result.allow
+                async for event in session.run(text, note=note, images=images, allow=allow):
                     self.emit(event)
         except asyncio.CancelledError:
             self.emit(self._result("interrupted", "Interrupted by the user.", False, started))
