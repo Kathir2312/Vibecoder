@@ -19,11 +19,13 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
            ▼
    ┌───────────────── create_agent(...) = a compiled LangGraph graph ────────────────┐
    │                                                                                  │
-   │   START ──► model ──► after_model hooks ──► tools ──► model ──► ... ──► END      │
-   │              ▲  awrap_model_call            │  awrap_tool_call (per tool call)    │
-   │              │  (ModelProfileMiddleware)    │  LoopGuard → BashFileWork →          │
-   │              │                              │  Permission (interrupt!) → tool      │
-   │   checkpointer saves the state (messages) after every step, per thread_id        │
+   │   START ─► before_model ─► model ─► after_model ─► tools ─► model ─► ... ─► END   │
+   │            (Compaction:    ▲ awrap_model_call:     │ awrap_tool_call (per call):   │
+   │             summarise)     │ ContextEditing →      │ LoopGuard → BashFileWork →    │
+   │                            │ ModelProfile →        │ Permission (interrupt!) →     │
+   │                            │ TextToolCalls         │ FileCheckpoint → tool         │
+   │   state = {messages, todos}; the checkpointer saves it after every step,         │
+   │   per thread_id (SQLite: runtime/store.py); context = RunContext (per run)        │
    └──────────────────────────────────────────────────────────────────────────────────┘
            │
            ▼
@@ -40,9 +42,14 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 | 4 | [`src/cmcoder/middleware/model.py`](../../src/cmcoder/middleware/model.py) | `awrap_model_call`, `ModelRequest.override`, `model_settings`, `aafter_model` |
 | 5 | [`src/cmcoder/middleware/guards.py`](../../src/cmcoder/middleware/guards.py) | Changing the model's reply in state (`add_messages` replaces by id), answering a tool call without running it |
 | 6 | [`src/cmcoder/middleware/permission.py`](../../src/cmcoder/middleware/permission.py) | **Human-in-the-loop**: `interrupt()`, `Command(resume=...)`, why the node re-runs on resume |
-| 7 | [`src/cmcoder/runtime/session.py`](../../src/cmcoder/runtime/session.py) | `astream` with `stream_mode=["messages", "updates"]` and `version="v2"`, `thread_id`, `aget_state().interrupts`, `aupdate_state` |
-| 8 | [`src/cmcoder/cli/doctor.py`](../../src/cmcoder/cli/doctor.py) | `ainvoke`, `bind_tools`, the `@tool` decorator |
-| 9 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
+| 7 | [`src/cmcoder/runtime/session.py`](../../src/cmcoder/runtime/session.py) | `astream` with `stream_mode=["messages", "updates"]` and `version="v2"`, `thread_id`, `aget_state().interrupts`, `aupdate_state`, the `add_messages` reducer, **time travel** (`aget_state_history` + forking) |
+| 8 | [`src/cmcoder/runtime/store.py`](../../src/cmcoder/runtime/store.py) | **Checkpointers**: `AsyncSqliteSaver` vs. `InMemorySaver`, `adelete_thread`, keeping your own index next to LangGraph's tables |
+| 9 | [`src/cmcoder/agents/context.py`](../../src/cmcoder/agents/context.py) | **Runtime context**: `context_schema`, `astream(..., context=...)`, `runtime.context` in middleware |
+| 10 | [`src/cmcoder/middleware/compaction.py`](../../src/cmcoder/middleware/compaction.py) | Built-in `SummarizationMiddleware` (subclassed), `RemoveMessage`, fraction triggers and model profiles, a summariser model |
+| 11 | [`src/cmcoder/middleware/tool_text.py`](../../src/cmcoder/middleware/tool_text.py) | Rewriting a whole request (tools, system message, history) and the response; `convert_to_openai_tool` |
+| 12 | [`src/cmcoder/middleware/checkpoint.py`](../../src/cmcoder/middleware/checkpoint.py) | The two kinds of checkpoint: LangGraph's (conversation) and file snapshots (code) |
+| 13 | [`src/cmcoder/runtime/titles.py`](../../src/cmcoder/runtime/titles.py), [`cli/doctor.py`](../../src/cmcoder/cli/doctor.py) | `ainvoke` with per-call options, `bind_tools`, the `@tool` decorator |
+| 14 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
 
 ## Key ideas, briefly
 
@@ -59,7 +66,8 @@ list is the outermost wrapper.
 
 **State vs. context vs. session objects.**
 - *State* (messages, todos): serialisable, saved by the checkpointer, restored on resume.
-- *Runtime context* (`context_schema`): read-only per run (user id, settings).
+- *Runtime context* (`context_schema`, here `RunContext`): per run, not saved
+  (the turn number, the file-snapshot store).
 - *Session objects* (a shell process, an HTTP client): live Python objects. They
   stay outside the graph; cmcoder passes them to tools and middleware when it
   builds them.
@@ -72,7 +80,17 @@ time. That's why code before `interrupt()` must be safe to repeat.
 
 **Same thread, same conversation.** `config={"configurable": {"thread_id": id}}`
 selects the checkpoint. A second `astream` call on the same thread continues
-the conversation; you only send the new `HumanMessage`.
+the conversation; you only send the new `HumanMessage`. With a SQLite
+checkpointer that also works across program runs (`--continue`).
+
+**Every step is kept.** The checkpointer stores a checkpoint per step, not just
+the latest. `aget_state_history` lists them; writing to an old one with
+`aupdate_state(old_snapshot.config, ...)` forks the thread from there. That is
+`/rewind`, and why a rewind or a compaction never loses anything.
+
+**Counting tokens is your job.** `SummarizationMiddleware` counts the tokens
+of the *messages*; the system prompt and tool schemas also take room in the
+window. With small (32K) windows, account for that (see compaction.py).
 
 ## Try it
 
@@ -110,16 +128,20 @@ README), then `uv run cmcoder login` and `uv run cmcoder doctor`.
 3. **Watch the graph.** In a test, print every `part` from
    `graph.astream(..., stream_mode=["updates"], version="v2")`. Which node
    names appear, in which order? Where do the middleware nodes show up?
-4. **Time travel.** After a turn, call `await graph.aget_state_history(config)`
-   and print each checkpoint's message count. That's the basis of `/rewind`
-   (Phase 1).
+4. **Time travel.** After two turns, list `await graph.aget_state_history(config)`
+   with each checkpoint's message count and `next` nodes. Find the one
+   `/rewind` would fork from (`Session._fork_before`). Fork from it by hand and
+   check that the newer checkpoints are still there.
 5. **Built-in middleware.** Swap the hand-written loop guard for LangChain's
    `ToolCallLimitMiddleware` and compare the behaviour (see the
    `langchain.agents.middleware` module).
+6. **Compaction.** Lower `contextWindow` in `modelProfiles` and watch for the
+   `compacted` event in `cmcoder -p ... --output-format stream-json`. Then
+   change `keep` in middleware/compaction.py and compare what survives.
 
 ## Where things go next
 
 See [the plan](../PLAN.md):
-- Phase 1: `SummarizationMiddleware`, SQLite checkpointer + `--resume`, `/rewind`, `TodoListMiddleware`.
+- Phase 2: the IDE protocol (`--protocol stdio`) on this runtime; IDE tools as interrupts.
 - Phase 3: subagents as subgraphs, a team workflow as an explicit `StateGraph`, MCP through `langchain-mcp-adapters`.
 - Phase 5: RAG with LangChain `Embeddings` and `VectorStore`.

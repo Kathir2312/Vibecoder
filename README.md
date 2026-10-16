@@ -11,8 +11,10 @@ with [docs/learn/](docs/learn/README.md). Every engine file explains the
 framework concepts it uses.
 
 - Requirements and roadmap: [docs/PLAN.md](docs/PLAN.md)
-- Status: **Phase 0 (foundations)**: agent loop, tools, permissions with
-  human-in-the-loop interrupts, Qwen3 reasoning handling, `-p` mode, REPL, `doctor`.
+- Status: **Phases 0 and 1 done**: agent loop, tools, permissions with
+  human-in-the-loop interrupts, Qwen3 reasoning and text tool calls, saved
+  sessions (`--continue`, `--resume`), auto-compaction, `/rewind`, todos, slash
+  commands, `-p` mode, REPL, `doctor`. Next: the IDE protocol (Phase 2).
 
 ## Quick start
 
@@ -41,7 +43,9 @@ Then:
 ```bash
 uv run cmcoder login     # API key -> OS keychain (or set CMCODER_API_KEY)
 uv run cmcoder doctor    # gateway, TLS, key, chat and tool calling
-uv run cmcoder           # interactive
+uv run cmcoder           # interactive (/help for commands)
+uv run cmcoder -c        # continue the latest conversation in this project
+uv run cmcoder sessions  # list saved conversations; --resume <id> continues one
 uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-json
 ```
 
@@ -51,12 +55,13 @@ uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-js
 |---|---|
 | `src/cmcoder/models/` | `CmcoderChatModel` (ChatOpenAI for Qwen3/LiteLLM), reasoning split, error hints |
 | `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack |
-| `src/cmcoder/middleware/` | Permissions (interrupts), context budget, tool-call repair, loop guard |
-| `src/cmcoder/runtime/` | `Session`: streams the graph into protocol events, resumes interrupts |
-| `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash/TodoWrite and the LangChain adapter |
+| `src/cmcoder/middleware/` | Permissions (interrupts), compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
+| `src/cmcoder/runtime/` | `Session` (streaming, interrupts, compaction, rewind), SQLite session store, slash commands, titles |
+| `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash and the LangChain adapter (todos: LangChain's `write_todos`) |
 | `src/cmcoder/core/`, `config/`, `protocol/`, `sandbox/` | Carried over from cmcoderagent: permission rules, high-risk command checks, settings, IDE protocol |
 | `src/cmcoder/cli/` | `cmcoder` command, `-p` mode, REPL, `doctor` |
-| `tests/` | Unit and end-to-end tests (scripted mock gateway, no GPU or key needed) |
+| `tests/`, `evals/` | Unit and end-to-end tests and eval tasks (scripted mock gateway, no GPU or key needed) |
+| `packaging/` | The standalone build (PyInstaller): no Python needed on developers' PCs |
 
 Privacy: code and prompts go only to the configured gateway. LangSmith tracing
 is off unless you set `CMCODER_ENABLE_LANGSMITH=1` along with LangSmith's own

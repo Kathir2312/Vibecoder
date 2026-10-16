@@ -26,7 +26,7 @@ from ..core.permissions import MODES
 
 main_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 sub_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False, no_args_is_help=True)
-SUBCOMMANDS = {"doctor", "login", "logout"}
+SUBCOMMANDS = {"doctor", "login", "logout", "sessions"}
 err = Console(stderr=True)
 
 
@@ -81,6 +81,17 @@ def main(
     ] = None,
     max_turns: Annotated[int | None, typer.Option("--max-turns", help="Max model calls.")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", help="With -p: show tool calls.")] = False,
+    continue_session: Annotated[
+        bool, typer.Option("--continue", "-c", help="Continue the latest conversation here.")
+    ] = False,
+    resume: Annotated[
+        str | None,
+        typer.Option(
+            "--resume",
+            "-r",
+            help="Continue a saved conversation (id or prefix; see `cmcoder sessions`).",
+        ),
+    ] = None,
     version: Annotated[bool, typer.Option("--version", help="Print the version.")] = False,
 ) -> None:
     if version:
@@ -111,11 +122,23 @@ def main(
             from .headless import run_headless
 
             text = prompt if prompt is not None else sys.stdin.read()
-            code = asyncio.run(run_headless(settings, opts, text, output_format, verbose))  # type: ignore[arg-type]
+            code = asyncio.run(
+                run_headless(
+                    settings,
+                    opts,
+                    text,
+                    output_format,  # type: ignore[arg-type]
+                    verbose,
+                    continue_session=continue_session,
+                    resume=resume,
+                )
+            )
         else:
             from .repl import run_repl
 
-            code = asyncio.run(run_repl(settings, opts, prompt))
+            code = asyncio.run(
+                run_repl(settings, opts, prompt, continue_session=continue_session, resume=resume)
+            )
     except SettingsError as e:
         err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(2) from e
@@ -130,6 +153,22 @@ def doctor(
     from .doctor import run_doctor
 
     raise typer.Exit(asyncio.run(run_doctor(_load(), model, probe=not no_probe)))
+
+
+@sub_app.command(help="List this project's saved conversations.")
+def sessions() -> None:
+    import time
+
+    from ..config.settings import find_project_root
+    from ..runtime.commands import session_lines
+    from ..runtime.store import SessionStore
+
+    async def show() -> None:
+        async with SessionStore.open(find_project_root(Path.cwd())) as store:
+            for line in session_lines(await store.list(), time.time()):
+                print(line)
+
+    asyncio.run(show())
 
 
 @sub_app.command(help="Store the gateway API key in the OS keychain.")

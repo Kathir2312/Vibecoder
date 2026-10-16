@@ -181,3 +181,22 @@ Not done (needs the company network): running `cmcoder doctor` and `evals/run.py
 Changes from the plan:
 - Reused modules keep their original paths (`core/`, `providers/`) rather than moving to `security/`. This keeps imports and tests identical to cmcoderagent.
 - No `MultiEdit` tool: cmcoderagent doesn't have one either.
+
+## Phase 1 status: complete (Textual TUI deferred)
+
+Done:
+- **Saved sessions** on LangGraph's `AsyncSqliteSaver`: one owner-only database per project (`~/.cmcoder/projects/<project>/sessions.db`) plus a small session index table; `--continue`, `--resume <id>`, `cmcoder sessions`, `/resume`; `persistSessions: false` keeps everything in memory; `cleanupPeriodDays` deletes old threads.
+- **Auto-compaction** with LangChain's `SummarizationMiddleware` (subclassed in `middleware/compaction.py`): the small/fast model summarises at `autoCompactThreshold` of the window, the newest quarter is kept, the latest user request is carried word for word, and the fixed system-prompt and tool overhead is taken into account. `/compact [focus]` runs it by hand.
+- **Context editing**: LangChain's `ContextEditingMiddleware` clears old tool outputs at 60% of the window.
+- **Context window learning**: the window is taken from the server's "maximum context length is N" error, saved per gateway and model, and the call is retried with the server's own prompt count. The characters-per-token estimate is calibrated from the server's usage numbers.
+- **`/rewind`**: files from content-addressed snapshots taken before Write/Edit (`middleware/checkpoint.py`, reusing `core/checkpoints.py`); the conversation by LangGraph time travel (forking from an earlier checkpoint, so nothing is lost).
+- **Todos**: LangChain's `TodoListMiddleware` (`write_todos`); the list lives in graph state, so it survives compaction and `--resume`, and streams as `todo_update` events.
+- **Text tool calls**: Qwen `<tool_call>` blocks are parsed into real tool calls; "prompted" mode (profile setting, or switched on automatically when the server rejects `tools`) describes the tools in the system prompt instead.
+- **Titles**: written by the small model in the background after the first turn.
+- **REPL**: slash commands (`runtime/commands.py`, shared with the IDE protocol in Phase 2), Shift+Tab mode cycling, Ctrl+C cancels the turn, `# note` adds to CMCODER.md, `/model` switches the model on the same thread. Tested in a pseudo-terminal.
+- **Managed settings** apply to the new engine (bypass mode disabled, managed deny rules), with tests.
+- The cmcoderagent user-trial issues are covered: long permission previews are capped with the options repeated, Bash file work is steered to the file tools, and the real context window is learned from the server.
+- 265 tests and 20/20 mock evals pass.
+
+Not done:
+- The full-screen Textual UI. cmcoderagent's `cli/tui.py` is tied to its old agent class. The line REPL covers the same features, so the Textual UI moves to after Phase 2, where it can share the IDE protocol client.

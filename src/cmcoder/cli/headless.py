@@ -11,9 +11,10 @@ import sys
 from typing import Literal
 
 from ..agents.main import AgentOptions, build_agent
-from ..config.settings import Settings
+from ..config.settings import Settings, find_project_root
 from ..protocol import events as ev
 from ..runtime.session import Session
+from ..runtime.store import SessionStore
 
 OutputFormat = Literal["text", "json", "stream-json"]
 
@@ -24,11 +25,31 @@ def _emit(event: ev.Event) -> None:
 
 
 async def run_headless(
-    settings: Settings, opts: AgentOptions, prompt: str, output_format: OutputFormat, verbose: bool
+    settings: Settings,
+    opts: AgentOptions,
+    prompt: str,
+    output_format: OutputFormat,
+    verbose: bool,
+    *,
+    continue_session: bool = False,
+    resume: str | None = None,
 ) -> int:
     opts.interactive = False
-    agent = build_agent(settings, opts)
-    session = Session(agent, ask=None)
+    root = find_project_root(opts.cwd.resolve())
+    async with SessionStore.open(root, persist=settings.persist_sessions) as store:
+        agent = build_agent(settings, opts, checkpointer=store.checkpointer)
+        session = Session(agent, ask=None, store=store)
+        if resume or continue_session:
+            found = await (store.find(resume) if resume else store.latest())
+            if found is None:
+                print("error: no saved conversation to continue", file=sys.stderr)
+                await agent.close()
+                return 1
+            await session.resume(found.thread_id)
+        return await _run(session, prompt, output_format, verbose)
+
+
+async def _run(session: Session, prompt: str, output_format: OutputFormat, verbose: bool) -> int:
     final: ev.Result | None = None
     try:
         if output_format == "stream-json":
@@ -46,7 +67,8 @@ async def run_headless(
             elif verbose and isinstance(event, ev.ToolResult):
                 print(f"  {'error' if event.is_error else 'done'}", file=sys.stderr)
     finally:
-        await agent.close()
+        await session.close()
+        await session.agent.close()
     if final is None:
         return 1
     if output_format == "json":

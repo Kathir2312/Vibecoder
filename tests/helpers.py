@@ -9,6 +9,7 @@ from cmcoder.agents.main import AgentOptions, build_agent
 from cmcoder.config.settings import Settings
 from cmcoder.protocol import events as ev
 from cmcoder.runtime.session import AskFn, Session
+from cmcoder.runtime.store import SessionStore
 
 
 def mock_settings(base_url: str, **extra: Any) -> Settings:
@@ -17,12 +18,21 @@ def mock_settings(base_url: str, **extra: Any) -> Settings:
     )
 
 
-def make_session(base_url: str, cwd: Path, *, ask: AskFn | None = None, **opts: Any) -> Session:
+def make_session(
+    base_url: str,
+    cwd: Path,
+    *,
+    ask: AskFn | None = None,
+    store: SessionStore | None = None,
+    settings: dict[str, Any] | None = None,
+    **opts: Any,
+) -> Session:
     agent = build_agent(
-        mock_settings(base_url),
+        mock_settings(base_url, **(settings or {})),
         AgentOptions(cwd=cwd, interactive=ask is not None, **opts),
+        checkpointer=store.checkpointer if store is not None else None,
     )
-    return Session(agent, ask=ask)
+    return Session(agent, ask=ask, store=store)
 
 
 async def run_turn(session: Session, prompt: str) -> list[ev.Event]:

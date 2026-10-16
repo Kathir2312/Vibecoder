@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from langchain_core.language_models.model_profile import ModelProfile as LCModelProfile
 from langchain_core.messages import AIMessageChunk
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_openai import ChatOpenAI
@@ -35,6 +36,7 @@ from ..config.settings import ProviderConfig, Settings, SettingsError, env_api_k
 from ..providers.auth import ApiKeyAuth
 from ..providers.profiles import ModelProfile, resolve_profile
 from ..providers.transport import TransportOptions, build_client
+from .windows import learned_window
 
 REASONING_KEY = "reasoning_content"
 # Field names servers use for reasoning text: LiteLLM/vLLM use
@@ -119,10 +121,30 @@ class ModelBundle:
     profile: ModelProfile
     provider: str  # settings key, e.g. "corp"
     name: str  # model name at the gateway, e.g. a LiteLLM alias
+    base_url: str = ""
 
     @property
     def ref(self) -> str:
         return f"{self.provider}:{self.name}"
+
+    def set_context_window(self, window: int, source: str) -> None:
+        """Use a newly learned window everywhere: our profile and LangChain's."""
+        self.profile.context_window = window
+        self.profile.context_window_source = source
+        self.model.profile = _langchain_profile(self.profile)
+
+
+def _langchain_profile(profile: ModelProfile) -> LCModelProfile:
+    """LangChain's own model profile (`BaseChatModel.profile`).
+
+    LangChain middleware reads limits from here, e.g. `SummarizationMiddleware`
+    with `trigger=("fraction", 0.8)` means 80% of `max_input_tokens`.
+    """
+    return LCModelProfile(
+        max_input_tokens=profile.context_window,
+        max_output_tokens=profile.max_output,
+        tool_calling=profile.tool_calling != "prompted",
+    )
 
 
 def api_key_for(provider: str, cfg: ProviderConfig) -> str | None:
@@ -144,7 +166,11 @@ def build_chat_model(settings: Settings, ref: str | None = None) -> ModelBundle:
     if cfg.type != "openai":
         # Open WebUI has its own API paths; it is Phase 4 of the plan.
         raise SettingsError(f"Provider type {cfg.type!r} is not supported yet (Phase 4).")
-    profile = resolve_profile(name, settings.model_profiles)
+    # Window order, most trusted last: built-in < learned from the server's
+    # own error (models/windows.py) < an explicit setting.
+    profile = resolve_profile(
+        name, settings.model_profiles, learned_window=learned_window(cfg.base_url, name)
+    )
 
     # Our own httpx client: company CA trust, proxies from the environment and
     # timeouts sized for a slow first token. LangChain passes it to the OpenAI SDK.
@@ -168,15 +194,21 @@ def build_chat_model(settings: Settings, ref: str | None = None) -> ModelBundle:
         # sync client LangChain creates too; corporate networks rely on it.
         "http_socket_options": (),
         "max_retries": cfg.max_retries,
+        # Stream even for `ainvoke` (titles, summaries, doctor): one code path
+        # for every call, and a slow first token can't hit a whole-response timeout.
+        "streaming": True,
         # Ask the server to include token counts in the stream (usage_metadata).
         "stream_usage": profile.stream_usage,
         "temperature": profile.temperature,
         "top_p": profile.top_p,
         "max_tokens_param": profile.max_tokens_param,
+        "profile": _langchain_profile(profile),
     }
     if profile.extra_body:
         # Extra JSON fields sent with every request, e.g. Qwen3's
         # {"chat_template_kwargs": {"enable_thinking": false}}.
         kwargs["extra_body"] = profile.extra_body
     model = CmcoderChatModel(**{k: v for k, v in kwargs.items() if v is not None})
-    return ModelBundle(model=model, profile=profile, provider=provider, name=name)
+    return ModelBundle(
+        model=model, profile=profile, provider=provider, name=name, base_url=cfg.base_url
+    )
