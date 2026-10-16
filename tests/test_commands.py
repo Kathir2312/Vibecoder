@@ -43,7 +43,7 @@ async def test_commands(mock_server, project: Path) -> None:
             assert rewound.prompt == "first message"
 
             sessions = (await run_command(session, "/resume")).lines
-            assert "Fix the login bug" in sessions[0]
+            assert "first message" in sessions[0]  # no small model: the first words as title
             assert (await run_command(session, "/todos")).lines == ["No todo list."]
             assert "window" in (await run_command(session, "/context")).lines[0]
             assert (await run_command(session, "/exit")).exit
@@ -132,3 +132,27 @@ async def test_managed_deny_rule_applies_to_the_agent(
         await agent.close()
     bash = of_type(events, ev.ToolResult)[0]
     assert bash.is_error and "Permission denied" in bash.content
+
+
+def test_setup_writes_user_settings(mock_server) -> None:
+    from cmcoder.config.settings import config_dir
+
+    server = mock_server([])
+    result = CliRunner().invoke(
+        sub_app,
+        [
+            "setup",
+            "--gateway",
+            server.base_url,
+            "--model",
+            "qwen3-27b",
+            "--small-model",
+            "qwen3-7b",
+            "--no-login",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "2 models" in result.stdout  # it listed the gateway's models
+    saved = json.loads((config_dir() / "settings.json").read_text())
+    assert saved["model"] == "corp:qwen3-27b" and saved["smallFastModel"] == "corp:qwen3-7b"
+    assert saved["providers"]["corp"]["baseUrl"] == server.base_url

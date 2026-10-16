@@ -25,8 +25,9 @@ def _key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_session_is_saved_and_resumed(mock_server, project: Path) -> None:
     server = mock_server([{"content": "First."}, {"content": "Second."}])
+    small = {"smallFastModel": "mock:qwen3-7b"}  # titles come from the small model
     async with SessionStore.open(project) as store:
-        first = make_session(server.base_url, project, store=store)
+        first = make_session(server.base_url, project, store=store, settings=small)
         await run_turn(first, "remember the number 7")
         await first.close()  # waits for the background title
         thread = first.session_id

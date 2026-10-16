@@ -100,12 +100,13 @@ class Agent:
 
     graph: CompiledStateGraph[Any, Any, Any, Any]
     bundle: ModelBundle
-    small: ModelBundle  # the small/fast model (summaries, titles)
+    small: ModelBundle  # the small/fast model (summaries, titles); the main one if unset
     ctx: ToolContext
     policy: PermissionPolicy
     tools: dict[str, Tool]
     max_turns: int
     auto_compact_threshold: float = 0.8
+    has_small_model: bool = False  # smallFastModel is configured
 
     async def close(self) -> None:
         await self.ctx.close_shells()
@@ -140,6 +141,7 @@ def build_agent(
     *,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     extra_middleware: list[AgentMiddleware[Any, Any]] | None = None,
+    extra_tools: list[Tool] | None = None,
 ) -> Agent:
     cwd = opts.cwd.resolve()
     root = find_project_root(cwd)
@@ -157,6 +159,8 @@ def build_agent(
     ctx = ToolContext(cwd=cwd, project_root=root)
     ctx.max_output_chars = output_budget_chars(profile.context_window)
     tools = {t.name: t for t in default_tools() if t.name != "TodoWrite"}
+    # Tools an IDE runs for the agent (getDiagnostics, openFile; core/ide.py).
+    tools.update({t.name: t for t in extra_tools or []})
     policy = build_policy(settings, opts)
 
     # 2. System prompt: stable instructions first, then CMCODER.md memory, then
@@ -232,4 +236,5 @@ def build_agent(
         tools=tools,
         max_turns=max_turns,
         auto_compact_threshold=settings.auto_compact_threshold,
+        has_small_model=small is not bundle,
     )

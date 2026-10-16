@@ -26,13 +26,17 @@ from ..core.permissions import MODES
 
 main_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 sub_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False, no_args_is_help=True)
-SUBCOMMANDS = {"doctor", "login", "logout", "sessions"}
+SUBCOMMANDS = {"doctor", "login", "logout", "sessions", "setup", "protocol-schema"}
 err = Console(stderr=True)
 
 
-def _load() -> Settings:
+# The IDEs that run cmcoder over the protocol (--client).
+CLIENTS = ("vscode", "eclipse", "visualstudio", "netbeans", "jetbrains")
+
+
+def _load(trust_project: bool = False) -> Settings:
     try:
-        return load_settings(Path.cwd())
+        return load_settings(Path.cwd(), trust_project=trust_project)
     except SettingsError as e:
         err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(2) from e
@@ -92,6 +96,17 @@ def main(
             help="Continue a saved conversation (id or prefix; see `cmcoder sessions`).",
         ),
     ] = None,
+    protocol: Annotated[
+        str | None, typer.Option("--protocol", help="stdio: run as a long-lived agent for an IDE.")
+    ] = None,
+    client: Annotated[
+        str | None,
+        typer.Option("--client", help=f"With --protocol: the IDE ({', '.join(CLIENTS)})."),
+    ] = None,
+    trust_project: Annotated[
+        bool,
+        typer.Option("--trust-project", help="Use this project's .cmcoder settings for this run."),
+    ] = False,
     version: Annotated[bool, typer.Option("--version", help="Print the version.")] = False,
 ) -> None:
     if version:
@@ -104,10 +119,21 @@ def main(
     if permission_mode and permission_mode not in MODES:
         err.print(f"[red]error:[/red] --permission-mode must be one of {', '.join(MODES)}")
         raise typer.Exit(2)
+    if protocol not in (None, "stdio"):
+        err.print("[red]error:[/red] --protocol must be stdio")
+        raise typer.Exit(2)
+    if client is not None and (not protocol or client not in CLIENTS):
+        err.print(
+            f"[red]error:[/red] --client goes with --protocol stdio and is one of {', '.join(CLIENTS)}"
+        )
+        raise typer.Exit(2)
+    if protocol and (print_mode or prompt):
+        err.print("[red]error:[/red] --protocol takes its prompts on stdin, not -p or arguments")
+        raise typer.Exit(2)
     if output_format not in ("text", "json", "stream-json"):
         err.print("[red]error:[/red] --output-format must be text, json or stream-json")
         raise typer.Exit(2)
-    settings = _load()
+    settings = _load(trust_project)
     os.environ.update(settings.env)
     opts = AgentOptions(
         cwd=Path.cwd(),
@@ -118,7 +144,13 @@ def main(
         max_turns=max_turns,
     )
     try:
-        if print_mode:
+        if protocol:
+            from .stdio import run_stdio
+
+            code = asyncio.run(
+                run_stdio(settings, opts, continue_session=continue_session, resume=resume)
+            )
+        elif print_mode:
             from .headless import run_headless
 
             text = prompt if prompt is not None else sys.stdin.read()
@@ -155,6 +187,28 @@ def doctor(
     raise typer.Exit(asyncio.run(run_doctor(_load(), model, probe=not no_probe)))
 
 
+@sub_app.command(
+    "protocol-schema",
+    help="Print the Agent Protocol JSON Schema: agent events and client messages.",
+)
+def protocol_schema(
+    typescript: Annotated[
+        bool, typer.Option("--typescript", help="Print TypeScript types.")
+    ] = False,
+) -> None:
+    import json
+
+    from ..protocol.events import protocol_json_schema
+    from ..protocol.messages import messages_json_schema
+    from ..protocol.typescript import generate_typescript
+
+    if typescript:
+        sys.stdout.write(generate_typescript())
+        return
+    schema = {"events": protocol_json_schema(), "messages": messages_json_schema()}
+    print(json.dumps(schema, indent=2))
+
+
 @sub_app.command(help="List this project's saved conversations.")
 def sessions() -> None:
     import time
@@ -169,6 +223,25 @@ def sessions() -> None:
                 print(line)
 
     asyncio.run(show())
+
+
+@sub_app.command(help="First-time setup: the gateway, the API key and the models.")
+def setup(
+    gateway: Annotated[
+        str | None, typer.Option("--gateway", help="e.g. https://ai.corp/v1")
+    ] = None,
+    kind: Annotated[str | None, typer.Option("--type", help="openai or openwebui.")] = None,
+    name: Annotated[str, typer.Option("--provider", help="A name for the gateway.")] = "corp",
+    model: Annotated[str | None, typer.Option("--model", help="The main model.")] = None,
+    small: Annotated[str | None, typer.Option("--small-model", help="A small, fast model.")] = None,
+    vision: Annotated[
+        str | None, typer.Option("--vision-model", help="A model that reads images.")
+    ] = None,
+    login: Annotated[bool, typer.Option("--login/--no-login", help="Ask for the API key.")] = True,
+) -> None:
+    from .setup_cmd import setup as run_setup
+
+    run_setup(gateway, kind, name, model, small, vision, login)
 
 
 @sub_app.command(help="Store the gateway API key in the OS keychain.")

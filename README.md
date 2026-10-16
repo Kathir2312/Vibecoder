@@ -11,10 +11,12 @@ with [docs/learn/](docs/learn/README.md). Every engine file explains the
 framework concepts it uses.
 
 - Requirements and roadmap: [docs/PLAN.md](docs/PLAN.md)
-- Status: **Phases 0 and 1 done**: agent loop, tools, permissions with
+- Status: **Phases 0–2 done**: agent loop, tools, permissions with
   human-in-the-loop interrupts, Qwen3 reasoning and text tool calls, saved
   sessions (`--continue`, `--resume`), auto-compaction, `/rewind`, todos, slash
-  commands, `-p` mode, REPL, `doctor`. Next: the IDE protocol (Phase 2).
+  commands, `-p` mode, REPL, `doctor`, `setup`, and the IDE protocol
+  (`--protocol stdio`) with the VS Code, Visual Studio, Eclipse, NetBeans and
+  JetBrains plugins. Next: extensibility (Phase 3: MCP, hooks, subagents).
 
 ## Quick start
 
@@ -59,7 +61,8 @@ uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-js
 | `src/cmcoder/runtime/` | `Session` (streaming, interrupts, compaction, rewind), SQLite session store, slash commands, titles |
 | `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash and the LangChain adapter (todos: LangChain's `write_todos`) |
 | `src/cmcoder/core/`, `config/`, `protocol/`, `sandbox/` | Carried over from cmcoderagent: permission rules, high-risk command checks, settings, IDE protocol |
-| `src/cmcoder/cli/` | `cmcoder` command, `-p` mode, REPL, `doctor` |
+| `src/cmcoder/cli/` | `cmcoder` command, `-p` mode, REPL, `--protocol stdio` (IDEs), `doctor`, `setup` |
+| `vscode/`, `visualstudio/`, `eclipse/`, `netbeans/`, `jetbrains/`, `clients/` | The IDE plugins and their shared chat panel, unchanged from cmcoderagent |
 | `tests/`, `evals/` | Unit and end-to-end tests and eval tasks (scripted mock gateway, no GPU or key needed) |
 | `packaging/` | The standalone build (PyInstaller): no Python needed on developers' PCs |
 

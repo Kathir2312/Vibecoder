@@ -10,6 +10,8 @@ LANGGRAPH CONCEPTS IN THIS FILE
     - `"updates"`: `{node_name: state_update}` after each node finishes. This
       is where finished `AIMessage`s (with tool calls), `ToolMessage`s (tool
       results), todo-list changes and compactions appear.
+    - `"tasks"`: a node starting (and finishing). We use the start of the
+      `"tools"` node to show tool calls before they run.
 * `config = {"configurable": {"thread_id": ...}}`: the thread id is the key
   the checkpointer stores the conversation under. Same thread id = same
   conversation, so we never resend the history ourselves.
@@ -38,6 +40,7 @@ sends, so the terminal UI and all IDE clients keep working.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -62,6 +65,7 @@ from .. import __version__
 from ..agents.context import RunContext
 from ..agents.main import Agent
 from ..core.checkpoints import Checkpoints
+from ..images import Image
 from ..middleware.compaction import CompactionMiddleware, is_summary
 from ..middleware.permission import PERMISSION_KIND
 from ..middleware.tool_text import ToolCallHoldback
@@ -70,13 +74,16 @@ from ..models.errors import classify
 from ..models.reasoning import ThinkSplitter, split_think
 from ..protocol import events as ev
 from .store import SessionStore, sessions_dir
-from .titles import make_title
+from .titles import fallback_title, make_title
 
 # Called with a permission request; returns {"allow", "remember", "feedback"}.
 AskFn = Callable[[ev.PermissionRequest], Awaitable[dict[str, Any]]]
 
 MODEL_NODE = "model"  # the node name create_agent gives the LLM call
 TOOLS_NODE = "tools"
+# The IDE context note (core/ide.py) is left out when a conversation is shown again.
+REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>\s*", re.DOTALL)
+DENIED_PREFIX = "Permission denied: "  # middleware/permission.py
 # Stored on each user message, so turn numbers survive --resume.
 TURN_KEY = "cmcoder_turn"
 
@@ -158,14 +165,34 @@ class Session:
         )
 
     # --- one user turn -----------------------------------------------------------
-    async def run(self, prompt: str) -> AsyncIterator[ev.Event]:
-        """Run one user turn; yields protocol events, ending with a `result` event."""
+    async def run(
+        self, prompt: str, *, note: str | None = None, images: list[Image] | None = None
+    ) -> AsyncIterator[ev.Event]:
+        """Run one user turn; yields protocol events, ending with a `result` event.
+
+        `note`: context for the model that isn't part of the prompt (the IDE's
+        open file, selection and problems), sent before it in the same message.
+        `images`: sent as image content blocks when the model can see images.
+        """
         started = time.monotonic()
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
         self.turn += 1
         context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
         state = _TurnState(await self.messages())
-        message = HumanMessage(prompt, additional_kwargs={TURN_KEY: self.turn})
+        text = f"{note}\n\n{prompt}" if note else prompt
+        content: str | list[str | dict[str, Any]] = text
+        if images:
+            if self.agent.bundle.profile.vision:
+                # LangChain's standard multimodal content: a list of blocks.
+                content = [
+                    {"type": "text", "text": text},
+                    *({"type": "image_url", "image_url": {"url": i.data_url}} for i in images),
+                ]
+            else:
+                yield ev.Warning(
+                    message=f"{self.agent.bundle.name} can't see images; they were left out."
+                )
+        message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn})
         state.apply([message])
         graph_input: Any = {"messages": [message]}
         error: ev.Error | None = None
@@ -196,7 +223,12 @@ class Session:
                         change=ev.FileChange(**value["change"]) if value.get("change") else None,
                     )
                     yield request
-                    answers[intr.id] = await self.ask(request)
+                    answer = await self.ask(request)
+                    answers[intr.id] = answer
+                    if not answer.get("allow"):
+                        yield ev.PermissionDenied(
+                            id=request.tool_use_id, name=request.name, reason="denied by user"
+                        )
                 # Resume the paused graph with the user's answers.
                 graph_input = Command(resume=answers)
         except asyncio.CancelledError:
@@ -229,6 +261,10 @@ class Session:
             self._titled = True
             thread_id = self.session_id
             store = self.store
+            if not self.agent.has_small_model:
+                # No small model: don't spend a main-model call on a title.
+                await store.set_title(thread_id, fallback_title(prompt))
+                return
 
             async def title() -> None:
                 await store.set_title(thread_id, await make_title(self.agent.small.model, prompt))
@@ -244,13 +280,22 @@ class Session:
             graph_input,
             self.config,
             context=context,
-            stream_mode=["messages", "updates"],
+            # "tasks" says when a node *starts*: the tools node starting means
+            # the model's reply is final, so its tool calls can be shown now,
+            # before a long command finishes.
+            stream_mode=["messages", "updates", "tasks"],
             version="v2",
         ):
             if part["type"] == "messages":
                 chunk, meta = part["data"]
                 if isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == MODEL_NODE:
                     for event in state.on_token(chunk):
+                        yield event
+                continue
+            if part["type"] == "tasks":
+                data = part["data"]
+                if data.get("name") == TOOLS_NODE and "result" not in data:
+                    for event in state.flush():
                         yield event
                 continue
             if part["type"] != "updates":
@@ -286,6 +331,13 @@ class Session:
                         # fixed copy with the same id: the latest one wins.
                         state.pending_ai = msg
                     elif isinstance(msg, ToolMessage):
+                        text = _text(msg)
+                        if text.startswith(DENIED_PREFIX):  # a rule or mode said no
+                            yield ev.PermissionDenied(
+                                id=msg.tool_call_id,
+                                name=msg.name or "",
+                                reason=text[len(DENIED_PREFIX) :],
+                            )
                         yield _tool_result_event(msg)
 
     async def repair_after_interrupt(self) -> None:
@@ -310,6 +362,36 @@ class Session:
         ]
         if missing:
             await self.agent.graph.aupdate_state(self.config, {"messages": missing})
+
+    # --- history (shown again by an IDE after --resume / a rewind) -----------------
+    def label(self, call: ToolCall) -> str:
+        """The UI label of a tool call, e.g. `Read(src/app.py)`."""
+        if call["name"] == "write_todos":
+            todos = call.get("args", {}).get("todos") or []
+            done = sum(t.get("status") == "completed" for t in todos if isinstance(t, dict))
+            return f"write_todos({done}/{len(todos)} done)"
+        tool = self.agent.tools.get(call["name"])
+        if tool is not None:
+            try:
+                return tool.describe(tool.Input.model_validate(call["args"]), self.agent.ctx)
+            except ValueError:
+                pass
+        return _label(call)
+
+    async def history(self) -> list[ev.HistoryItem]:
+        items: list[ev.HistoryItem] = []
+        for m in await self.messages():
+            if isinstance(m, HumanMessage):
+                text = REMINDER.sub("", _text(m)).strip()
+                if text and not is_summary(m):
+                    items.append(ev.HistoryItem(role="user", text=text))
+            elif isinstance(m, AIMessage):
+                visible, _ = split_think(_text(m))
+                if visible.strip():
+                    items.append(ev.HistoryItem(role="assistant", text=visible.strip()))
+                for call in m.tool_calls:
+                    items.append(ev.HistoryItem(role="tool", text=self.label(call)))
+        return items
 
     # --- /compact ------------------------------------------------------------------
     async def compact(self, focus: str | None = None) -> ev.Compacted | None:

@@ -11,7 +11,7 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 ## The big picture
 
 ```
- you ──► cli/ (REPL, -p)                        ┐
+ you ──► cli/ (REPL, -p) · IDEs ──► cli/stdio.py ┐
            │                                    │ cmcoder's own code
            ▼                                    │
        runtime/session.py   graph.astream(...)  │ streams events, handles interrupts
@@ -48,8 +48,9 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 | 10 | [`src/cmcoder/middleware/compaction.py`](../../src/cmcoder/middleware/compaction.py) | Built-in `SummarizationMiddleware` (subclassed), `RemoveMessage`, fraction triggers and model profiles, a summariser model |
 | 11 | [`src/cmcoder/middleware/tool_text.py`](../../src/cmcoder/middleware/tool_text.py) | Rewriting a whole request (tools, system message, history) and the response; `convert_to_openai_tool` |
 | 12 | [`src/cmcoder/middleware/checkpoint.py`](../../src/cmcoder/middleware/checkpoint.py) | The two kinds of checkpoint: LangGraph's (conversation) and file snapshots (code) |
-| 13 | [`src/cmcoder/runtime/titles.py`](../../src/cmcoder/runtime/titles.py), [`cli/doctor.py`](../../src/cmcoder/cli/doctor.py) | `ainvoke` with per-call options, `bind_tools`, the `@tool` decorator |
-| 14 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
+| 13 | [`src/cmcoder/cli/stdio.py`](../../src/cmcoder/cli/stdio.py) | Driving a graph from a long-lived server: a turn as an asyncio task, interrupts answered by another client message, rebuilding a graph on the same checkpointer; when *not* to use an interrupt (quick IDE calls) |
+| 14 | [`src/cmcoder/runtime/titles.py`](../../src/cmcoder/runtime/titles.py), [`cli/doctor.py`](../../src/cmcoder/cli/doctor.py) | `ainvoke` with per-call options, `bind_tools`, the `@tool` decorator |
+| 15 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
 
 ## Key ideas, briefly
 
@@ -87,6 +88,15 @@ checkpointer that also works across program runs (`--continue`).
 the latest. `aget_state_history` lists them; writing to an old one with
 `aupdate_state(old_snapshot.config, ...)` forks the thread from there. That is
 `/rewind`, and why a rewind or a compaction never loses anything.
+
+**A compiled graph is fixed; a thread is not.** `create_agent` compiles one
+model and one tool list. To switch models or add tools (an IDE announcing
+`getDiagnostics`), build a new graph on the *same checkpointer* and keep the
+thread id: the conversation carries on in the new graph.
+
+**Which stream mode for what.** `messages` for tokens, `updates` for finished
+node results, `tasks` for "a node just started" (cmcoder shows a tool call the
+moment the tools node starts, not when a long command ends).
 
 **Counting tokens is your job.** `SummarizationMiddleware` counts the tokens
 of the *messages*; the system prompt and tool schemas also take room in the
@@ -142,6 +152,5 @@ README), then `uv run cmcoder login` and `uv run cmcoder doctor`.
 ## Where things go next
 
 See [the plan](../PLAN.md):
-- Phase 2: the IDE protocol (`--protocol stdio`) on this runtime; IDE tools as interrupts.
 - Phase 3: subagents as subgraphs, a team workflow as an explicit `StateGraph`, MCP through `langchain-mcp-adapters`.
 - Phase 5: RAG with LangChain `Embeddings` and `VectorStore`.

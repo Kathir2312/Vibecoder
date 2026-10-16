@@ -200,3 +200,27 @@ Done:
 
 Not done:
 - The full-screen Textual UI. cmcoderagent's `cli/tui.py` is tied to its old agent class. The line REPL covers the same features, so the Textual UI moves to after Phase 2, where it can share the IDE protocol client.
+
+## Phase 2 status: complete here; real-IDE gates run in CI
+
+Done:
+- **`cmcoder --protocol stdio`** (`cli/stdio.py`) on the LangGraph runtime, with the same protocol as cmcoderagent:
+  - user messages with the IDE's context (open file, selection, problems; secret files withheld) and images;
+  - `interrupt`, `permission_response` (LangGraph interrupts underneath), `set_mode`, `set_model`;
+  - `ide_capabilities` / `ide_tool_result`: the IDE tools `getDiagnostics` and `openFile`;
+  - `list_sessions`, `list_commands`, `rewind` with `history`, the resumed conversation and todos at start;
+  - `--client`, `--trust-project`, `--continue`, `--resume`.
+- Code search and critic requests from IDE panels get the protocol's own "not set up" answers until Phases 3 and 5.
+- `tool_use` events are sent when the tools node *starts* (LangGraph's `tasks` stream mode), so IDEs show a long-running command while it runs.
+- `cmcoder setup` (first-time configuration, the IDEs' first-run hint) and `cmcoder protocol-schema`.
+- Titles use the small model only when one is configured, as in cmcoderagent; otherwise the first words of the first message.
+- The IDE plugins and the shared panel copied unchanged: `vscode/`, `visualstudio/`, `eclipse/`, `netbeans/`, `jetbrains/`, `clients/`, `branding/`.
+
+Checked here, against the new engine:
+- cmcoderagent's own stdio protocol tests: 8/8 (two changes: LangChain's `write_todos` instead of `TodoWrite`, and the first-run hint).
+- Evals through `-p` and through `--protocol stdio`: 40/40, and **20/20 tasks give the same result and tool calls both ways**.
+- VS Code extension tests (real `cmcoder --protocol stdio` + mock gateway): 7/7. Shared chat panel tests: 76/76.
+- JVM IDE core (Eclipse/NetBeans): 31/32. The one left, `CodeSearchTest`, needs code search (Phase 5) and is held out of CI until then.
+- The NetBeans and Eclipse plugins build.
+
+Not checked here (CI runs them): the release gates in real VS Code, IntelliJ IDEA, NetBeans and Eclipse, and the Visual Studio core and extension. VS Code and JetBrains downloads are blocked from this environment, and there is no .NET or Windows. CI now has the IDE jobs from cmcoderagent.
