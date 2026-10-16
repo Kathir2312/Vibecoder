@@ -80,6 +80,7 @@ from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, Reasonin
 from ..middleware.permission import PermissionMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
 from ..models.chat import ModelBundle, build_chat_model
+from ..sandbox import Sandbox, make_sandbox
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.registry import default_tools
@@ -122,6 +123,9 @@ class Agent:
     subagents: SubagentRuntime | None = None  # the Task tool's runs (agents/subagents.py)
     critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
     team: bool = False  # the Team tool is offered (`team.enabled`; agents/team.py)
+    sandbox: Sandbox | None = None  # the Bash sandbox (sandbox/; None: unsandboxed)
+    # Shown once, with the first turn (e.g. a sandbox asked for that can't run here).
+    startup_warnings: list[str] = field(default_factory=list)
     # How it was built, so `rebuild_agent` can build it again with changes.
     spec: dict[str, Any] = field(default_factory=dict)
 
@@ -129,6 +133,8 @@ class Agent:
         await self.ctx.close_shells()
         if self.subagents is not None:
             await self.subagents.close()
+        if self.sandbox is not None:
+            await self.sandbox.close()
 
 
 async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
@@ -144,9 +150,11 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
     settings: Settings = spec.pop("settings")
     if "model" in changes:
         opts = AgentOptions(**{**opts.__dict__, "model": changes["model"]})
-    new = build_agent(settings, opts, **spec)
+    # The sandbox (its proxy, its temp folder) carries over too.
+    new = build_agent(settings, opts, sandbox=old.sandbox, **spec)
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
+    old.sandbox = None
     await old.close()
     return new
 
@@ -222,7 +230,9 @@ def build_agent(
     extra_middleware: list[AgentMiddleware[Any, Any]] | None = None,
     extra_tools: list[Tool] | None = None,
     mcp: McpManager | None = None,
+    sandbox: Sandbox | None = None,
 ) -> Agent:
+    """`sandbox`: reuse this one (a rebuild); else made from `settings.sandbox`."""
     cwd = opts.cwd.resolve()
     root = find_project_root(cwd)
     bundle = build_chat_model(settings, opts.model)
@@ -236,7 +246,12 @@ def build_agent(
 
     # 1. Tools: cmcoder's tools, wrapped as LangChain BaseTools. The todo list
     #    comes from LangChain's TodoListMiddleware instead (below).
-    ctx = ToolContext(cwd=cwd, project_root=root)
+    # The Bash sandbox (bubblewrap / sandbox-exec), when settings ask for one.
+    warnings: list[str] = []
+    if sandbox is None:
+        sandbox, warning = make_sandbox(settings.sandbox, root)
+        warnings += [warning] if warning else []
+    ctx = ToolContext(cwd=cwd, project_root=root, sandbox=sandbox)
     ctx.max_output_chars = output_budget_chars(profile.context_window)
     tools = {t.name: t for t in default_tools() if t.name != "TodoWrite"}
     # Tools an IDE runs for the agent (getDiagnostics, openFile; core/ide.py).
@@ -260,6 +275,7 @@ def build_agent(
         model=bundle.name,
         memory=load_memory_files(cwd, root),
         skills=skills_prompt(skills),
+        sandbox=sandbox.prompt_note() if sandbox else None,
     )
 
     # 3. Middleware: see the module docstring for the order.
@@ -308,6 +324,7 @@ def build_agent(
         cmcoder_tools={n: t for n, t in tools.items() if not n.startswith("mcp__")},
         langchain_tools=mcp.langchain_tools() if mcp is not None else [],
         permission_tools=tools,
+        sandbox=sandbox,
     )
     lc_tools.append(build_task_tool(subagents))
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
@@ -346,6 +363,8 @@ def build_agent(
         subagents=subagents,
         critic=critic,
         team=settings.team.enabled,
+        sandbox=sandbox,
+        startup_warnings=warnings,
         spec={
             "settings": settings,
             "opts": opts,

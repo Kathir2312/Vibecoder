@@ -281,6 +281,12 @@ def logout(provider: Annotated[str | None, typer.Option("--provider")] = None) -
 
 
 def run() -> None:
+    if sys.argv[1:2] == ["--sandbox-bridge"]:
+        # Inside the Linux sandbox (standalone build: no separate Python there).
+        from ..sandbox.bridge import main as bridge
+
+        bridge(sys.argv[2:])
+        return
     use_utf8_stdio()
     # No telemetry by default (requirement): LangSmith tracing only when the
     # user explicitly turns it on, never because a stray env var is set.

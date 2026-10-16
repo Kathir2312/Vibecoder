@@ -196,6 +196,9 @@ class Session:
         # Hooks that run outside the graph: SessionStart (once) and
         # UserPromptSubmit (may block the prompt or add context).
         extra: list[str] = []
+        if not self._session_started:
+            for w in self.agent.startup_warnings:  # e.g. a sandbox that can't run here
+                yield ev.Warning(message=w)
         hooks = self.agent.hooks
         if hooks is not None:
             opts = self.agent.spec.get("opts")
