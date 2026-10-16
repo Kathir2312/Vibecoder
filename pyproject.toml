@@ -22,6 +22,7 @@ dependencies = [
     "keyring>=25",
     "pathspec>=0.12",
     "pillow>=10",
+    "langchain-mcp-adapters>=0.3,<0.4",
 ]
 
 [project.scripts]

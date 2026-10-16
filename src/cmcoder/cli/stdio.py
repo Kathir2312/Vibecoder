@@ -39,11 +39,13 @@ from typing import Any, BinaryIO
 
 from pydantic import ValidationError
 
-from ..agents.main import Agent, AgentOptions, build_agent
+from ..agents.main import Agent, AgentOptions, build_agent, rebuild_agent
 from ..config.settings import Settings, SettingsError, add_local_allow_rule, find_project_root
 from ..core.ide import IDE_TOOLS, format_ide_context
 from ..core.permissions import MODES, Decision, ModeNotAllowed
 from ..images import Image, ImageError, from_base64
+from ..mcp import McpManager
+from ..mcp.manager import McpServer
 from ..protocol import events as ev
 from ..protocol import messages as msg
 from ..runtime.commands import BUILT_IN, run_command
@@ -55,7 +57,7 @@ from ..tools.files import ReadInput, ReadTool
 IDE_TOOL_TIMEOUT = 30.0  # seconds
 # Built-in commands that work in an IDE panel; the others (/clear, /resume,
 # /mode) are the panel's own buttons.
-PANEL_COMMANDS = {"help", "compact", "rewind", "model", "cost", "todos", "context"}
+PANEL_COMMANDS = {"help", "compact", "rewind", "model", "cost", "todos", "context", "mcp"}
 # Features of later phases that IDE panels may ask for: answered with the
 # protocol's own "not set up / not available" events, so panels show a state.
 CODE_SEARCH_LATER = "Code search arrives in Phase 5 of the LangGraph engine."
@@ -83,6 +85,7 @@ class StdioServer:
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.ide_pending: dict[str, asyncio.Future[ToolResult]] = {}
         self.ide_tools: list[Tool] = []
+        self.mcp: McpManager | None = None
         self.inbox: asyncio.Queue[bytes] = asyncio.Queue()
 
     def emit(self, event: ev.Event) -> None:
@@ -141,7 +144,10 @@ class StdioServer:
         async with SessionStore.open(root, persist=self.settings.persist_sessions) as store:
             self.store = store
             try:
-                agent = build_agent(self.settings, self.opts, checkpointer=store.checkpointer)
+                self.mcp = McpManager(self.settings, root)
+                agent = build_agent(
+                    self.settings, self.opts, checkpointer=store.checkpointer, mcp=self.mcp
+                )
             except (SettingsError, ValueError) as e:
                 hint = "In a terminal, run:  cmcoder setup" if "cmcoder setup" in str(e) else None
                 self.error("startup", str(e), hint)
@@ -176,6 +182,7 @@ class StdioServer:
                 await self._stop_turn()
                 await self.session.close()
                 await self.agent.close()
+                await self.mcp.close()
         return 0
 
     async def handle(self, message: msg.ClientMessage) -> None:
@@ -271,18 +278,38 @@ class StdioServer:
             self.error("not_running", f"No running subagent {message.id!r} (subagents: Phase 3).")
 
     async def _rebuild(self, model: str | None = None) -> None:
-        """A new graph (another model, or IDE tools) on the same checkpointer and thread."""
-        assert self.session is not None and self.store is not None
-        opts = AgentOptions(**{**self.opts.__dict__, "model": model or self.agent.bundle.ref})
-        new = build_agent(
-            self.settings, opts, checkpointer=self.store.checkpointer, extra_tools=self.ide_tools
-        )
-        new.policy.mode = self.agent.policy.mode
-        new.policy.allow = self.agent.policy.allow  # "always allow" answers so far
-        await self.agent.close()
-        self.session.agent = new
+        """A new graph (another model, IDE tools, MCP tools) on the same checkpointer and thread."""
+        assert self.session is not None
+        changes: dict[str, Any] = {"extra_tools": self.ide_tools, "mcp": self.mcp}
         if model:
+            changes["model"] = model
             self.opts.model = model
+        self.session.agent = await rebuild_agent(self.agent, **changes)
+
+    async def _start_mcp(self) -> None:
+        """MCP servers start with the first message, as in cmcoderagent; a
+        project's own servers ask first (through the permission prompt)."""
+        if self.mcp is None or self.mcp.started:
+            return
+        for warning in await self.mcp.start(self._approve_server):
+            self.emit(ev.Warning(message=warning))
+        if self.mcp.connected():
+            await self._rebuild()
+
+    async def _approve_server(self, server: McpServer) -> bool:
+        request = ev.PermissionRequest(
+            request_id=f"mcp-{server.name}-{uuid.uuid4().hex[:6]}",
+            tool_use_id=f"mcp-{server.name}",
+            name="McpServer",
+            label=f"Start MCP server {server.name}",
+            input={"server": server.name, **server.config.approval_details()},
+            suggested_rule="",
+            reason="This project's settings (.mcp.json) want to start an MCP server; it runs "
+            "with your permissions. Allowing is remembered until its settings change.",
+            can_remember=False,
+        )
+        self.emit(request)
+        return bool((await self.ask(request)).get("allow"))
 
     def _withheld(self, path: str) -> bool:
         """Files whose contents Read would refuse (secrets, deny rules)."""
@@ -329,6 +356,7 @@ class StdioServer:
                     self.emit(ev.AssistantMessage(text=f"```text\n{body}\n```"))
                 self.emit(self._result("success", "", False, started))
             else:
+                await self._start_mcp()
                 async for event in session.run(text, note=note, images=images):
                     self.emit(event)
         except asyncio.CancelledError:

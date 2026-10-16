@@ -63,11 +63,13 @@ from langgraph.graph.state import CompiledStateGraph
 from ..config.settings import Settings, SettingsError, find_project_root
 from ..core.permissions import ModeNotAllowed, PermissionPolicy
 from ..core.prompt import build_system_prompt, load_memory_files
+from ..mcp import McpManager
 from ..middleware.checkpoint import FileCheckpointMiddleware
 from ..middleware.compaction import CompactionMiddleware
 from ..middleware.guards import (
     BashFileWorkMiddleware,
     LoopGuardMiddleware,
+    PlainToolTextMiddleware,
     ToolCallRepairMiddleware,
 )
 from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, ReasoningMiddleware
@@ -107,9 +109,31 @@ class Agent:
     max_turns: int
     auto_compact_threshold: float = 0.8
     has_small_model: bool = False  # smallFastModel is configured
+    # How it was built, so `rebuild_agent` can build it again with changes.
+    spec: dict[str, Any] = field(default_factory=dict)
 
     async def close(self) -> None:
         await self.ctx.close_shells()
+
+
+async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
+    """The same agent with changes (`model=`, `extra_tools=`, `mcp=`).
+
+    `create_agent` compiles a fixed model and tool list into the graph, so a
+    change means a new graph. Built on the *same checkpointer*, it continues
+    the same threads: callers keep their thread id and the conversation goes
+    on. The permission mode and the "always allow" answers carry over.
+    """
+    spec = {**old.spec, **{k: v for k, v in changes.items() if k != "model"}}
+    opts: AgentOptions = spec.pop("opts")
+    settings: Settings = spec.pop("settings")
+    if "model" in changes:
+        opts = AgentOptions(**{**opts.__dict__, "model": changes["model"]})
+    new = build_agent(settings, opts, **spec)
+    new.policy.mode = old.policy.mode
+    new.policy.allow = old.policy.allow
+    await old.close()
+    return new
 
 
 def build_policy(settings: Settings, opts: AgentOptions) -> PermissionPolicy:
@@ -142,6 +166,7 @@ def build_agent(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     extra_middleware: list[AgentMiddleware[Any, Any]] | None = None,
     extra_tools: list[Tool] | None = None,
+    mcp: McpManager | None = None,
 ) -> Agent:
     cwd = opts.cwd.resolve()
     root = find_project_root(cwd)
@@ -184,6 +209,11 @@ def build_agent(
         TodoListMiddleware(),
     ]
     lc_tools = as_langchain_tools(list(tools.values()), ctx)
+    if mcp is not None:
+        # MCP servers' tools are already LangChain tools (langchain-mcp-adapters);
+        # the permission rules see them through small stand-ins.
+        lc_tools += mcp.langchain_tools()
+        tools.update({t.name: t for t in mcp.permission_tools()})
     compaction: CompactionMiddleware | None = None
     if settings.auto_compact:
         # Built-in (subclassed): summarise old turns with the small model.
@@ -204,6 +234,7 @@ def build_agent(
         TextToolCallsMiddleware(prompted=profile.tool_calling == "prompted"),
         ReasoningMiddleware(),
         ToolCallRepairMiddleware(),
+        PlainToolTextMiddleware(),
         LoopGuardMiddleware(),
         BashFileWorkMiddleware(enabled=profile.steer_bash_file_work),
         PermissionMiddleware(
@@ -237,4 +268,12 @@ def build_agent(
         max_turns=max_turns,
         auto_compact_threshold=settings.auto_compact_threshold,
         has_small_model=small is not bundle,
+        spec={
+            "settings": settings,
+            "opts": opts,
+            "checkpointer": checkpointer,
+            "extra_middleware": extra_middleware,
+            "extra_tools": extra_tools,
+            "mcp": mcp,
+        },
     )

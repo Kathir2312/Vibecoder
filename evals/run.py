@@ -180,6 +180,7 @@ def run_task(
 
     env = dict(os.environ)
     env["PYTHON"] = to_shell_path(sys.executable)
+    env["CMCODER_EVAL_PYTHON"] = sys.executable  # native path, e.g. for an MCP server command
     server = None
     if mock:
         from cmcoder.testing.mock_server import MockServer, MockState
@@ -206,6 +207,7 @@ def run_task(
         spec.get("permission_mode", "bypassPermissions"),
         "--max-turns",
         str(spec.get("max_turns", 30)),
+        *[str(a) for a in spec.get("args", [])],  # e.g. --mcp-config
     ]
     if model:
         cmd += ["--model", model]

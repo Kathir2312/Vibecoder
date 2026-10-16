@@ -21,7 +21,7 @@ from rich.console import Console
 
 from .. import VERSION_TEXT
 from ..compat import use_utf8_stdio
-from ..config.settings import Settings, SettingsError, load_settings
+from ..config.settings import Settings, SettingsError, add_mcp_config, load_settings
 from ..core.permissions import MODES
 
 main_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
@@ -107,6 +107,10 @@ def main(
         bool,
         typer.Option("--trust-project", help="Use this project's .cmcoder settings for this run."),
     ] = False,
+    mcp_config: Annotated[
+        list[Path] | None,
+        typer.Option("--mcp-config", help="MCP servers for this run, in .mcp.json's format."),
+    ] = None,
     version: Annotated[bool, typer.Option("--version", help="Print the version.")] = False,
 ) -> None:
     if version:
@@ -134,6 +138,12 @@ def main(
         err.print("[red]error:[/red] --output-format must be text, json or stream-json")
         raise typer.Exit(2)
     settings = _load(trust_project)
+    for path in mcp_config or []:
+        try:
+            add_mcp_config(settings, path)
+        except SettingsError as e:
+            err.print(f"[red]error:[/red] {e}")
+            raise typer.Exit(2) from e
     os.environ.update(settings.env)
     opts = AgentOptions(
         cwd=Path.cwd(),

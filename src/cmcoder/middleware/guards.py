@@ -174,3 +174,22 @@ class LoopGuardMiddleware(AgentMiddleware):
                 "in a row. Stop repeating it and try a different approach.",
             )
         return await handler(request)
+
+
+class PlainToolTextMiddleware(AgentMiddleware):
+    """Turn tool results made of content blocks into plain text.
+
+    MCP tools (langchain-mcp-adapters) return LangChain content blocks:
+    `[{"type": "text", "text": "5", "id": ...}]`. OpenAI's own API accepts
+    that for tool messages, but many self-hosted servers expect a string, and
+    the UIs show text. A post-processing tool wrapper: call the handler,
+    then change the `ToolMessage` it returns.
+    """
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest, handler: ToolHandler
+    ) -> ToolMessage | Command[Any]:
+        result = await handler(request)
+        if isinstance(result, ToolMessage) and isinstance(result.content, list):
+            return result.model_copy(update={"content": result.text})
+        return result

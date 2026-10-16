@@ -549,7 +549,7 @@ def _label(call: ToolCall) -> str:
 
 
 def _tool_result_event(msg: ToolMessage) -> ev.Event:
-    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+    content = msg.content if isinstance(msg.content, str) else msg.text
     return ev.ToolResult(
         id=msg.tool_call_id,
         name=msg.name or "",

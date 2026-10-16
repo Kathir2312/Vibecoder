@@ -30,6 +30,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("mode", "[mode]", "Show or change the permission mode (also Shift+Tab)"),
     ("model", "[provider:model]", "Show or switch the model"),
     ("todos", "", "Show the todo list"),
+    ("mcp", "", "MCP servers: status and tools"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
     ("exit", "", "Quit"),
@@ -160,6 +161,10 @@ async def run_command(
             return CommandResult(["Switching models isn't available here."])
         await switch_model(arg)
         return CommandResult([f"Model: {session.agent.bundle.ref}"])
+    if name == "mcp":
+        from ..mcp import status_lines
+
+        return CommandResult(status_lines(a.spec.get("mcp")))
     if name == "todos":
         todos = await session.todos()
         marks = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}

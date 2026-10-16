@@ -21,9 +21,11 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.panel import Panel
 
-from ..agents.main import AgentOptions, build_agent
+from ..agents.main import AgentOptions, build_agent, rebuild_agent
 from ..compat import InterruptHandler
 from ..config.settings import Settings, add_local_allow_rule, find_project_root
+from ..mcp import McpManager
+from ..mcp.manager import McpServer
 from ..protocol import events as ev
 from ..runtime.commands import add_memory, run_command
 from ..runtime.session import Session
@@ -68,9 +70,26 @@ async def run_repl(
     opts.on_rule_saved = save_rule
     async with SessionStore.open(root, persist=settings.persist_sessions) as store:
         await store.cleanup(settings.cleanup_period_days)
-        agent = build_agent(settings, opts, checkpointer=store.checkpointer)
         bindings = KeyBindings()
         prompt_session: PromptSession[str] = PromptSession(key_bindings=bindings)
+
+        async def approve_server(server: McpServer) -> bool:
+            details = "\n".join(f"{k}: {v}" for k, v in server.config.approval_details().items())
+            console.print(
+                Panel(
+                    details,
+                    title=f"Start this project's MCP server {server.name}?",
+                    subtitle="It runs with your permissions; the answer is remembered.",
+                )
+            )
+            answer = (await prompt_session.prompt_async("y/N: ")).strip().lower()
+            return answer in ("y", "yes")
+
+        # MCP servers start now, so their tools are in the agent from the start.
+        mcp = McpManager(settings, root)
+        for warning in await mcp.start(approve_server):
+            console.print(f"[yellow]{warning}[/yellow]")
+        agent = build_agent(settings, opts, checkpointer=store.checkpointer, mcp=mcp)
 
         @bindings.add("s-tab")
         def _cycle_mode(event: KeyPressEvent) -> None:
@@ -102,14 +121,7 @@ async def run_repl(
         async def switch_model(ref: str) -> None:
             # A new graph with another model, on the same checkpointer: the
             # conversation (thread) carries on unchanged.
-            new = build_agent(
-                settings,
-                AgentOptions(**{**opts.__dict__, "model": ref}),
-                checkpointer=store.checkpointer,
-            )
-            new.policy.mode = session.agent.policy.mode
-            await session.agent.close()
-            session.agent = new
+            session.agent = await rebuild_agent(session.agent, model=ref)
 
         if resume or continue_session:
             found = await (store.find(resume) if resume else store.latest())
@@ -154,7 +166,7 @@ async def run_repl(
                     continue
                 if prompt.startswith("#"):
                     path = add_memory(root, prompt.lstrip("#"))
-                    await switch_model(session.agent.bundle.ref)  # rebuild: new system prompt
+                    session.agent = await rebuild_agent(session.agent)  # a new system prompt
                     console.print(f"[dim]Added to {path}.[/dim]")
                     prompt = None
                     continue
@@ -179,6 +191,7 @@ async def run_repl(
         finally:
             await session.close()
             await session.agent.close()
+            await mcp.close()
 
 
 async def _show_turn(console: Console, session: Session, prompt: str) -> None:
