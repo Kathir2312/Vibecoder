@@ -247,8 +247,9 @@ async def run_command(
         )
     if name == "cost":
         u = session.usage
+        cost = f" Cost: ${session.cost:.4f} (from the gateway)." if session.cost else ""
         return CommandResult(
-            [f"Tokens this session: {u['prompt_tokens']} in, {u['completion_tokens']} out."]
+            [f"Tokens this session: {u['prompt_tokens']} in, {u['completion_tokens']} out.{cost}"]
         )
     if name == "context":
         from langchain_core.messages.utils import count_tokens_approximately

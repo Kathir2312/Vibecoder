@@ -88,7 +88,7 @@ class CmcoderChatModel(ChatOpenAI):
         base_generation_info: dict[str, Any] | None,
     ) -> ChatGenerationChunk | None:
         generation = super()._convert_chunk_to_generation_chunk(
-            chunk, default_chunk_class, base_generation_info
+            chunk, default_chunk_class, _cost_only(base_generation_info)
         )
         if generation is None:
             return None
@@ -104,13 +104,31 @@ class CmcoderChatModel(ChatOpenAI):
     def _create_chat_result(
         self, response: Any, generation_info: dict[str, Any] | None = None
     ) -> ChatResult:
-        result = super()._create_chat_result(response, generation_info)
+        result = super()._create_chat_result(response, _cost_only(generation_info))
         data = response if isinstance(response, dict) else response.model_dump()
         for generation, choice in zip(result.generations, data.get("choices") or [], strict=False):
             reasoning = _reasoning_of(choice.get("message"))
             if reasoning:
                 generation.message.additional_kwargs[REASONING_KEY] = reasoning
         return result
+
+
+COST_HEADER = "x-litellm-response-cost"
+
+
+def _cost_only(info: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The response headers (`include_response_headers`) reduced to the one we
+    use: LiteLLM's cost of the call, in USD. The rest stays out of the
+    message's `response_metadata`, which is saved with the conversation."""
+    if not info or "headers" not in info:
+        return info
+    info = dict(info)
+    headers = {k.lower(): v for k, v in (info.pop("headers") or {}).items()}
+    try:
+        info["cost"] = float(headers[COST_HEADER])
+    except (KeyError, TypeError, ValueError):
+        pass
+    return info
 
 
 @dataclass
@@ -220,6 +238,9 @@ def build_chat_model(settings: Settings, ref: str | None = None) -> ModelBundle:
         "streaming": True,
         # Ask the server to include token counts in the stream (usage_metadata).
         "stream_usage": profile.stream_usage,
+        # The response headers come with the first chunk; LiteLLM's cost header
+        # becomes `response_metadata["cost"]` (see _cost_only).
+        "include_response_headers": True,
         "temperature": profile.temperature,
         "top_p": profile.top_p,
         "max_tokens_param": profile.max_tokens_param,

@@ -156,6 +156,7 @@ def main(
         disallowed_tools=_split(disallowed_tools),
         max_turns=max_turns,
         critic=True if critic else None,
+        frontend=client or ("vscode" if protocol else "print" if print_mode else "cli"),
     )
     try:
         if protocol:

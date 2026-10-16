@@ -82,6 +82,8 @@ from ..middleware.tool_text import TextToolCallsMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
 from ..sandbox import Sandbox, make_sandbox
+from ..telemetry import Telemetry
+from ..telemetry import from_settings as telemetry_from_settings
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.registry import default_tools
@@ -105,6 +107,7 @@ class AgentOptions:
     # Asked before a project's hook first runs (it runs with the user's rights).
     approve_hook: ApproveHookFn | None = None
     critic: bool | None = None  # --critic; None: settings `critic.enabled`
+    frontend: str = "cli"  # "cli", "print" (-p) or the IDE (--client): for telemetry
 
 
 @dataclass
@@ -125,6 +128,8 @@ class Agent:
     critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
     team: bool = False  # the Team tool is offered (`team.enabled`; agents/team.py)
     sandbox: Sandbox | None = None  # the Bash sandbox (sandbox/; None: unsandboxed)
+    telemetry: Telemetry | None = None  # OpenTelemetry metrics (off by default)
+    frontend: str = "cli"
     # Shown once, with the first turn (e.g. a sandbox asked for that can't run here).
     startup_warnings: list[str] = field(default_factory=list)
     # How it was built, so `rebuild_agent` can build it again with changes.
@@ -136,6 +141,8 @@ class Agent:
             await self.subagents.close()
         if self.sandbox is not None:
             await self.sandbox.close()
+        if self.telemetry is not None:
+            await self.telemetry.close()  # sends what's left
 
 
 async def prepare_agent(settings: Settings, opts: AgentOptions) -> None:
@@ -164,10 +171,10 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
         opts = AgentOptions(**{**opts.__dict__, "model": changes["model"]})
         await prepare_agent(settings, opts)
     # The sandbox (its proxy, its temp folder) carries over too.
-    new = build_agent(settings, opts, sandbox=old.sandbox, **spec)
+    new = build_agent(settings, opts, sandbox=old.sandbox, telemetry=old.telemetry, **spec)
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
-    old.sandbox = None
+    old.sandbox = old.telemetry = None
     await old.close()
     return new
 
@@ -244,8 +251,9 @@ def build_agent(
     extra_tools: list[Tool] | None = None,
     mcp: McpManager | None = None,
     sandbox: Sandbox | None = None,
+    telemetry: Telemetry | None = None,
 ) -> Agent:
-    """`sandbox`: reuse this one (a rebuild); else made from `settings.sandbox`."""
+    """`sandbox`, `telemetry`: reuse these (a rebuild); else made from settings."""
     cwd = opts.cwd.resolve()
     root = find_project_root(cwd)
     bundle = build_chat_model(settings, opts.model)
@@ -377,6 +385,10 @@ def build_agent(
         critic=critic,
         team=settings.team.enabled,
         sandbox=sandbox,
+        telemetry=telemetry
+        if telemetry is not None
+        else telemetry_from_settings(settings.telemetry),
+        frontend=opts.frontend,
         startup_warnings=warnings,
         spec={
             "settings": settings,

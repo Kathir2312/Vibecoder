@@ -108,10 +108,13 @@ class Session:
         self.store = store
         self.turn = 0  # the number of the last user turn
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        self.cost = 0.0  # USD, when the gateway says (LiteLLM)
         self._titled = False
         self._session_started = False  # SessionStart hooks have run
         self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
+        if agent.telemetry is not None:  # counted when it starts, even without a turn
+            agent.telemetry.session_started(agent.frontend, self.session_id)
 
     # --- threads ---------------------------------------------------------------
     def _use_thread(self, thread_id: str) -> None:
@@ -182,8 +185,13 @@ class Session:
         `allow`: permission rules for this turn only (a custom command's `allowed-tools`).
         """
         self.agent.policy.set_turn_allow(allow or [])
+        telemetry = self.agent.telemetry
+        if telemetry is not None:
+            telemetry.turn_started(self.session_id)
         try:
             async for event in self._run(prompt, note=note, images=images):
+                if telemetry is not None:
+                    telemetry.observe(event, self.agent.bundle.name, self.session_id)
                 yield event
         finally:
             self.agent.policy.set_turn_allow([])
@@ -345,9 +353,14 @@ class Session:
     async def _stream(
         self, graph_input: Any, context: RunContext, state: _TurnState, usage: dict[str, int]
     ) -> AsyncIterator[ev.Event]:
+        config: RunnableConfig = self.config
+        if self.agent.telemetry is not None:
+            # A LangChain callback handler: it sees every model call and tool
+            # run of this turn, the subagents' too (telemetry.py).
+            config = {**config, "callbacks": [self.agent.telemetry.callback(self.session_id)]}
         async for part in self.agent.graph.astream(
             graph_input,
-            self.config,
+            config,
             context=context,
             # "tasks" says when a node *starts*: the tools node starting means
             # the model's reply is final, so its tool calls can be shown now,
@@ -415,10 +428,13 @@ class Session:
                             if msg.usage_metadata:
                                 usage["prompt_tokens"] += msg.usage_metadata["input_tokens"]
                                 usage["completion_tokens"] += msg.usage_metadata["output_tokens"]
+                                cost = msg.response_metadata.get("cost")
+                                self.cost += cost or 0.0  # LiteLLM's cost header, in USD
                                 yield ev.UsageUpdate(
                                     prompt_tokens=msg.usage_metadata["input_tokens"],
                                     completion_tokens=msg.usage_metadata["output_tokens"],
                                     context_window=self.agent.bundle.profile.context_window,
+                                    cost=cost,
                                 )
                         # After-model middlewares (repair, <think> split) send a
                         # fixed copy with the same id: the latest one wins.
