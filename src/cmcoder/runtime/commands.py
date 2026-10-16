@@ -1,0 +1,187 @@
+"""Built-in slash commands and `#` memory notes, shared by every front end.
+
+Each command works on a `Session` and returns lines to show. Front ends (the
+REPL now, the IDE protocol in Phase 2) only render the result, so the
+commands behave the same everywhere.
+
+Most of them are thin wrappers over LangGraph operations on the thread:
+`/clear` starts a new thread, `/resume` points at an old one, `/rewind` forks
+from an earlier checkpoint, `/compact` writes a summary with `aupdate_state`.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ..core.permissions import ModeNotAllowed
+from .session import Session
+from .store import SessionInfo
+
+# (name, argument hint, description)
+BUILT_IN: list[tuple[str, str, str]] = [
+    ("help", "", "Show the commands"),
+    ("clear", "", "Start a new conversation (the old one stays saved)"),
+    ("compact", "[focus]", "Summarise the conversation now to free context"),
+    ("resume", "[id]", "List saved conversations, or continue one"),
+    ("rewind", "[turn] [code|conversation|both]", "Go back to before an earlier message"),
+    ("mode", "[mode]", "Show or change the permission mode (also Shift+Tab)"),
+    ("model", "[provider:model]", "Show or switch the model"),
+    ("todos", "", "Show the todo list"),
+    ("cost", "", "Token use in this session"),
+    ("context", "", "How full the context window is"),
+    ("exit", "", "Quit"),
+]
+
+# Rebuilds the agent with another model, keeping the same checkpointer.
+SwitchModel = Callable[[str], Awaitable[None]]
+
+
+@dataclass
+class CommandResult:
+    lines: list[str] = field(default_factory=list)
+    prompt: str | None = None  # text to put back in the input box (after /rewind)
+    exit: bool = False
+
+
+def help_lines() -> list[str]:
+    width = max(len(f"/{n} {a}") for n, a, _ in BUILT_IN)
+    lines = [f"  {f'/{n} {a}'.ljust(width)}  {d}" for n, a, d in BUILT_IN]
+    lines.append(f"  {'# note'.ljust(width)}  Add a line to the project's CMCODER.md")
+    return lines
+
+
+def age(seconds: float) -> str:
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit} ago"
+    return "just now"
+
+
+def session_lines(sessions: list[SessionInfo], now: float) -> list[str]:
+    if not sessions:
+        return ["No saved conversations in this project."]
+    return [
+        f"  {s.thread_id[:8]}  {age(now - s.updated):>8}  {s.turns:>3} turns  {s.title or '(untitled)'}"
+        for s in sessions[:20]
+    ]
+
+
+def add_memory(project_root: Path, note: str) -> Path:
+    """`# note`: append a line to the project's CMCODER.md."""
+    path = project_root / "CMCODER.md"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    sep = "" if not existing or existing.endswith("\n") else "\n"
+    path.write_text(f"{existing}{sep}- {note.strip()}\n", encoding="utf-8")
+    return path
+
+
+async def run_command(
+    session: Session, line: str, *, switch_model: SwitchModel | None = None
+) -> CommandResult:
+    name, _, arg = line.lstrip("/").partition(" ")
+    arg = arg.strip()
+    a = session.agent
+    if name in ("exit", "quit"):
+        return CommandResult(exit=True)
+    if name == "help":
+        return CommandResult(help_lines())
+    if name == "clear":
+        await session.clear()
+        return CommandResult(["Started a new conversation."])
+    if name == "compact":
+        result = await session.compact(arg or None)
+        if result is None:
+            return CommandResult(["Nothing to compact yet."])
+        return CommandResult(
+            [
+                f"Summarised {result.summarized_messages} messages with {result.model}: "
+                f"~{result.tokens_before} -> ~{result.tokens_after} tokens."
+            ]
+        )
+    if name == "resume":
+        if session.store is None:
+            return CommandResult(["Sessions aren't saved (persistSessions is off)."])
+        if not arg:
+            return CommandResult(session_lines(await session.store.list(), time.time()))
+        found = await session.store.find(arg)
+        if found is None:
+            return CommandResult([f"No single saved conversation matches {arg!r}."])
+        await session.resume(found.thread_id)
+        return CommandResult(
+            [f"Resumed: {found.title or found.thread_id[:8]} ({found.turns} turns)."]
+        )
+    if name == "rewind":
+        points = await session.rewind_points()
+        if not arg:
+            if not points:
+                return CommandResult(["Nothing to rewind to yet."])
+            return CommandResult(
+                [
+                    f"  {p.turn:>3}  {p.text}  ({p.files_changed} files changed since)"
+                    for p in points
+                ]
+                + ["Use /rewind <turn> [code|conversation|both]."]
+            )
+        turn_text, _, what = arg.partition(" ")
+        if not turn_text.isdigit() or int(turn_text) not in {p.turn for p in points}:
+            return CommandResult([f"No message number {turn_text!r}; /rewind lists them."])
+        what = what.strip() or "both"
+        result = await session.rewind(
+            int(turn_text),
+            code=what in ("code", "both"),
+            conversation=what in ("conversation", "both"),
+        )
+        lines = [f"  {x.action}: {x.path}" for x in result.actions]
+        lines.append(
+            "Rewound "
+            + {"code": "the files", "conversation": "the conversation"}.get(
+                what, "files and conversation"
+            )
+            + "."
+        )
+        return CommandResult(lines, prompt=result.prompt)
+    if name == "mode":
+        if not arg:
+            return CommandResult(
+                [f"Mode: {a.policy.mode} (available: {', '.join(a.policy.available_modes())})"]
+            )
+        try:
+            a.policy.mode = arg
+        except (ValueError, ModeNotAllowed) as e:
+            return CommandResult([str(e)])
+        return CommandResult([f"Mode: {a.policy.mode}"])
+    if name == "model":
+        if not arg:
+            return CommandResult([f"Model: {a.bundle.ref} (small/fast: {a.small.ref})"])
+        if switch_model is None:
+            return CommandResult(["Switching models isn't available here."])
+        await switch_model(arg)
+        return CommandResult([f"Model: {session.agent.bundle.ref}"])
+    if name == "todos":
+        todos = await session.todos()
+        marks = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+        return CommandResult(
+            [f"  {marks.get(t.get('status', ''), '[ ]')} {t.get('content', '')}" for t in todos]
+            or ["No todo list."]
+        )
+    if name == "cost":
+        u = session.usage
+        return CommandResult(
+            [f"Tokens this session: {u['prompt_tokens']} in, {u['completion_tokens']} out."]
+        )
+    if name == "context":
+        from langchain_core.messages.utils import count_tokens_approximately
+
+        used = count_tokens_approximately(await session.messages())
+        window = a.bundle.profile.context_window
+        return CommandResult(
+            [
+                f"Conversation: ~{used} tokens of a {window}-token window "
+                f"({100 * used // max(1, window)}%; {a.bundle.profile.context_window_source}). "
+                f"Auto-compaction at {int(a.auto_compact_threshold * 100)}%."
+            ]
+        )
+    return CommandResult([f"Unknown command /{name}. /help lists them."])
