@@ -224,6 +224,15 @@ class CriticConfig(_Model):
     max_rounds: int = Field(2, alias="maxRounds", ge=1, le=5)
 
 
+class TeamConfig(_Model):
+    """The team (agents/team.py): the `Team` tool runs PM → developer → tester
+    (→ developer on a failure) → DevOps as a LangGraph StateGraph. Off by default."""
+
+    enabled: bool = False
+    # Developer rounds: after a failed test, the developer fixes it up to this often.
+    max_rounds: int = Field(3, alias="maxRounds", ge=1, le=10)
+
+
 class PermissionsConfig(_Model):
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
@@ -278,6 +287,7 @@ class Settings(_Model):
     telemetry: TelemetryConfig = Field(default_factory=lambda: TelemetryConfig.model_validate({}))
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
     critic: CriticConfig = Field(default_factory=lambda: CriticConfig.model_validate({}))
+    team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")
     denied_mcp_servers: list[str] = Field(default_factory=list, alias="deniedMcpServers")

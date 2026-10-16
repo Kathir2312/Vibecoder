@@ -85,6 +85,7 @@ from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.registry import default_tools
 from .context import RunContext
 from .subagents import SubagentRuntime, build_task_tool
+from .team import build_team_tool
 
 
 @dataclass
@@ -120,11 +121,14 @@ class Agent:
     hooks: HookRunner | None = None  # the user's hook commands (core/hooks.py)
     subagents: SubagentRuntime | None = None  # the Task tool's runs (agents/subagents.py)
     critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
+    team: bool = False  # the Team tool is offered (`team.enabled`; agents/team.py)
     # How it was built, so `rebuild_agent` can build it again with changes.
     spec: dict[str, Any] = field(default_factory=dict)
 
     async def close(self) -> None:
         await self.ctx.close_shells()
+        if self.subagents is not None:
+            await self.subagents.close()
 
 
 async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
@@ -306,6 +310,9 @@ def build_agent(
         permission_tools=tools,
     )
     lc_tools.append(build_task_tool(subagents))
+    # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
+    if settings.team.enabled:
+        lc_tools.append(build_team_tool(subagents, settings.team.max_rounds))
     # The critic (after_agent): reviews the final answer when switched on.
     critic = CriticMiddleware(
         subagents,
@@ -338,6 +345,7 @@ def build_agent(
         hooks=hooks,
         subagents=subagents,
         critic=critic,
+        team=settings.team.enabled,
         spec={
             "settings": settings,
             "opts": opts,

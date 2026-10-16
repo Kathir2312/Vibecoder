@@ -41,6 +41,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("mcp", "", "MCP servers: status and tools"),
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
+    ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
     ("exit", "", "Quit"),
@@ -225,6 +226,17 @@ async def run_command(
         state = "on" if a.critic.enabled else "off"
         return CommandResult(
             [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
+        )
+    if name == "team":
+        if not a.team:
+            return CommandResult(
+                ['The team is off: set "team": {"enabled": true} in your settings.']
+            )
+        if not arg:
+            return CommandResult(["Usage: /team <the feature to build>"])
+        return CommandResult(
+            send="Run the Team tool for this feature request (pass it on complete, "
+            f"as `feature`), then summarise the team's result for me:\n\n{arg}"
         )
     if name == "todos":
         todos = await session.todos()

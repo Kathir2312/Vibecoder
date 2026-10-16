@@ -90,6 +90,34 @@ async def test_permission_prompt_inside_a_subagent(mock_server, project: Path) -
     assert numbers == {1}  # the same run before and after the prompt
 
 
+async def test_a_subagent_keeps_what_it_read_across_a_prompt(mock_server, project: Path) -> None:
+    """On resume LangGraph runs the Task tool again; the subagent must keep its
+    tool context (here: that it read the file), or the approved Write fails."""
+    (project / "notes.txt").write_text("old\n")
+    server = mock_server(
+        [
+            call("Task", "task1", description="update", prompt="Replace notes.txt with new."),
+            call("Read", file_path="notes.txt"),
+            call("Write", file_path="notes.txt", content="new\n"),
+            {"content": "Updated notes.txt."},
+            {"content": "Done."},
+        ]
+    )
+
+    async def ask(req: ev.PermissionRequest) -> dict:
+        return {"allow": True}
+
+    session = make_session(server.base_url, project, ask=ask)
+    try:
+        events = await run_turn(session, "update notes")
+    finally:
+        await session.agent.close()
+    write = next(r for r in of_type(events, ev.ToolResult) if r.name == "Write")
+    assert not write.is_error, write.content
+    assert (project / "notes.txt").read_text() == "new\n"
+    assert session.agent.subagents is not None and not session.agent.subagents.contexts
+
+
 async def test_parallel_subagents(mock_server, project: Path) -> None:
     server = mock_server(
         [

@@ -54,6 +54,7 @@ from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
+from langgraph.errors import GraphInterrupt
 from pydantic import BaseModel, Field
 
 from ..config.settings import Settings, config_dir, find_project_root
@@ -71,7 +72,7 @@ if TYPE_CHECKING:
     from .main import AgentOptions
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-NOT_FOR_SUBAGENTS = {"Task", "write_todos"}  # no nesting; the todo list is the main agent's
+NOT_FOR_SUBAGENTS = {"Task", "Team", "write_todos"}  # no nesting; the todos are the main agent's
 CRITIC_NAME = "critic"  # reviews answers (middleware/critic.py); not offered to the Task tool
 MAX_REPORT_CHARS = 30_000
 
@@ -225,6 +226,9 @@ class SubagentRuntime:
     langchain_tools: list[BaseTool]  # MCP tools (already LangChain tools)
     permission_tools: dict[str, Tool]  # what the permission rules know (incl. MCP stand-ins)
     runs: dict[str, SubagentRun] = field(default_factory=dict)
+    # A paused subagent's tool context (what it has read, its shell), by call id:
+    # LangGraph re-runs the tool on resume and the subagent must continue with it.
+    contexts: dict[str, ToolContext] = field(default_factory=dict)
     _slots: asyncio.Semaphore | None = None
 
     @property
@@ -240,6 +244,12 @@ class SubagentRuntime:
     @property
     def ctx_for_labels(self) -> ToolContext:
         return ToolContext(cwd=self.opts.cwd, project_root=self.root)
+
+    async def close(self) -> None:
+        """Close the shells of subagents left paused (never resumed)."""
+        for ctx in self.contexts.values():
+            await ctx.close_shells()
+        self.contexts.clear()
 
     def definitions(self) -> dict[str, AgentDefinition]:
         found = load_agents(self.root, self.settings.project_trusted)
@@ -279,7 +289,7 @@ class SubagentRuntime:
         ]
         middleware = [
             ModelCallLimitMiddleware(
-                run_limit=self.settings.subagent_max_turns, exit_behavior="end"
+                run_limit=max_turns or self.settings.subagent_max_turns, exit_behavior="end"
             ),
             *loop_middleware(
                 bundle,
@@ -404,8 +414,12 @@ async def run_agent(
     *,
     response_format: Any = None,
     max_turns: int | None = None,
+    context: Any = None,
 ) -> SubagentResult:
-    """Run one subagent to its end, showing its progress through `writer`."""
+    """Run one subagent to its end, showing its progress through `writer`.
+
+    `context`: the run context for its middleware. Left out, a nested graph
+    gets its parent's (from the Task tool: the main graph's `RunContext`)."""
     bundle = rt.model_for(definition)
     # LangGraph re-runs a tool after a permission prompt inside the subagent:
     # keep the same run (its number and counts) for the same call.
@@ -422,16 +436,23 @@ async def run_agent(
     async with rt.slots:
         run.state, run.started_at = "running", run.started_at or time.monotonic()
         _emit(writer, run.status())
-        ctx = ToolContext(cwd=rt.opts.cwd, project_root=rt.root)  # its own shell
-        ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
+        ctx = rt.contexts.get(call_id)
+        if ctx is None:  # its own shell and read-before-write tracking
+            ctx = ToolContext(cwd=rt.opts.cwd, project_root=rt.root)
+            ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
+            rt.contexts[call_id] = ctx
         graph = rt.build(
             definition, bundle, ctx, response_format=response_format, max_turns=max_turns
         )
         report = ""
         structured = None
         try:
+            extra = {"context": context} if context is not None else {}
             async for part in graph.astream(
-                {"messages": [HumanMessage(prompt)]}, stream_mode=["updates"], version="v2"
+                {"messages": [HumanMessage(prompt)]},
+                stream_mode=["updates"],
+                version="v2",
+                **extra,
             ):
                 for update in part["data"].values():
                     if not isinstance(update, dict):
@@ -440,16 +461,26 @@ async def run_agent(
                         structured = update["structured_response"]
                     for msg in update.get("messages") or []:
                         report = _follow(writer, rt, run, msg, report)
+        except GraphInterrupt:
+            raise  # paused for a permission prompt: resumed later with the same ctx
         except asyncio.CancelledError:
             run.state, run.ended_at = "stopped", time.monotonic()
             _emit(writer, run.status())
+            await _release(rt, call_id)
             raise
-        finally:
-            await ctx.close_shells()
+        except Exception:
+            await _release(rt, call_id)
+            raise
+        await _release(rt, call_id)
     run.state = "limit" if run.steps >= run.max_steps else "done"
     run.report, run.activity, run.ended_at = report, "", time.monotonic()
     _emit(writer, run.status())
     return SubagentResult(report, structured)
+
+
+async def _release(rt: SubagentRuntime, call_id: str) -> None:
+    if (ctx := rt.contexts.pop(call_id, None)) is not None:
+        await ctx.close_shells()
 
 
 def _label(rt: SubagentRuntime, call: Any) -> str:

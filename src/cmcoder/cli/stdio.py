@@ -390,6 +390,10 @@ class StdioServer:
                     result = await run_command(session, text)
                     if result.send is not None:
                         text, allow = result.send, result.allow
+                    elif name == "team":  # its usage or "the team is off": no model turn
+                        self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
+                        self.emit(self._result("success", "", False, started))
+                        return
                 async for event in session.run(text, note=note, images=images, allow=allow):
                     self.emit(event)
         except asyncio.CancelledError:
