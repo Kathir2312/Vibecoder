@@ -50,7 +50,12 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 | 12 | [`src/cmcoder/middleware/checkpoint.py`](../../src/cmcoder/middleware/checkpoint.py) | The two kinds of checkpoint: LangGraph's (conversation) and file snapshots (code) |
 | 13 | [`src/cmcoder/cli/stdio.py`](../../src/cmcoder/cli/stdio.py) | Driving a graph from a long-lived server: a turn as an asyncio task, interrupts answered by another client message, rebuilding a graph on the same checkpointer; when *not* to use an interrupt (quick IDE calls) |
 | 14 | [`src/cmcoder/runtime/titles.py`](../../src/cmcoder/runtime/titles.py), [`cli/doctor.py`](../../src/cmcoder/cli/doctor.py) | `ainvoke` with per-call options, `bind_tools`, the `@tool` decorator |
-| 15 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
+| 16 | [`src/cmcoder/mcp/manager.py`](../../src/cmcoder/mcp/manager.py) | **MCP** through `langchain-mcp-adapters`: `load_mcp_tools` on a persistent session, `tool_interceptors` (a timeout that returns an error result), `load_mcp_prompt` |
+| 17 | [`src/cmcoder/middleware/hooks.py`](../../src/cmcoder/middleware/hooks.py) | `aafter_agent` with `@hook_config(can_jump_to=["model"])` (a Stop hook says "not done yet"), the **custom stream** (`get_stream_writer()`) |
+| 18 | [`src/cmcoder/agents/subagents.py`](../../src/cmcoder/agents/subagents.py) | **A graph inside a tool**: subagents share the parent's checkpointer, so their interrupts pause the main graph; `ToolRuntime` injection; parallel tool calls (`Send`) |
+| 19 | [`src/cmcoder/middleware/critic.py`](../../src/cmcoder/middleware/critic.py) | **Structured output**: `response_format=ToolStrategy(Verdict)` and `structured_response`; an after-agent review loop |
+| 20 | [`src/cmcoder/agents/team.py`](../../src/cmcoder/agents/team.py) | **Your own `StateGraph`**: a typed state with a reducer, conditional edges (a retry loop), `context_schema`, a compiled graph nested two levels deep |
+| 21 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py), [`tests/test_team.py`](../../tests/test_team.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
 
 ## Key ideas, briefly
 
@@ -97,6 +102,30 @@ thread id: the conversation carries on in the new graph.
 **Which stream mode for what.** `messages` for tokens, `updates` for finished
 node results, `tasks` for "a node just started" (cmcoder shows a tool call the
 moment the tools node starts, not when a long command ends).
+
+**`create_agent` or your own `StateGraph`?** `create_agent` is a loop: the
+model decides what happens next. When the *order* matters more than the
+model's judgement (PM, then developer, then tester, and back to the developer
+only on a failure), write the graph yourself: nodes are async functions that
+return the state keys they change, and `add_conditional_edges` decides where
+to go. agents/team.py does that; each node runs a `create_agent` subagent.
+
+**Graphs nest, and so do interrupts.** A graph run inside a node or a tool
+(compiled without a checkpointer) becomes a subgraph: it saves its own
+checkpoints in the parent's checkpointer under its own namespace. An
+`interrupt()` deep inside pauses everything up to the top; on resume
+LangGraph re-runs the path down to it, skipping nodes that already finished.
+Anything the re-run rebuilds from scratch (here: a subagent's tool context)
+must be kept across the pause by you.
+
+**Context comes from the direct parent.** A nested graph's `runtime.context`
+is what its own caller passed. agents/team.py passes the main graph's
+`RunContext` on to the role agents explicitly.
+
+**Structured output instead of parsing.** `response_format=ToolStrategy(Model)`
+gives the model a tool shaped like a pydantic model; calling it ends the run
+and the object lands in `state["structured_response"]`. The critic's verdict
+and the tester's pass/fail are read as fields, never parsed from prose.
 
 **Counting tokens is your job.** `SummarizationMiddleware` counts the tokens
 of the *messages*; the system prompt and tool schemas also take room in the
@@ -149,8 +178,16 @@ README), then `uv run cmcoder login` and `uv run cmcoder doctor`.
    `compacted` event in `cmcoder -p ... --output-format stream-json`. Then
    change `keep` in middleware/compaction.py and compare what survives.
 
+7. **A new team role.** Add a `reviewer` node to agents/team.py between the
+   developer and the tester, with a structured `Review` output, and a
+   conditional edge that sends a rejected change back to the developer.
+   Draw the graph with `TEAM_GRAPH.get_graph().draw_mermaid()`.
+8. **Structured output.** Give the developer role a `ChangeReport` schema
+   (files changed, how it was checked) and pass its fields to the tester
+   instead of the free-text report.
+
 ## Where things go next
 
 See [the plan](../PLAN.md):
-- Phase 3: subagents as subgraphs, a team workflow as an explicit `StateGraph`, MCP through `langchain-mcp-adapters`.
+- Phase 4: hardening (Open WebUI, the Bash sandbox, OpenTelemetry, standalone builds, a security review).
 - Phase 5: RAG with LangChain `Embeddings` and `VectorStore`.

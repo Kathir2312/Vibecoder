@@ -224,3 +224,21 @@ Checked here, against the new engine:
 - The NetBeans and Eclipse plugins build.
 
 Not checked here (CI runs them): the release gates in real VS Code, IntelliJ IDEA, NetBeans and Eclipse, and the Visual Studio core and extension. VS Code and JetBrains downloads are blocked from this environment, and there is no .NET or Windows. CI now has the IDE jobs from cmcoderagent.
+
+## Phase 3 status: complete
+
+Done:
+- **MCP** (`mcp/manager.py`) through `langchain-mcp-adapters`: stdio, streamable HTTP and SSE servers, one persistent session per server, tools named `mcp__<server>__<tool>`, `${VAR}` expansion, a per-server tool timeout (a `tool_interceptor` that returns an error result), project servers approved before their first start, managed allow/deny lists, MCP prompts as slash commands; `/mcp`, `--mcp-config`.
+- **Hooks** (`middleware/hooks.py`, runner from cmcoderagent): PreToolUse in the permission middleware, PostToolUse in `awrap_tool_call`, Stop/SubagentStop in `aafter_agent` (a block jumps back to the model, at most 3 times), UserPromptSubmit, SessionStart and Notification in the session, PreCompact in compaction. Project hooks need approval.
+- **Custom commands and skills**: `.cmcoder/commands/*.md` (`$ARGUMENTS`, `allowed-tools`), `SKILL.md` folders with only descriptions in the prompt and a `Skill` tool for the body.
+- **Subagents** (`agents/subagents.py`): the `Task` tool runs a `create_agent` graph inside the tool, sharing the main checkpointer, so a subagent's permission prompt pauses the main graph. Built-in `general-purpose` and `explore`, your own `.cmcoder/agents/*.md`, a model per role, parallel runs capped by `maxParallelSubagents`, `subagent_status` events and `/agents`.
+- **Critic** (`middleware/critic.py`): an `after_agent` review by a read-only subagent with structured output (`ToolStrategy(Verdict)`); a failed review sends the findings back to the model, up to `critic.maxRounds`; only the reviewed answer is shown. `/critic`, `--critic`, the IDE's critique toggle.
+- **Team** (`agents/team.py`): an explicit `StateGraph` (PM → developer → tester, a failed test back to the developer up to `team.maxRounds`, DevOps when the stories say CI must change) behind a `Team` tool, with structured `Stories` and `TestReport` outputs. Roles from `.cmcoder/agents/` or built in. `team.enabled`, `/team <feature>`.
+
+Fixed on the way: a subagent paused by a permission prompt now keeps its tool context (what it read, its shell) for the resumed run; before, an approved Write after a Read failed with "not read yet".
+
+Checked:
+- 313 tests; ruff and pyright clean.
+- Evals at `BUILT_PHASE = 3`: 50/50 through `-p` and `--protocol stdio`, 25/25 tasks the same both ways. The Phase 3 tasks: `mcp-ticket`, `custom-command`, `subagent-search`, `critic-review`, `team-feature`.
+
+Not checked here: the team and critic with a real Qwen3 27B on the company gateway (how reliably it fills `Stories`/`TestReport`/`Verdict` in prompted tool mode). That's the first thing to run on the real network.

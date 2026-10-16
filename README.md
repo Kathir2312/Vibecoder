@@ -11,12 +11,15 @@ with [docs/learn/](docs/learn/README.md). Every engine file explains the
 framework concepts it uses.
 
 - Requirements and roadmap: [docs/PLAN.md](docs/PLAN.md)
-- Status: **Phases 0–2 done**: agent loop, tools, permissions with
+- Status: **Phases 0–3 done**: agent loop, tools, permissions with
   human-in-the-loop interrupts, Qwen3 reasoning and text tool calls, saved
   sessions (`--continue`, `--resume`), auto-compaction, `/rewind`, todos, slash
   commands, `-p` mode, REPL, `doctor`, `setup`, and the IDE protocol
   (`--protocol stdio`) with the VS Code, Visual Studio, Eclipse, NetBeans and
-  JetBrains plugins. Next: extensibility (Phase 3: MCP, hooks, subagents).
+  JetBrains plugins, plus MCP servers, hooks, custom commands, skills,
+  subagents (`Task`), the critic (`/critic`) and the team (`/team`: a
+  LangGraph `StateGraph` of PM, developer, tester and DevOps). Next:
+  hardening (Phase 4).
 
 ## Quick start
 
@@ -51,13 +54,28 @@ uv run cmcoder sessions  # list saved conversations; --resume <id> continues one
 uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-json
 ```
 
+## Extending it (Phase 3)
+
+| Feature | Where |
+|---|---|
+| MCP servers | `mcpServers` in settings, `.mcp.json` in a project (approved before first start), `--mcp-config`; `/mcp` |
+| Hooks | `hooks` in settings: PreToolUse, PostToolUse, Stop, SubagentStop, UserPromptSubmit, SessionStart, PreCompact, Notification |
+| Custom commands, skills | `.cmcoder/commands/*.md`, `.cmcoder/skills/<name>/SKILL.md` (yours in `~/.cmcoder/`) |
+| Subagents | the `Task` tool; your own in `.cmcoder/agents/*.md`; `/agents` |
+| Critic | `/critic on`, `--critic` or `"critic": {"enabled": true}`: a read-only reviewer checks each answer first |
+| Team | `"team": {"enabled": true}`, then `/team <feature>`: PM → developer → tester (↺ developer on a failure, up to `team.maxRounds`) → DevOps. Roles: `pm.md`, `developer.md`, `tester.md`, `devops.md` in `.cmcoder/agents/`, else built-in |
+
+The project's own `.cmcoder/` files are used only in a trusted project
+(`--trust-project`, or the IDE's trust setting).
+
 ## Layout
 
 | Folder | What |
 |---|---|
 | `src/cmcoder/models/` | `CmcoderChatModel` (ChatOpenAI for Qwen3/LiteLLM), reasoning split, error hints |
-| `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack |
-| `src/cmcoder/middleware/` | Permissions (interrupts), compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
+| `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack; subagents; the team `StateGraph` |
+| `src/cmcoder/mcp/` | MCP servers through `langchain-mcp-adapters` |
+| `src/cmcoder/middleware/` | Permissions (interrupts), hooks, the critic, compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
 | `src/cmcoder/runtime/` | `Session` (streaming, interrupts, compaction, rewind), SQLite session store, slash commands, titles |
 | `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash and the LangChain adapter (todos: LangChain's `write_todos`) |
 | `src/cmcoder/core/`, `config/`, `protocol/`, `sandbox/` | Carried over from cmcoderagent: permission rules, high-risk command checks, settings, IDE protocol |
