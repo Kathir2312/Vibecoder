@@ -232,7 +232,10 @@ class Session:
             note = "\n\n".join(x for x in (note, *extra) if x)
         self.turn += 1
         context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
-        state = _TurnState(await self.messages())
+        critic = self.agent.critic
+        # With the critic on, the answer is held until it is reviewed: the
+        # user sees only the final one, not drafts the critic sent back.
+        state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
         text = f"{note}\n\n{prompt}" if note else prompt
         content: str | list[str | dict[str, Any]] = text
         if images:
@@ -297,6 +300,9 @@ class Session:
             error = classify(e)
             yield error
             await self.repair_after_interrupt()
+        if state.held is not None:
+            yield ev.AssistantDelta(text=state.held.text)
+            yield state.held
         for key in usage:
             self.usage[key] += usage[key]
         await self._after_turn(prompt)
@@ -304,6 +310,7 @@ class Session:
             subtype="error" if error else "success",
             is_error=error is not None,
             result=error.message if error else state.final_text,
+            review=state.review,
             num_turns=state.model_calls,
             duration_ms=int((time.monotonic() - started) * 1000),
             usage=usage,
@@ -364,8 +371,16 @@ class Session:
                 if isinstance(data, dict) and data.get("type") == "warning":
                     yield ev.Warning(message=str(data.get("message")))
                 elif isinstance(data, dict) and data.get("type") == "event":
-                    # A subagent's status and tool calls (agents/subagents.py).
-                    yield ev.parse_event(data["event"])
+                    # A subagent's status and tool calls (agents/subagents.py),
+                    # and the critic's verdict (middleware/critic.py).
+                    event = ev.parse_event(data["event"])
+                    if isinstance(event, ev.ReviewResult) and event.final:
+                        state.review = {
+                            "verdict": event.verdict,
+                            "rounds": event.round,
+                            "issues": [i.model_dump() for i in event.issues],
+                        }
+                    yield event
                 continue
             if part["type"] == "tasks":
                 data = part["data"]
@@ -543,8 +558,11 @@ class Session:
 class _TurnState:
     """Bookkeeping while the stream runs: tokens, the reply in progress, the messages."""
 
-    def __init__(self, messages: list[AnyMessage]) -> None:
+    def __init__(self, messages: list[AnyMessage], *, hold_answer: bool = False) -> None:
         self.messages: list[AnyMessage] = list(messages)
+        self.hold_answer = hold_answer
+        self.held: ev.AssistantMessage | None = None  # the latest draft answer
+        self.review: dict[str, Any] | None = None  # the critic's final verdict
         self.splitters: dict[str, ThinkSplitter] = {}
         self.holdback = ToolCallHoldback()
         self.pending_ai: AIMessage | None = None
@@ -577,6 +595,8 @@ class _TurnState:
             for kind, piece in splitter.feed(text):
                 if kind == "reasoning":
                     out.append(ev.ReasoningDelta(text=piece))
+                elif self.hold_answer:
+                    continue  # shown when the review is done
                 elif shown := self.holdback.feed(piece):  # hide text tool calls
                     out.append(ev.AssistantDelta(text=shown))
         return out
@@ -601,14 +621,17 @@ class _TurnState:
             x for x in (str(msg.additional_kwargs.get(REASONING_KEY) or ""), think) if x
         )
         self.final_text = visible
-        out.append(
-            ev.AssistantMessage(
-                text=visible,
-                reasoning=reasoning,
-                tool_calls=[dict(c) for c in msg.tool_calls],
-                model=msg.response_metadata.get("model_name"),
-            )
+        message = ev.AssistantMessage(
+            text=visible,
+            reasoning=reasoning,
+            tool_calls=[dict(c) for c in msg.tool_calls],
+            model=msg.response_metadata.get("model_name"),
         )
+        if self.hold_answer and not msg.tool_calls:
+            out = [e for e in out if not isinstance(e, ev.AssistantDelta)]
+            self.held = message  # a later draft replaces it
+            return out
+        out.append(message)
         for c in msg.tool_calls:
             out.append(
                 ev.ToolUse(id=c["id"] or "", name=c["name"], input=c["args"], label=_label(c))

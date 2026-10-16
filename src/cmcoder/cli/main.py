@@ -107,6 +107,9 @@ def main(
         bool,
         typer.Option("--trust-project", help="Use this project's .cmcoder settings for this run."),
     ] = False,
+    critic: Annotated[
+        bool, typer.Option("--critic", help="A critic agent reviews each answer before you see it.")
+    ] = False,
     mcp_config: Annotated[
         list[Path] | None,
         typer.Option("--mcp-config", help="MCP servers for this run, in .mcp.json's format."),
@@ -152,6 +155,7 @@ def main(
         allowed_tools=_split(allowed_tools),
         disallowed_tools=_split(disallowed_tools),
         max_turns=max_turns,
+        critic=True if critic else None,
     )
     try:
         if protocol:

@@ -257,8 +257,20 @@ class SubagentRuntime:
             ref = s.subagent_model or s.small_fast_model
         return build_chat_model(s, ref) if ref else self.main
 
-    def build(self, definition: AgentDefinition, bundle: ModelBundle, ctx: ToolContext) -> Any:
-        """A subagent's graph: the same loop middleware as the main agent."""
+    def build(
+        self,
+        definition: AgentDefinition,
+        bundle: ModelBundle,
+        ctx: ToolContext,
+        *,
+        response_format: Any = None,
+        max_turns: int | None = None,
+    ) -> Any:
+        """A subagent's graph: the same loop middleware as the main agent.
+
+        `response_format`: LangChain structured output. The agent ends by
+        filling that schema (here: the critic's verdict), and the result is in
+        the state's `structured_response`."""
         from .main import loop_middleware
 
         cmcoder = [t for n, t in self.cmcoder_tools.items() if allowed(n, definition.tools)]
@@ -293,6 +305,7 @@ class SubagentRuntime:
             tools=tools,
             system_prompt=prompt,
             middleware=middleware,
+            response_format=response_format,
             name=f"subagent-{definition.name}",
         )
 
@@ -353,9 +366,19 @@ def build_task_tool(rt: SubagentRuntime) -> BaseTool:
     )
 
 
-def _emit(runtime: ToolRuntime, event: ev.Event) -> None:
-    """Into the main graph's `custom` stream (runtime/session.py forwards it)."""
-    runtime.stream_writer({"type": "event", "event": event.model_dump()})
+# Where a subagent's UI events go: the main graph's `custom` stream
+# (`ToolRuntime.stream_writer` in a tool, `get_stream_writer()` in middleware).
+Writer = Any
+
+
+def _emit(writer: Writer, event: ev.Event) -> None:
+    writer({"type": "event", "event": event.model_dump()})
+
+
+@dataclass
+class SubagentResult:
+    report: str
+    structured: Any = None  # with `response_format`: the parsed structured output
 
 
 async def run_subagent(
@@ -365,27 +388,47 @@ async def run_subagent(
     prompt: str,
     runtime: ToolRuntime,
 ) -> str:
-    call_id = runtime.tool_call_id or ""
+    result = await run_agent(
+        rt, definition, description, prompt, runtime.stream_writer, runtime.tool_call_id or ""
+    )
+    return result.report[:MAX_REPORT_CHARS] or "The subagent finished without a report."
+
+
+async def run_agent(
+    rt: SubagentRuntime,
+    definition: AgentDefinition,
+    description: str,
+    prompt: str,
+    writer: Writer,
+    call_id: str,
+    *,
+    response_format: Any = None,
+    max_turns: int | None = None,
+) -> SubagentResult:
+    """Run one subagent to its end, showing its progress through `writer`."""
     bundle = rt.model_for(definition)
-    # LangGraph re-runs this tool after a permission prompt inside the
-    # subagent: keep the same run (its number and counts) for the same call.
+    # LangGraph re-runs a tool after a permission prompt inside the subagent:
+    # keep the same run (its number and counts) for the same call.
     run = rt.runs.get(call_id) or SubagentRun(
         id=call_id,
         number=len(rt.runs) + 1,
         description=description,
         agent_type=definition.name,
         model=bundle.name,
-        max_steps=rt.settings.subagent_max_turns,
+        max_steps=max_turns or rt.settings.subagent_max_turns,
     )
     rt.runs[call_id] = run
-    _emit(runtime, run.status())
+    _emit(writer, run.status())
     async with rt.slots:
         run.state, run.started_at = "running", run.started_at or time.monotonic()
-        _emit(runtime, run.status())
+        _emit(writer, run.status())
         ctx = ToolContext(cwd=rt.opts.cwd, project_root=rt.root)  # its own shell
         ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
-        graph = rt.build(definition, bundle, ctx)
+        graph = rt.build(
+            definition, bundle, ctx, response_format=response_format, max_turns=max_turns
+        )
         report = ""
+        structured = None
         try:
             async for part in graph.astream(
                 {"messages": [HumanMessage(prompt)]}, stream_mode=["updates"], version="v2"
@@ -393,18 +436,20 @@ async def run_subagent(
                 for update in part["data"].values():
                     if not isinstance(update, dict):
                         continue
+                    if update.get("structured_response") is not None:
+                        structured = update["structured_response"]
                     for msg in update.get("messages") or []:
-                        report = _follow(runtime, rt, run, msg, report)
+                        report = _follow(writer, rt, run, msg, report)
         except asyncio.CancelledError:
             run.state, run.ended_at = "stopped", time.monotonic()
-            _emit(runtime, run.status())
+            _emit(writer, run.status())
             raise
         finally:
             await ctx.close_shells()
     run.state = "limit" if run.steps >= run.max_steps else "done"
     run.report, run.activity, run.ended_at = report, "", time.monotonic()
-    _emit(runtime, run.status())
-    return report[:MAX_REPORT_CHARS] or "The subagent finished without a report."
+    _emit(writer, run.status())
+    return SubagentResult(report, structured)
 
 
 def _label(rt: SubagentRuntime, call: Any) -> str:
@@ -417,9 +462,7 @@ def _label(rt: SubagentRuntime, call: Any) -> str:
     return call["name"]
 
 
-def _follow(
-    runtime: ToolRuntime, rt: SubagentRuntime, run: SubagentRun, msg: Any, report: str
-) -> str:
+def _follow(writer: Writer, rt: SubagentRuntime, run: SubagentRun, msg: Any, report: str) -> str:
     """Show one of the subagent's messages in the UI; returns the report so far."""
     if isinstance(msg, AIMessage):
         if msg.usage_metadata:
@@ -430,7 +473,7 @@ def _follow(
                 run.tool_uses += 1
                 run.activity = _label(rt, c)
                 _emit(
-                    runtime,
+                    writer,
                     ev.ToolUse(
                         id=c["id"] or "",
                         name=c["name"],
@@ -439,13 +482,13 @@ def _follow(
                         parent_tool_use_id=run.id,
                     ),
                 )
-            _emit(runtime, run.status())
+            _emit(writer, run.status())
         elif msg.text.strip():
             run.steps += 1
             return msg.text.strip()
     elif isinstance(msg, ToolMessage):
         _emit(
-            runtime,
+            writer,
             ev.ToolResult(
                 id=msg.tool_call_id,
                 name=msg.name or "",

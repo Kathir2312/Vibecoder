@@ -40,6 +40,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("todos", "", "Show the todo list"),
     ("mcp", "", "MCP servers: status and tools"),
     ("agents", "", "Subagent types, and this session's subagent runs"),
+    ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
     ("exit", "", "Quit"),
@@ -216,6 +217,15 @@ async def run_command(
                 f"{r.steps} steps · {r.tool_uses} tools · {r.tokens} tokens"
             )
         return CommandResult(lines)
+    if name == "critic":
+        if a.critic is None:
+            return CommandResult(["No critic here."])
+        if arg in ("on", "off"):
+            a.critic.enabled = arg == "on"
+        state = "on" if a.critic.enabled else "off"
+        return CommandResult(
+            [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
+        )
     if name == "todos":
         todos = await session.todos()
         marks = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}

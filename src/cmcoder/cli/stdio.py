@@ -58,7 +58,9 @@ from ..tools.files import ReadInput, ReadTool
 IDE_TOOL_TIMEOUT = 30.0  # seconds
 # Built-in commands that work in an IDE panel; the others (/clear, /resume,
 # /mode) are the panel's own buttons.
-PANEL_COMMANDS = {"help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents"}
+PANEL_COMMANDS = {
+    "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
+}  # fmt: skip
 # Features of later phases that IDE panels may ask for: answered with the
 # protocol's own "not set up / not available" events, so panels show a state.
 CODE_SEARCH_LATER = "Code search arrives in Phase 5 of the LangGraph engine."
@@ -160,7 +162,9 @@ class StdioServer:
                 if found is not None:
                     await self.session.resume(found.thread_id)
             self._start_reader(stdin_fd)
-            self.emit(self.session.init_event())
+            init = self.session.init_event()
+            init.critique = bool(agent.critic and agent.critic.enabled)
+            self.emit(init)
             if self.session.turn:  # a resumed conversation: show it again
                 self.emit(ev.History(messages=await self.session.history()))
                 if todos := await self.session.todos():
@@ -273,9 +277,12 @@ class StdioServer:
         elif isinstance(message, msg.RagSetup):
             self.emit(ev.RagSetupResult(ok=False, message=CODE_SEARCH_LATER))
         elif isinstance(message, msg.SetCritique):
-            self.emit(ev.CritiqueChanged(enabled=False))
-            if message.enabled:
-                self.emit(ev.Warning(message="The critic arrives in Phase 3."))
+            if self.agent.critic is not None:
+                self.agent.critic.enabled = message.enabled
+                self.opts.critic = message.enabled  # kept when the graph is rebuilt
+            self.emit(
+                ev.CritiqueChanged(enabled=bool(self.agent.critic and self.agent.critic.enabled))
+            )
         elif isinstance(message, msg.StopSubagent):
             self.error("not_running", f"No running subagent {message.id!r} (subagents: Phase 3).")
 

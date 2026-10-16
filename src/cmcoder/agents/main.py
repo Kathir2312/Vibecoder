@@ -68,6 +68,7 @@ from ..core.skills import SkillTool, load_skills, skills_prompt
 from ..mcp import McpManager
 from ..middleware.checkpoint import FileCheckpointMiddleware
 from ..middleware.compaction import CompactionMiddleware
+from ..middleware.critic import CriticMiddleware
 from ..middleware.guards import (
     BashFileWorkMiddleware,
     LoopGuardMiddleware,
@@ -100,6 +101,7 @@ class AgentOptions:
     on_rule_saved: Callable[[str], None] | None = None
     # Asked before a project's hook first runs (it runs with the user's rights).
     approve_hook: ApproveHookFn | None = None
+    critic: bool | None = None  # --critic; None: settings `critic.enabled`
 
 
 @dataclass
@@ -117,6 +119,7 @@ class Agent:
     has_small_model: bool = False  # smallFastModel is configured
     hooks: HookRunner | None = None  # the user's hook commands (core/hooks.py)
     subagents: SubagentRuntime | None = None  # the Task tool's runs (agents/subagents.py)
+    critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
     # How it was built, so `rebuild_agent` can build it again with changes.
     spec: dict[str, Any] = field(default_factory=dict)
 
@@ -303,6 +306,14 @@ def build_agent(
         permission_tools=tools,
     )
     lc_tools.append(build_task_tool(subagents))
+    # The critic (after_agent): reviews the final answer when switched on.
+    critic = CriticMiddleware(
+        subagents,
+        enabled=settings.critic.enabled if opts.critic is None else opts.critic,
+        max_rounds=settings.critic.max_rounds,
+        window=profile.context_window,
+    )
+    middleware.append(critic)
 
     # 4. The agent itself: a compiled LangGraph graph.
     graph = create_agent(
@@ -326,6 +337,7 @@ def build_agent(
         has_small_model=small is not bundle,
         hooks=hooks,
         subagents=subagents,
+        critic=critic,
         spec={
             "settings": settings,
             "opts": opts,
