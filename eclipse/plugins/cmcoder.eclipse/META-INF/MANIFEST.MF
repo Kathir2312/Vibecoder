@@ -3,7 +3,7 @@ Bundle-ManifestVersion: 2
 Bundle-Name: cmcoder
 Bundle-Vendor: cmcoder
 Bundle-SymbolicName: cmcoder.eclipse;singleton:=true
-Bundle-Version: 0.1.0.qualifier
+Bundle-Version: 0.2.0.qualifier
 Bundle-Activator: cmcoder.eclipse.Activator
 Bundle-ActivationPolicy: lazy
 Eclipse-BundleShape: dir

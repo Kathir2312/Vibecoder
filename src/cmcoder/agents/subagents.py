@@ -165,6 +165,11 @@ def load_agents(project_root: Path, project_trusted: bool) -> dict[str, AgentDef
     return agents
 
 
+def untrusted_project_agents(project_root: Path) -> list[str]:
+    """The project's own agent definitions, which are used only once it's trusted."""
+    return sorted(_load_dir(project_root / ".cmcoder" / "agents", "project", project_root))
+
+
 def allowed(name: str, wanted: list[str] | None) -> bool:
     """Is tool `name` in an agent's `tools` list? `mcp__server` means all its tools."""
     if name in NOT_FOR_SUBAGENTS:

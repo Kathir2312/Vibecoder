@@ -657,7 +657,7 @@ class Doctor:
 
     def check_extensions(self) -> None:
         """Custom commands, subagents and skills: what's found, and from where."""
-        from ..agents.subagents import load_agents
+        from ..agents.subagents import load_agents, untrusted_project_agents
         from ..core.commands import load_commands
         from ..core.skills import load_skills
 
@@ -666,10 +666,7 @@ class Doctor:
         commands = load_commands(root)
         agents = {n: a for n, a in load_agents(root, trusted).items() if a.origin != "built-in"}
         skills = load_skills(root)
-        folder = root / ".cmcoder" / "agents"
-        ignored = (
-            [] if trusted or not folder.is_dir() else sorted(p.stem for p in folder.glob("*.md"))
-        )
+        ignored = [] if trusted else untrusted_project_agents(root)
         if not (commands or agents or skills or ignored):
             return
         self.section("Commands, agents and skills")

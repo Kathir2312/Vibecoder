@@ -26,7 +26,19 @@ from ..core.permissions import MODES
 
 main_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 sub_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False, no_args_is_help=True)
-SUBCOMMANDS = {"doctor", "login", "logout", "sessions", "setup", "protocol-schema"}
+SUBCOMMANDS = {
+    "doctor",
+    "login",
+    "logout",
+    "mcp",
+    "models",
+    "protocol-schema",
+    "sessions",
+    "setup",
+    "terminal-profile",
+    "trust",
+    "version",
+}
 err = Console(stderr=True)
 
 
@@ -285,6 +297,144 @@ def logout(provider: Annotated[str | None, typer.Option("--provider")] = None) -
     print("Deleted.")
 
 
+@sub_app.command(help="List the models the gateway offers.")
+def models(
+    provider: Annotated[str | None, typer.Option("--provider", help="Provider name.")] = None,
+) -> None:
+    from ..models.gateway import GatewayError, gateway_for
+
+    settings = _load()
+    if not settings.providers:
+        err.print("[red]error:[/red] no gateway configured. Run `cmcoder setup`.")
+        raise typer.Exit(2)
+    name = provider or (
+        settings.resolve_model()[0] if settings.model else settings.default_provider()
+    )
+    if name not in settings.providers:
+        err.print(f"[red]error:[/red] unknown provider {name!r}")
+        raise typer.Exit(2)
+
+    async def go() -> int:
+        gw = gateway_for(settings, name)
+        try:
+            ids = await gw.list_models()
+            info = await gw.model_info()
+        except Exception as e:  # GatewayError, or the network
+            err.print(f"[red]error:[/red] {e if isinstance(e, GatewayError) else type(e).__name__}")
+            return 1
+        finally:
+            await gw.aclose()
+        configured = {settings.model, settings.small_fast_model, settings.vision_model}
+        for mid in ids:
+            mi = info.get(mid, {})
+            ctx = f"  context {mi['max_input_tokens']}" if mi.get("max_input_tokens") else ""
+            backend = f"  ({mi['backend']})" if mi.get("backend") else ""
+            mark = "  (configured)" if mid in configured or f"{name}:{mid}" in configured else ""
+            print(f"{mid}{ctx}{backend}{mark}")
+        return 0
+
+    raise typer.Exit(asyncio.run(go()))
+
+
+@sub_app.command(
+    help="Trust this project's .cmcoder settings (env, allow rules, permissive modes)."
+)
+def trust(
+    revoke: Annotated[bool, typer.Option("--revoke", help="Stop trusting this project.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Don't ask for confirmation.")] = False,
+) -> None:
+    from ..agents.subagents import untrusted_project_agents
+    from ..config.settings import (
+        find_project_root,
+        is_project_trusted,
+        project_settings_preview,
+        set_project_trust,
+    )
+    from ..core.commands import load_commands
+
+    root = find_project_root(Path.cwd().resolve())
+    if revoke:
+        set_project_trust(root, False)
+        print(f"No longer trusting {root}.")
+        return
+    if is_project_trusted(root):
+        print(f"{root} is already trusted.")
+        return
+    preview = project_settings_preview(root)
+    if agents := untrusted_project_agents(root):
+        preview.append(f".cmcoder/agents: subagents ({', '.join(agents)}) for the Task tool")
+    for c in load_commands(root).values():
+        if c.origin == "project" and c.allowed_tools:
+            preview.append(
+                f".cmcoder/commands: /{c.name} allows {', '.join(c.allowed_tools)} for its turn"
+            )
+    print(f"Project: {root}")
+    if preview:
+        print("Trusting it lets its .cmcoder settings do the following:")
+        for item in preview:
+            print(f"  • {item}")
+    else:
+        print("Its .cmcoder settings currently set nothing that needs trust.")
+    print("Gateways (providers) are never read from a project, trusted or not.")
+    if not yes:
+        # Both ends: on Windows the NUL device counts as a terminal for stdin.
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            err.print("[red]error:[/red] not a terminal; use --yes to confirm.")
+            raise typer.Exit(2)
+        if not typer.confirm("Trust this project?", default=False):
+            raise typer.Exit(1)
+    set_project_trust(root, True)
+    print(f"Trusted {root}. `cmcoder trust --revoke` undoes it.")
+
+
+@sub_app.command(
+    "terminal-profile",
+    help="Add a Windows Terminal profile that starts cmcoder (with its name and icon).",
+)
+def terminal_profile(
+    remove: Annotated[bool, typer.Option("--remove", help="Remove the profile.")] = False,
+    print_only: Annotated[
+        bool, typer.Option("--print", help="Only print the profile (JSON); change nothing.")
+    ] = False,
+) -> None:
+    import json
+
+    from .. import brand
+    from . import terminal_profile as wt
+
+    b = brand.load()
+    if print_only:
+        print(json.dumps(wt.profile(b), indent=2))
+        return
+    if remove:
+        removed = wt.remove(b)
+        print(f"Removed {removed}." if removed else "No profile to remove.")
+        return
+    try:
+        path = wt.install(b)
+    except (RuntimeError, OSError) as e:
+        err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(1) from None
+    print(
+        f"Added the Windows Terminal profile {b.product_name} ({path}). Open a new Windows "
+        "Terminal window to see it in the drop-down; `cmcoder terminal-profile --remove` removes it."
+    )
+
+
+@sub_app.command(help="Print the version.")
+def version() -> None:
+    print(VERSION_TEXT)
+
+
+def _add_mcp() -> None:
+    from .mcp_cmd import mcp_app
+
+    sub_app.add_typer(mcp_app, name="mcp")
+
+
+_add_mcp()
+
+
 def run() -> None:
     if sys.argv[1:2] == ["--sandbox-bridge"]:
         # Inside the Linux sandbox (standalone build: no separate Python there).
@@ -293,6 +443,11 @@ def run() -> None:
         bridge(sys.argv[2:])
         return
     use_utf8_stdio()
+    from ..shared_install import mark_running
+    from ..user_folder import prepare
+
+    prepare()  # ~/.cmcoder and the company's settings template, the first time
+    mark_running()  # run from ~/.cmcoder/bin: no update swaps it out meanwhile
     # No telemetry by default (requirement): LangSmith tracing only when the
     # user explicitly turns it on, never because a stray env var is set.
     if os.environ.get("CMCODER_ENABLE_LANGSMITH") != "1":
