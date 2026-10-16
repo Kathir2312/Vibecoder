@@ -29,6 +29,7 @@ HOW THE PIECES MEET
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import threading
@@ -181,6 +182,10 @@ class StdioServer:
                         message = msg.parse_message(line)
                     except ValidationError as e:
                         self.error("protocol", f"Invalid message: {_first_error(e)}")
+                        if _is_user_message(line):  # the client waits for this turn's result
+                            self.emit(
+                                self._result("error", "Invalid message.", True, time.monotonic())
+                            )
                         continue
                     if isinstance(message, msg.Shutdown):
                         break
@@ -473,6 +478,14 @@ def command_list() -> list[ev.CommandInfo]:
         for n, h, d in BUILT_IN
         if n in PANEL_COMMANDS
     ]
+
+
+def _is_user_message(line: str | bytes) -> bool:
+    try:
+        data = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("type") == "user_message"
 
 
 def _first_error(e: ValidationError) -> str:

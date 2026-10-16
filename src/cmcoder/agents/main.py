@@ -79,6 +79,7 @@ from ..middleware.hooks import HooksMiddleware
 from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, ReasoningMiddleware
 from ..middleware.permission import PermissionMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
+from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
 from ..sandbox import Sandbox, make_sandbox
@@ -123,6 +124,7 @@ class Agent:
     max_turns: int
     auto_compact_threshold: float = 0.8
     has_small_model: bool = False  # smallFastModel is configured
+    vision: ModelBundle | None = None  # visionModel: describes images for a main model that can't
     hooks: HookRunner | None = None  # the user's hook commands (core/hooks.py)
     subagents: SubagentRuntime | None = None  # the Task tool's runs (agents/subagents.py)
     critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
@@ -149,7 +151,12 @@ async def prepare_agent(settings: Settings, opts: AgentOptions) -> None:
     """Before `build_agent` (which is synchronous): ask the gateway about its
     models (limits, Open WebUI backends) and probe an unknown context window.
     Cached, quick, best effort (models/gateway.py)."""
-    refs = [opts.model or settings.model, settings.small_fast_model, settings.subagent_model]
+    refs = [
+        opts.model or settings.model,
+        settings.small_fast_model,
+        settings.subagent_model,
+        settings.vision_model,
+    ]
     try:
         await prepare_models(settings, refs)
     except Exception:  # never a reason not to start; the first request will tell
@@ -308,6 +315,13 @@ def build_agent(
         # (so it survives compaction and --resume).
         TodoListMiddleware(),
     ]
+    # Images: for a main model that can't see them, `visionModel` describes
+    # them (the session asks it; middleware/vision.py sends the descriptions).
+    vision = build_chat_model(settings, settings.vision_model) if settings.vision_model else None
+    if not profile.vision:
+        middleware.append(
+            VisionMiddleware(main_sees=False, describer_name=vision.name if vision else "")
+        )
     lc_tools = as_langchain_tools(list(tools.values()), ctx)
     if mcp is not None:
         # MCP servers' tools are already LangChain tools (langchain-mcp-adapters);
@@ -380,6 +394,7 @@ def build_agent(
         max_turns=max_turns,
         auto_compact_threshold=settings.auto_compact_threshold,
         has_small_model=small is not bundle,
+        vision=vision,
         hooks=hooks,
         subagents=subagents,
         critic=critic,

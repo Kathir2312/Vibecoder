@@ -69,6 +69,7 @@ from ..images import Image
 from ..middleware.compaction import CompactionMiddleware, is_summary
 from ..middleware.permission import PERMISSION_KIND
 from ..middleware.tool_text import ToolCallHoldback
+from ..middleware.vision import DESCRIPTIONS_KEY, describe
 from ..models.chat import REASONING_KEY
 from ..models.errors import classify
 from ..models.reasoning import ThinkSplitter, split_think
@@ -90,6 +91,10 @@ TURN_KEY = "cmcoder_turn"
 
 def _text(message: AnyMessage) -> str:
     return message.content if isinstance(message.content, str) else message.text
+
+
+# What this cmcoder can do beyond the base protocol (system_init.features).
+FEATURES = ("images",)
 
 
 class Session:
@@ -157,15 +162,18 @@ class Session:
             await asyncio.gather(*self._background, return_exceptions=True)
 
     def init_event(self) -> ev.SystemInit:
+        """`system_init`: the session, and what this cmcoder can do beyond the
+        base protocol (`features`; IDE panels show the image button for "images")."""
         a = self.agent
         return ev.SystemInit(
             session_id=self.session_id,
             cwd=str(a.ctx.cwd),
             model=a.bundle.name,
             provider=a.bundle.provider,
-            tools=[*a.tools, "write_todos", "Task"],
+            tools=[*a.tools, "write_todos", "Task", *(["Team"] if a.team else [])],
             permission_mode=a.policy.mode,
             version=__version__,
+            features=list(FEATURES),
         )
 
     # --- one user turn -----------------------------------------------------------
@@ -241,26 +249,39 @@ class Session:
         self._session_started = True
         if extra:
             note = "\n\n".join(x for x in (note, *extra) if x)
+        text = f"{note}\n\n{prompt}" if note else prompt
+        content: str | list[str | dict[str, Any]] = text
+        kwargs: dict[str, Any] = {}
+        if images:
+            # LangChain's standard multimodal content: a list of blocks.
+            blocks = [{"type": "image_url", "image_url": {"url": i.data_url}} for i in images]
+            content = [{"type": "text", "text": text}, *blocks]
+            if not self.agent.bundle.profile.vision:
+                # A model that can't see images gets descriptions (middleware/vision.py),
+                # written now; without them the turn doesn't start.
+                failure: str | None = None
+                async for event in self._describe(blocks, prompt, kwargs):
+                    if isinstance(event, ev.Error):
+                        failure = event.message
+                    yield event
+                if failure is not None:
+                    yield ev.Result(
+                        subtype="error",
+                        is_error=True,
+                        result=failure,
+                        num_turns=0,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        usage=usage,
+                        session_id=self.session_id,
+                    )
+                    return
         self.turn += 1
         context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
         critic = self.agent.critic
         # With the critic on, the answer is held until it is reviewed: the
         # user sees only the final one, not drafts the critic sent back.
         state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
-        text = f"{note}\n\n{prompt}" if note else prompt
-        content: str | list[str | dict[str, Any]] = text
-        if images:
-            if self.agent.bundle.profile.vision:
-                # LangChain's standard multimodal content: a list of blocks.
-                content = [
-                    {"type": "text", "text": text},
-                    *({"type": "image_url", "image_url": {"url": i.data_url}} for i in images),
-                ]
-            else:
-                yield ev.Warning(
-                    message=f"{self.agent.bundle.name} can't see images; they were left out."
-                )
-        message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn})
+        message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn, **kwargs})
         state.apply([message])
         graph_input: Any = {"messages": [message]}
         error: ev.Error | None = None
@@ -349,6 +370,33 @@ class Session:
             task = asyncio.create_task(title())  # in the background: nothing waits for it
             self._background.add(task)
             task.add_done_callback(self._background.discard)
+
+    async def _describe(
+        self, blocks: list[dict[str, Any]], prompt: str, kwargs: dict[str, Any]
+    ) -> AsyncIterator[ev.Event]:
+        """The vision model's descriptions of the user's images, into `kwargs`."""
+        vision = self.agent.vision
+        if vision is None:
+            yield ev.Error(
+                kind="images",
+                message=f"{self.agent.bundle.name} can't see images, and no visionModel is set "
+                'to describe them: set "visionModel" in your settings to a model on your '
+                "gateway that sees images (a Qwen-VL, for example).",
+            )
+            return
+        yield ev.ImagesDescribing(model=vision.name, count=len(blocks))
+        try:
+            descriptions = [
+                await describe(vision.quick(), vision.name, block, prompt) for block in blocks
+            ]
+        except Exception as e:  # VisionError, or the gateway refused
+            yield ev.Error(
+                kind="images",
+                message=f"The vision model {vision.name} couldn't describe the image: {e}",
+            )
+            return
+        kwargs[DESCRIPTIONS_KEY] = descriptions
+        yield ev.ImagesDescribed(model=vision.name, count=len(blocks))
 
     async def _stream(
         self, graph_input: Any, context: RunContext, state: _TurnState, usage: dict[str, int]

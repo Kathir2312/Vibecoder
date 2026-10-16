@@ -38,6 +38,7 @@ from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
 from langgraph.runtime import Runtime
 
 from ..core.hooks import HookRunner
+from .vision import images_as_text
 
 # Recognised by the mock server in tests; harmless to real models.
 COMPACTION_TAG = "<cmcoder-compaction>"
@@ -97,6 +98,11 @@ class CompactionMiddleware(SummarizationMiddleware):
         """The room messages really have: the window minus the system prompt and tools."""
         room = max(1024, window - self.overhead_tokens)
         self.model.profile = {**(self.model.profile or {}), "max_input_tokens": room}
+
+    def _trim_messages_for_summary(self, messages: list[AnyMessage]) -> list[AnyMessage]:
+        # The summary prompt is text: images go in as their descriptions
+        # (middleware/vision.py), never as base64.
+        return super()._trim_messages_for_summary(images_as_text(messages))
 
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
