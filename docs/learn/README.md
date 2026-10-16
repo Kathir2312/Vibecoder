@@ -55,7 +55,11 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 | 18 | [`src/cmcoder/agents/subagents.py`](../../src/cmcoder/agents/subagents.py) | **A graph inside a tool**: subagents share the parent's checkpointer, so their interrupts pause the main graph; `ToolRuntime` injection; parallel tool calls (`Send`) |
 | 19 | [`src/cmcoder/middleware/critic.py`](../../src/cmcoder/middleware/critic.py) | **Structured output**: `response_format=ToolStrategy(Verdict)` and `structured_response`; an after-agent review loop |
 | 20 | [`src/cmcoder/agents/team.py`](../../src/cmcoder/agents/team.py) | **Your own `StateGraph`**: a typed state with a reducer, conditional edges (a retry loop), `context_schema`, a compiled graph nested two levels deep |
-| 21 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py), [`tests/test_team.py`](../../tests/test_team.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
+| 21 | [`src/cmcoder/telemetry.py`](../../src/cmcoder/telemetry.py) | **Callbacks**: an `AsyncCallbackHandler` in the run's config sees every model call and tool run, nested graphs included; `run_id` pairs a start with its end |
+| 22 | [`src/cmcoder/middleware/vision.py`](../../src/cmcoder/middleware/vision.py) | **Multimodal messages** (`image_url` blocks); `awrap_model_call` changing one request while the state keeps the original; `astream` with an idle timeout |
+| 23 | [`src/cmcoder/models/gateway.py`](../../src/cmcoder/models/gateway.py), [`models/chat.py`](../../src/cmcoder/models/chat.py) | What LangChain's model classes *don't* cover (a gateway's model list and limits); `model_copy` vs `bind` for a variant of a model; `include_response_headers` and `response_metadata` |
+| 24 | [`src/cmcoder/runtime/serde.py`](../../src/cmcoder/runtime/serde.py) | **Checkpoint serialisation**: `JsonPlusSerializer(allowed_msgpack_modules=...)`, what is saved and what may be loaded |
+| 25 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py), [`tests/test_team.py`](../../tests/test_team.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
 
 ## Key ideas, briefly
 
@@ -127,6 +131,23 @@ gives the model a tool shaped like a pydantic model; calling it ends the run
 and the object lands in `state["structured_response"]`. The critic's verdict
 and the tester's pass/fail are read as fields, never parsed from prose.
 
+**Callbacks see everything; middleware changes things.** Middleware runs
+inside the agent loop and can change requests, responses and state. A
+callback handler (`config={"callbacks": [handler]}`) only observes: model
+starts and ends, tool runs, errors, for the whole run *including nested
+graphs*. That makes it the right place for metrics (telemetry.py) and
+tracing (LangSmith is a callback too).
+
+**`bind` or a copy?** `model.bind(max_tokens=40)` returns a *runnable* that
+adds call options. Most LangChain APIs accept it, but some want a real chat
+model (`SummarizationMiddleware`'s summarizer). `model.model_copy(update=
+{...})` gives one with different fields (`ModelBundle.quick()`: thinking off).
+
+**Checkpoints are data you load.** Everything in graph state is serialised
+and later deserialised. Keep state to messages, dicts and a few pydantic
+models of your own, and tell the serializer exactly which classes may be
+built (runtime/serde.py).
+
 **Counting tokens is your job.** `SummarizationMiddleware` counts the tokens
 of the *messages*; the system prompt and tool schemas also take room in the
 window. With small (32K) windows, account for that (see compaction.py).
@@ -186,8 +207,12 @@ README), then `uv run cmcoder login` and `uv run cmcoder doctor`.
    (files changed, how it was checked) and pass its fields to the tester
    instead of the free-text report.
 
+9. **A callback handler.** Write an `AsyncCallbackHandler` that prints each
+   tool's name and duration (`on_tool_start` / `on_tool_end`, matched by
+   `run_id`), pass it in `config["callbacks"]` in a test, and run a turn with
+   a Task call: do the subagent's tools show up?
+
 ## Where things go next
 
 See [the plan](../PLAN.md):
-- Phase 4: hardening (Open WebUI, the Bash sandbox, OpenTelemetry, standalone builds, a security review).
 - Phase 5: RAG with LangChain `Embeddings` and `VectorStore`.

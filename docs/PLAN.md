@@ -242,3 +242,32 @@ Checked:
 - Evals at `BUILT_PHASE = 3`: 50/50 through `-p` and `--protocol stdio`, 25/25 tasks the same both ways. The Phase 3 tasks: `mcp-ticket`, `custom-command`, `subagent-search`, `critic-review`, `team-feature`.
 
 Not checked here: the team and critic with a real Qwen3 27B on the company gateway (how reliably it fills `Stories`/`TestReport`/`Verdict` in prompted tool mode). That's the first thing to run on the real network.
+
+## Phase 4 status: complete here; the release gates run in CI
+
+Done:
+- **Open WebUI as a gateway** (`"type": "openwebui"`). `models/gateway.py` covers the gateway's own endpoints: models, LiteLLM `/model/info`, Open WebUI's backends, Ollama's trained length, and a context-window probe. `prepare_agent()` caches what they say before the (synchronous) build. Ollama models get `num_ctx`. Learned windows keep their source and age.
+- **The Bash sandbox** (bubblewrap / `sandbox-exec`, from cmcoderagent) in the new engine: shared by subagents, kept across rebuilds, a warning when it was asked for and can't run.
+- **Images for a text-only model** (`visionModel`). The session has the vision model describe them first (`images_describing` / `images_described`); a failure stops the turn. `VisionMiddleware` sends the descriptions instead of the images, and summaries get them too.
+- **Thinking off for quick jobs** (titles, summaries): `ModelBundle.quick()`.
+- **OpenTelemetry** (off by default): model calls and tool runs through a LangChain callback handler, so subagents count too; turns and compactions from the session. LiteLLM's cost header becomes `response_metadata["cost"]` and `/cost` shows it.
+- **The full `cmcoder doctor`**: network/TLS (with the untrusted issuer), key, models, and per model the window, streaming, the thinking switch, tool calling and images; then the vision model, MCP, hooks, sandbox, telemetry and extensions.
+- **Packaging and release.** Branding, the shared program in `~/.cmcoder/bin`, the first-run user folder, the package scripts for the terminal and all IDEs, the release bundle with gate report and checksums, OSV checks, and the release and packaging-scripts workflows.
+- **One version everywhere** (0.2.0).
+- **Subcommands** `trust`, `mcp`, `models`, `version`, `terminal-profile`.
+- **Security review** ([SECURITY-REVIEW.md](SECURITY-REVIEW.md)). Two fixes:
+  - per-call caches keyed by the server's tool-call id now include name and arguments;
+  - checkpoints load only cmcoder's own types.
+
+Checked here:
+- 582 tests, ruff and pyright clean. The sandbox tests run under real bubblewrap.
+- Through a real Open WebUI (latest release), with an Ollama stand-in and the mock as an OpenAI-compatible backend: 2/2 (`tests/test_openwebui_real.py`).
+- Evals at `BUILT_PHASE = 4`: 50/50, 25/25 the same through `-p` and `--protocol stdio`.
+- The standalone build (Linux): 118 MB, `--version` in about 0.45 s. Its tests pass with no Python in reach.
+- The JVM core 31/31 (CodeSearch is Phase 5), the shared panel 76/76; the NetBeans and Eclipse plugins build at 0.2.0.
+- pip-audit over `uv.lock`: no known vulnerabilities. Semgrep: nothing to fix.
+
+Not checked here (CI and the company network):
+- the release gates in real IDEs and on Windows and macOS;
+- `cmcoder doctor` and the evals against the real LiteLLM + Qwen3 gateway;
+- how reliably Qwen3 27B fills the critic's and the team's structured outputs in prompted tool mode.

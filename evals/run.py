@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parent
 TASKS = ROOT / "tasks"
 FILE_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep")
 # The plan phase this engine has reached; tasks needing a later phase are skipped.
-BUILT_PHASE = 3
+BUILT_PHASE = 4
 
 
 def load_tasks(names: list[str] | None = None, include_later: bool = False) -> list[Path]:
