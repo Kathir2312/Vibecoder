@@ -39,6 +39,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("model", "[provider:model]", "Show or switch the model"),
     ("todos", "", "Show the todo list"),
     ("mcp", "", "MCP servers: status and tools"),
+    ("agents", "", "Subagent types, and this session's subagent runs"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
     ("exit", "", "Quit"),
@@ -204,6 +205,17 @@ async def run_command(
         from ..mcp import status_lines
 
         return CommandResult(status_lines(a.spec.get("mcp")))
+    if name == "agents":
+        rt = a.subagents
+        if rt is None:
+            return CommandResult(["No subagents."])
+        lines = [f"  {d.name} ({d.origin}): {d.description}" for d in rt.definitions().values()]
+        for r in rt.runs.values():
+            lines.append(
+                f"  #{r.number} {r.agent_type}: {r.description} · {r.state} · "
+                f"{r.steps} steps · {r.tool_uses} tools · {r.tokens} tokens"
+            )
+        return CommandResult(lines)
     if name == "todos":
         todos = await session.todos()
         marks = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}

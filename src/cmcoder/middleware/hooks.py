@@ -26,7 +26,7 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -49,10 +49,17 @@ def warn(message: str) -> None:
 
 
 class HooksMiddleware(AgentMiddleware):
-    def __init__(self, runner: HookRunner, approve_fn: ApproveHookFn | None = None) -> None:
+    def __init__(
+        self,
+        runner: HookRunner,
+        approve_fn: ApproveHookFn | None = None,
+        *,
+        stop_event: Literal["Stop", "SubagentStop"] = "Stop",
+    ) -> None:
         super().__init__()
         self.runner = runner
         self.approve_fn = approve_fn
+        self.stop_event: Literal["Stop", "SubagentStop"] = stop_event  # subagents: SubagentStop
         self._stop_blocks = 0
 
     async def abefore_agent(
@@ -91,11 +98,11 @@ class HooksMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["model"])
     async def aafter_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
-        if not self.runner.has("Stop"):
+        if not self.runner.has(self.stop_event):
             return None
         last = state["messages"][-1] if state["messages"] else None
         outcome = await self.runner.run(
-            "Stop",
+            self.stop_event,
             {
                 "stop_hook_active": self._stop_blocks > 0,
                 "last_assistant_message": last.text if isinstance(last, AIMessage) else "",

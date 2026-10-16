@@ -58,7 +58,7 @@ from ..tools.files import ReadInput, ReadTool
 IDE_TOOL_TIMEOUT = 30.0  # seconds
 # Built-in commands that work in an IDE panel; the others (/clear, /resume,
 # /mode) are the panel's own buttons.
-PANEL_COMMANDS = {"help", "compact", "rewind", "model", "cost", "todos", "context", "mcp"}
+PANEL_COMMANDS = {"help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents"}
 # Features of later phases that IDE panels may ask for: answered with the
 # protocol's own "not set up / not available" events, so panels show a state.
 CODE_SEARCH_LATER = "Code search arrives in Phase 5 of the LangGraph engine."

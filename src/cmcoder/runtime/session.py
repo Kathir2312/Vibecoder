@@ -160,7 +160,7 @@ class Session:
             cwd=str(a.ctx.cwd),
             model=a.bundle.name,
             provider=a.bundle.provider,
-            tools=[*a.tools, "write_todos"],
+            tools=[*a.tools, "write_todos", "Task"],
             permission_mode=a.policy.mode,
             version=__version__,
         )
@@ -348,7 +348,14 @@ class Session:
         ):
             if part["type"] == "messages":
                 chunk, meta = part["data"]
-                if isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == MODEL_NODE:
+                # Only the main agent's own tokens: a subagent's LLM calls run
+                # inside a tool, under a nested namespace ("tools:…|model:…").
+                nested = "|" in str(meta.get("langgraph_checkpoint_ns", ""))
+                if (
+                    isinstance(chunk, AIMessageChunk)
+                    and meta.get("langgraph_node") == MODEL_NODE
+                    and not nested
+                ):
                     for event in state.on_token(chunk):
                         yield event
                 continue
@@ -356,6 +363,9 @@ class Session:
                 data = part["data"]
                 if isinstance(data, dict) and data.get("type") == "warning":
                     yield ev.Warning(message=str(data.get("message")))
+                elif isinstance(data, dict) and data.get("type") == "event":
+                    # A subagent's status and tool calls (agents/subagents.py).
+                    yield ev.parse_event(data["event"])
                 continue
             if part["type"] == "tasks":
                 data = part["data"]

@@ -44,7 +44,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -83,6 +83,7 @@ from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.registry import default_tools
 from .context import RunContext
+from .subagents import SubagentRuntime, build_task_tool
 
 
 @dataclass
@@ -115,6 +116,7 @@ class Agent:
     auto_compact_threshold: float = 0.8
     has_small_model: bool = False  # smallFastModel is configured
     hooks: HookRunner | None = None  # the user's hook commands (core/hooks.py)
+    subagents: SubagentRuntime | None = None  # the Task tool's runs (agents/subagents.py)
     # How it was built, so `rebuild_agent` can build it again with changes.
     spec: dict[str, Any] = field(default_factory=dict)
 
@@ -163,6 +165,46 @@ def fixed_prompt_tokens(system_prompt: str, tools: list[BaseTool]) -> int:
     """Tokens every request spends before any message: system prompt + tool schemas."""
     schemas = json.dumps([convert_to_openai_tool(t) for t in tools])
     return int((len(system_prompt) + len(schemas)) / CHARS_PER_TOKEN)
+
+
+def loop_middleware(
+    bundle: ModelBundle,
+    policy: PermissionPolicy,
+    ctx: ToolContext,
+    tools: dict[str, Tool],
+    opts: AgentOptions,
+    hooks: HookRunner | None,
+    *,
+    on_window: Callable[[int], None] | None = None,
+    stop_event: Literal["Stop", "SubagentStop"] = "Stop",
+) -> list[AgentMiddleware[Any, Any]]:
+    """The middleware every cmcoder agent loop has, the main one and subagents."""
+    profile = bundle.profile
+    return [
+        # Built-in: when the prompt passes ~60% of the window, replace old tool
+        # outputs with a placeholder (cheap, before summarising is needed).
+        ContextEditingMiddleware(
+            edits=[ClearToolUsesEdit(trigger=int(profile.context_window * 0.6), keep=3)]
+        ),
+        ModelProfileMiddleware(bundle, on_window=on_window),
+        TextToolCallsMiddleware(prompted=profile.tool_calling == "prompted"),
+        ReasoningMiddleware(),
+        ToolCallRepairMiddleware(),
+        PlainToolTextMiddleware(),
+        LoopGuardMiddleware(),
+        BashFileWorkMiddleware(enabled=profile.steer_bash_file_work),
+        PermissionMiddleware(
+            policy,
+            ctx,
+            tools,
+            interactive=opts.interactive,
+            on_rule_saved=opts.on_rule_saved,
+            hooks=hooks,
+            approve_hook=opts.approve_hook,
+        ),
+        *([HooksMiddleware(hooks, opts.approve_hook, stop_event=stop_event)] if hooks else []),
+        FileCheckpointMiddleware(ctx, tools),
+    ]
 
 
 def build_agent(
@@ -239,32 +281,28 @@ def build_agent(
             hooks=hooks,
         )
         middleware.append(compaction)
-    middleware += [
-        # Built-in: when the prompt passes ~60% of the window, replace old tool
-        # outputs with a placeholder (cheap, before summarising is needed).
-        ContextEditingMiddleware(
-            edits=[ClearToolUsesEdit(trigger=int(profile.context_window * 0.6), keep=3)]
-        ),
-        ModelProfileMiddleware(bundle, on_window=compaction.set_window if compaction else None),
-        TextToolCallsMiddleware(prompted=profile.tool_calling == "prompted"),
-        ReasoningMiddleware(),
-        ToolCallRepairMiddleware(),
-        PlainToolTextMiddleware(),
-        LoopGuardMiddleware(),
-        BashFileWorkMiddleware(enabled=profile.steer_bash_file_work),
-        PermissionMiddleware(
-            policy,
-            ctx,
-            tools,
-            interactive=opts.interactive,
-            on_rule_saved=opts.on_rule_saved,
-            hooks=hooks,
-            approve_hook=opts.approve_hook,
-        ),
-        *([HooksMiddleware(hooks, opts.approve_hook)] if hooks else []),
-        FileCheckpointMiddleware(ctx, tools),
-        *(extra_middleware or []),
-    ]
+    middleware += loop_middleware(
+        bundle,
+        policy,
+        ctx,
+        tools,
+        opts,
+        hooks,
+        on_window=compaction.set_window if compaction else None,
+    )
+    middleware += extra_middleware or []
+    # Subagents: the Task tool starts a fresh agent graph for a self-contained job.
+    subagents = SubagentRuntime(
+        settings=settings,
+        opts=opts,
+        policy=policy,
+        hooks=hooks,
+        main=bundle,
+        cmcoder_tools={n: t for n, t in tools.items() if not n.startswith("mcp__")},
+        langchain_tools=mcp.langchain_tools() if mcp is not None else [],
+        permission_tools=tools,
+    )
+    lc_tools.append(build_task_tool(subagents))
 
     # 4. The agent itself: a compiled LangGraph graph.
     graph = create_agent(
@@ -287,6 +325,7 @@ def build_agent(
         auto_compact_threshold=settings.auto_compact_threshold,
         has_small_model=small is not bundle,
         hooks=hooks,
+        subagents=subagents,
         spec={
             "settings": settings,
             "opts": opts,
