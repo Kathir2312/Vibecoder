@@ -194,8 +194,12 @@ def main(
 
 @sub_app.command(help="Check the gateway, TLS, API key and model.")
 def doctor(
-    model: Annotated[str | None, typer.Option("--model", "-m")] = None,
-    no_probe: Annotated[bool, typer.Option("--no-probe", help="Skip model calls.")] = False,
+    model: Annotated[
+        list[str] | None, typer.Option("--model", "-m", help="Model(s) to check.")
+    ] = None,
+    no_probe: Annotated[
+        bool, typer.Option("--no-probe", help="Skip test requests to the models.")
+    ] = False,
 ) -> None:
     from .doctor import run_doctor
 

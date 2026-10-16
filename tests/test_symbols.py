@@ -1,0 +1,71 @@
+"""Terminal symbols: the classic Windows console gets a set its fonts can draw."""
+
+from __future__ import annotations
+
+from dataclasses import astuple
+
+from rich.spinner import Spinner
+
+from cmcoder.cli import symbols
+from cmcoder.cli.symbols import BASIC, UNICODE, choose
+from cmcoder.config.settings import Settings
+
+# What the classic console's default fonts (Consolas, Lucida Console) lack:
+# each showed as "?" (reported on Windows).
+MISSING_IN_CONSOLE_FONTS = set("◐◑⏸✓✗⚠☐☑✻◦━") | {chr(c) for c in range(0x2800, 0x2900)}
+
+
+def all_chars(s: symbols.Symbols) -> set[str]:
+    text = "".join(str(v) for v in astuple(s)[2:])  # not the name and spinner name
+    return set(text) | set("".join(Spinner(s.spinner).frames))
+
+
+def test_basic_set_has_nothing_the_console_fonts_lack() -> None:
+    assert not all_chars(BASIC) & MISSING_IN_CONSOLE_FONTS
+    assert all_chars(UNICODE) & MISSING_IN_CONSOLE_FONTS  # the full set is different
+    assert set(BASIC.states) == set(UNICODE.states) and set(BASIC.todo) == set(UNICODE.todo)
+
+
+def test_basic_symbols_are_in_the_console_code_page() -> None:
+    # Raster fonts draw only the console's code page: each symbol must be in it.
+    for codec in ("cp437", "cp850", "cp852", "cp866", "cp1252"):
+        chosen = symbols.basic_symbols(codec)
+        assert all(symbols.has(c, codec) for c in all_chars(chosen)), codec
+    assert symbols.basic_symbols("cp437").ok == "√"  # 437 has it
+    assert symbols.basic_symbols("cp850").ok == "+"  # 850 doesn't
+
+
+def test_output_filter_turns_missing_characters_into_ascii() -> None:
+    from io import StringIO
+
+    # From the screenshot: "● Todo list", "☐ Read…", "… 11 more lines", "Waiting for model…".
+    text = "● Todo list\n  ☐ Read ✓ ⚠ ◐\n… 11 more lines · ├─ √ ’"
+    assert symbols.make_safe(text, "cp437") == (
+        "* Todo list\n  [ ] Read + ! *\n... 11 more lines · ├─ √ '"
+    )
+    assert symbols.make_safe("√ ·", "cp850") == "+ ·"
+    out = StringIO()
+    stream = symbols.SafeStream(out, "cp437")  # type: ignore[arg-type]
+    assert stream.write("Waiting for model…") == len("Waiting for model…")
+    assert out.getvalue() == "Waiting for model..." and stream.getvalue() == out.getvalue()
+
+
+def test_auto_picks_basic_only_in_the_classic_windows_console() -> None:
+    win = "win32"
+    assert choose("auto", {}, win).name == "basic"  # conhost: PowerShell or cmd in their own window
+    for modern in (
+        {"WT_SESSION": "x"},
+        {"TERM_PROGRAM": "vscode"},
+        {"ConEmuPID": "1"},
+        {"TERM": "xterm"},
+    ):
+        assert choose("auto", modern, win) is UNICODE, modern
+    assert choose("auto", {}, "linux") is UNICODE and choose(None, {}, "darwin") is UNICODE
+
+
+def test_setting_and_environment_override() -> None:
+    assert choose("unicode", {}, "win32") is UNICODE
+    assert choose("basic", {"WT_SESSION": "x"}, "win32").name == "basic"
+    assert choose("unicode", {"CMCODER_SYMBOLS": "basic"}, "linux").name == "basic"  # env wins
+    assert Settings.model_validate({"symbols": "basic"}).symbols == "basic"
+    assert Settings.model_validate({}).symbols == "auto"
