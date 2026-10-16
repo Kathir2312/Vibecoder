@@ -157,3 +157,24 @@ Embeddings through the gateway, local and Chroma-HTTP `VectorStore`s, incrementa
 - `uv run python evals/run.py` (mock and real gateway): success rate, turns, tokens and tool choice compared against cmcoderagent's baseline.
 - IDE release gate (G-list) in every IDE using the bundled standalone `cmcoder`, with no Python on the test machine's path.
 - `cmcoder doctor` against the real gateway on the company network.
+
+## Phase 0 status (in progress)
+
+Done:
+- Project setup: `uv`, the pinned LangChain/LangGraph stack, ruff, pyright and pytest; CI on Linux, macOS and Windows.
+- Reused from cmcoderagent without changes: `protocol/`, `config/`, `core/` (permissions, risk, readonly, prompt, steer), `providers/` (auth, profiles, transport), `tools/`, `sandbox/`, `testing/mock_server.py`, plus their tests.
+- `models/`: `CmcoderChatModel` (keeps `reasoning_content`, chooses `max_tokens` or `max_completion_tokens`, company TLS through our httpx client), `<think>` splitting, error hints.
+- `tools/adapter.py`: the cmcoder tools as LangChain `BaseTool`s.
+- `middleware/`: permissions with `interrupt()`/`Command(resume)`, a per-call `max_tokens` budget, tool-call repair, loop guard, steering shell file work to the file tools, reasoning cleanup.
+- `agents/main.py`: `create_agent` with an `InMemorySaver` checkpointer. `runtime/session.py`: streaming to protocol events, interrupts and repair after Ctrl+C.
+- CLI: REPL, `-p` (text/json/stream-json), `doctor`, `login`, `logout`.
+- Learning guide: [docs/learn/README.md](learn/README.md).
+
+Not done yet, still in Phase 0:
+- Copy the eval tasks and runner (`evals/`), and run them against the mock server.
+- Measure the standalone (PyInstaller) build's size and startup time.
+- Run against the real LiteLLM gateway and Qwen3 models (`cmcoder doctor`); this environment can't reach it.
+
+Changes from the plan:
+- Reused modules keep their original paths (`core/`, `providers/`) rather than moving to `security/`. This keeps imports and tests identical to cmcoderagent.
+- No `MultiEdit` tool: cmcoderagent doesn't have one either.
