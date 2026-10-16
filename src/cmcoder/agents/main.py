@@ -80,6 +80,7 @@ from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, Reasonin
 from ..middleware.permission import PermissionMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
 from ..models.chat import ModelBundle, build_chat_model
+from ..models.gateway import prepare_models
 from ..sandbox import Sandbox, make_sandbox
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
@@ -137,6 +138,17 @@ class Agent:
             await self.sandbox.close()
 
 
+async def prepare_agent(settings: Settings, opts: AgentOptions) -> None:
+    """Before `build_agent` (which is synchronous): ask the gateway about its
+    models (limits, Open WebUI backends) and probe an unknown context window.
+    Cached, quick, best effort (models/gateway.py)."""
+    refs = [opts.model or settings.model, settings.small_fast_model, settings.subagent_model]
+    try:
+        await prepare_models(settings, refs)
+    except Exception:  # never a reason not to start; the first request will tell
+        pass
+
+
 async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
     """The same agent with changes (`model=`, `extra_tools=`, `mcp=`).
 
@@ -150,6 +162,7 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
     settings: Settings = spec.pop("settings")
     if "model" in changes:
         opts = AgentOptions(**{**opts.__dict__, "model": changes["model"]})
+        await prepare_agent(settings, opts)
     # The sandbox (its proxy, its temp folder) carries over too.
     new = build_agent(settings, opts, sandbox=old.sandbox, **spec)
     new.policy.mode = old.policy.mode
@@ -298,7 +311,7 @@ def build_agent(
         # Built-in (subclassed): summarise old turns with the small model.
         compaction = CompactionMiddleware(
             bundle.model,
-            small.model,
+            small.quick(),  # thinking off: a summary needs no reasoning
             threshold=settings.auto_compact_threshold,
             overhead_tokens=fixed_prompt_tokens(system_prompt, lc_tools),
             hooks=hooks,

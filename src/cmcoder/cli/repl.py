@@ -21,7 +21,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.panel import Panel
 
-from ..agents.main import AgentOptions, build_agent, rebuild_agent
+from ..agents.main import AgentOptions, build_agent, prepare_agent, rebuild_agent
 from ..compat import InterruptHandler
 from ..config.settings import Settings, add_local_allow_rule, find_project_root
 from ..core.hooks import Hook
@@ -101,6 +101,7 @@ async def run_repl(
         mcp = McpManager(settings, root)
         for warning in await mcp.start(approve_server):
             console.print(f"[yellow]{warning}[/yellow]")
+        await prepare_agent(settings, opts)
         agent = build_agent(settings, opts, checkpointer=store.checkpointer, mcp=mcp)
 
         @bindings.add("s-tab")

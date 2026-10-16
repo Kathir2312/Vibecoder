@@ -336,7 +336,7 @@ class Session:
                 return
 
             async def title() -> None:
-                await store.set_title(thread_id, await make_title(self.agent.small.model, prompt))
+                await store.set_title(thread_id, await make_title(self.agent.small.quick(), prompt))
 
             task = asyncio.create_task(title())  # in the background: nothing waits for it
             self._background.add(task)
@@ -493,7 +493,7 @@ class Session:
         if len(messages) < 3:
             return None
         mw = CompactionMiddleware(
-            self.agent.bundle.model, self.agent.small.model, always=True, focus=focus
+            self.agent.bundle.model, self.agent.small.quick(), always=True, focus=focus
         )
         # Middleware hooks are plain async methods: callable outside a graph too.
         update = await mw.abefore_model({"messages": messages}, cast(Any, None))

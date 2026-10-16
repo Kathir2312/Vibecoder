@@ -39,7 +39,7 @@ from typing import Any, BinaryIO
 
 from pydantic import ValidationError
 
-from ..agents.main import Agent, AgentOptions, build_agent, rebuild_agent
+from ..agents.main import Agent, AgentOptions, build_agent, prepare_agent, rebuild_agent
 from ..config.settings import Settings, SettingsError, add_local_allow_rule, find_project_root
 from ..core.hooks import Hook
 from ..core.ide import IDE_TOOLS, format_ide_context
@@ -149,6 +149,7 @@ class StdioServer:
             self.store = store
             try:
                 self.mcp = McpManager(self.settings, root)
+                await prepare_agent(self.settings, self.opts)
                 agent = build_agent(
                     self.settings, self.opts, checkpointer=store.checkpointer, mcp=self.mcp
                 )

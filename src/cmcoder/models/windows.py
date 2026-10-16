@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
+from typing import Any
 
 from ..config.settings import config_dir
 
 SOURCE = "server limit (from its error)"
+PROBE_SOURCE = "server limit (probe)"
+LEARNED_TTL = 30 * 24 * 3600  # a known window: a month (servers get reconfigured)
+UNKNOWN_TTL = 24 * 3600  # a probe without an answer: try again tomorrow
 
 _WINDOW_PATTERNS = [
     re.compile(r"maximum context length is (\d+)"),
@@ -43,22 +48,40 @@ def _key(base_url: str, model: str) -> str:
     return f"{base_url.rstrip('/')}|{model}"
 
 
-def learned_window(base_url: str, model: str) -> tuple[int, str] | None:
+def _read() -> dict[str, Any]:
     try:
         data = json.loads(_file().read_text(encoding="utf-8"))
-        n = int(data[_key(base_url, model)])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return n, SOURCE
-
-
-def save_window(base_url: str, model: str, window: int) -> None:
-    path = _file()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        data = {}
-    data[_key(base_url, model)] = window
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def learned_entry(base_url: str, model: str) -> dict[str, Any] | None:
+    """What was learned, if still fresh: {"tokens": N or None, "source", "at"}.
+
+    `tokens` None: a probe got no answer (asked again after a day)."""
+    entry = _read().get(_key(base_url, model))
+    if isinstance(entry, int):  # the first format: just the number
+        return {"tokens": entry, "source": SOURCE, "at": time.time()}
+    if not isinstance(entry, dict):
+        return None
+    ttl = LEARNED_TTL if entry.get("tokens") else UNKNOWN_TTL
+    if time.time() - float(entry.get("at", 0)) > ttl:
+        return None
+    return entry
+
+
+def learned_window(base_url: str, model: str) -> tuple[int, str] | None:
+    entry = learned_entry(base_url, model)
+    if entry is None or not entry.get("tokens"):
+        return None
+    return int(entry["tokens"]), str(entry.get("source") or SOURCE)
+
+
+def save_window(base_url: str, model: str, window: int | None, source: str = SOURCE) -> None:
+    data = _read()
+    data[_key(base_url, model)] = {"tokens": window, "source": source, "at": time.time()}
+    path = _file()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")

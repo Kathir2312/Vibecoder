@@ -153,7 +153,7 @@ async def test_context_window_is_learned_from_the_server(mock_server, project: P
     assert events[-1].result == "fits now"
     assert session.agent.bundle.profile.context_window == 6000
     saved = json.loads((config_dir() / "context-windows.json").read_text())
-    assert list(saved.values()) == [6000]
+    assert [e["tokens"] for e in saved.values()] == [6000]
 
 
 # --- tool calls as text (Qwen without a tool parser) -------------------------------------------
@@ -273,3 +273,19 @@ async def test_clear_starts_a_new_thread(mock_server, project: Path) -> None:
         assert "zebra" not in str(server.requests[-1]["messages"])
     finally:
         await session.agent.close()
+
+
+def test_learned_windows_age_and_the_first_format(tmp_path: Path) -> None:
+    from cmcoder.models import windows
+
+    path = config_dir() / "context-windows.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"https://gw/v1|old": 8192}))  # the first format: a number
+    assert windows.learned_window("https://gw/v1", "old") == (8192, windows.SOURCE)
+    windows.save_window("https://gw/v1", "unknown", None, windows.PROBE_SOURCE)
+    assert windows.learned_window("https://gw/v1", "unknown") is None  # no answer: no window
+    assert windows.learned_entry("https://gw/v1", "unknown") is not None  # but don't re-probe
+    data = json.loads(path.read_text())
+    data["https://gw/v1|unknown"]["at"] -= 2 * 24 * 3600  # two days later: probe again
+    path.write_text(json.dumps(data))
+    assert windows.learned_entry("https://gw/v1", "unknown") is None

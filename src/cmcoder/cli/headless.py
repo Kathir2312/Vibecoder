@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from typing import Literal
 
-from ..agents.main import AgentOptions, build_agent
+from ..agents.main import AgentOptions, build_agent, prepare_agent
 from ..config.settings import Settings, find_project_root
 from ..mcp import McpManager
 from ..protocol import events as ev
@@ -43,6 +43,7 @@ async def run_headless(
         mcp = McpManager(settings, root)
         for warning in await mcp.start(None):
             print(f"warning: {warning}", file=sys.stderr)
+        await prepare_agent(settings, opts)
         agent = build_agent(settings, opts, checkpointer=store.checkpointer, mcp=mcp)
         session = Session(agent, ask=None, store=store)
         if resume or continue_session:
