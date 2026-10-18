@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    # Work branches too: the rebuild is developed on claude/* without an open PR.
+    branches: [main, "claude/**"]
   pull_request:
 
 jobs:

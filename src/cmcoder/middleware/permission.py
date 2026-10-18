@@ -22,6 +22,15 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
   Interrupts need a checkpointer (the graph's state is saved while it waits);
   agents/main.py always gives one.
 
+* `abefore_model` + `@hook_config(can_jump_to=["end"])`: a hook that runs
+  before every model call and may return `{"jump_to": "end"}` to finish the
+  run there. A user's "Deny" (without feedback) ends the turn this way, as in
+  cmcoderagent: the denial goes into the conversation as the tool's result,
+  but the model isn't asked again until the user says what to do. Why not
+  return `Command(goto=END)` from the tool call? `create_agent` routes the
+  tools node to the model with a conditional edge that always fires, so a
+  `goto` would add a destination, not replace it.
+
 WHY NOT LANGCHAIN'S BUILT-IN `HumanInTheLoopMiddleware`?
 It asks for configured tool names (approve / edit / reject). cmcoder needs
 much more: allow/ask/deny rules (`Bash(npm test:*)`, `Edit(src/**)`),
@@ -37,9 +46,10 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
+from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
@@ -51,6 +61,9 @@ from .hooks import warn
 # The `kind` field of our interrupt payload, so the runtime can tell
 # permission requests from other interrupts (IDE tools in Phase 2).
 PERMISSION_KIND = "permission"
+# Marks the tool result of a call the user denied without feedback: the turn stops.
+STOP_KEY = "cmcoder_stop_turn"
+STOPPED = "Stopped: the user denied a tool call."
 
 
 def denied(call: ToolCall, text: str) -> ToolMessage:
@@ -58,6 +71,16 @@ def denied(call: ToolCall, text: str) -> ToolMessage:
     return ToolMessage(
         content=text, tool_call_id=call["id"] or "", name=call["name"], status="error"
     )
+
+
+def stopped(messages: list[Any]) -> bool:
+    """Did the user deny a call of the last model reply (and give no feedback)?"""
+    for msg in reversed(messages):
+        if not isinstance(msg, ToolMessage):  # the reply, or the user's next message
+            return False
+        if msg.additional_kwargs.get(STOP_KEY):
+            return True
+    return False
 
 
 def call_key(call: ToolCall) -> str:
@@ -104,6 +127,12 @@ class PermissionMiddleware(AgentMiddleware):
         self.known_tools = tools
         self.interactive = interactive
         self.on_rule_saved = on_rule_saved
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(
+        self, state: AgentState, runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:
+        return {"jump_to": "end"} if stopped(state["messages"]) else None
 
     async def awrap_tool_call(
         self,
@@ -204,7 +233,10 @@ class PermissionMiddleware(AgentMiddleware):
                 if feedback
                 else " Stop and wait for the user's instructions."
             )
-            return denied(call, text)
+            result = denied(call, text)
+            if not feedback:
+                result.additional_kwargs[STOP_KEY] = True
+            return result
         if answer.get("remember") and can_remember:
             for r in rules:
                 self.policy.add_allow(r)

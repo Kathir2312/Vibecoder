@@ -62,6 +62,7 @@ from ..core.commands import MAX_FILE_CHARS, parse_file, split_tools
 from ..core.hooks import HookRunner
 from ..core.permissions import PermissionPolicy
 from ..core.prompt import build_subagent_prompt, load_memory_files
+from ..middleware.permission import STOP_KEY
 from ..models.chat import ModelBundle, build_chat_model
 from ..protocol import events as ev
 from ..sensitive import safe_project_file
@@ -365,7 +366,7 @@ def build_task_tool(rt: SubagentRuntime) -> BaseTool:
         prompt: str,
         runtime: ToolRuntime,
         subagent_type: str = "general-purpose",
-    ) -> str:
+    ) -> str | ToolMessage:
         definitions = rt.definitions()
         definition = definitions.get(subagent_type)
         if definition is None:
@@ -396,6 +397,7 @@ def _emit(writer: Writer, event: ev.Event) -> None:
 class SubagentResult:
     report: str
     structured: Any = None  # with `response_format`: the parsed structured output
+    stopped: bool = False  # the user denied one of its tool calls (no feedback)
 
 
 async def run_subagent(
@@ -404,10 +406,21 @@ async def run_subagent(
     description: str,
     prompt: str,
     runtime: ToolRuntime,
-) -> str:
+) -> str | ToolMessage:
     result = await run_agent(
         rt, definition, description, prompt, runtime.stream_writer, runtime.tool_call_id or ""
     )
+    if result.stopped:
+        # The user's "Deny" inside a subagent stops the main turn too
+        # (middleware/permission.py ends the turn on this mark).
+        return ToolMessage(
+            "Stopped: the user denied a tool call of this subagent. "
+            "Stop and wait for the user's instructions.",
+            tool_call_id=runtime.tool_call_id or "",
+            name="Task",
+            status="error",
+            additional_kwargs={STOP_KEY: True},
+        )
     return result.report[:MAX_REPORT_CHARS] or "The subagent finished without a report."
 
 
@@ -455,6 +468,7 @@ async def run_agent(
         )
         report = ""
         structured = None
+        stopped = False
         try:
             extra = {"context": context} if context is not None else {}
             async for part in graph.astream(
@@ -469,6 +483,10 @@ async def run_agent(
                     if update.get("structured_response") is not None:
                         structured = update["structured_response"]
                     for msg in update.get("messages") or []:
+                        stopped = stopped or (
+                            isinstance(msg, ToolMessage)
+                            and bool(msg.additional_kwargs.get(STOP_KEY))
+                        )
                         report = _follow(writer, rt, run, msg, report)
         except GraphInterrupt:
             raise  # paused for a permission prompt: resumed later with the same ctx
@@ -481,10 +499,10 @@ async def run_agent(
             await _release(rt, call_id)
             raise
         await _release(rt, call_id)
-    run.state = "limit" if run.steps >= run.max_steps else "done"
+    run.state = "stopped" if stopped else "limit" if run.steps >= run.max_steps else "done"
     run.report, run.activity, run.ended_at = report, "", time.monotonic()
     _emit(writer, run.status())
-    return SubagentResult(report, structured)
+    return SubagentResult(report, structured, stopped)
 
 
 async def _release(rt: SubagentRuntime, call_id: str) -> None:

@@ -90,6 +90,31 @@ async def test_permission_prompt_inside_a_subagent(mock_server, project: Path) -
     assert numbers == {1}  # the same run before and after the prompt
 
 
+async def test_denial_inside_a_subagent_ends_the_turn(mock_server, project: Path) -> None:
+    server = mock_server(
+        [
+            call("Task", "task1", description="write it", prompt="Create out.txt with 'x'."),
+            call("Write", file_path="out.txt", content="x"),
+            {"content": "never sent"},
+        ]
+    )
+
+    async def ask(req: ev.PermissionRequest) -> dict:
+        return {"allow": False}
+
+    session = make_session(server.base_url, project, ask=ask)
+    try:
+        events = await run_turn(session, "make out.txt")
+    finally:
+        await session.agent.close()
+    assert len(server.requests) == 2  # neither the subagent nor the main agent goes on
+    assert events[-1].subtype == "interrupted"
+    task = [r for r in of_type(events, ev.ToolResult) if r.name == "Task"][0]
+    assert task.is_error and "denied" in task.content
+    assert of_type(events, ev.SubagentStatus)[-1].state == "stopped"
+    assert not (project / "out.txt").exists()
+
+
 async def test_a_subagent_keeps_what_it_read_across_a_prompt(mock_server, project: Path) -> None:
     """On resume LangGraph runs the Task tool again; the subagent must keep its
     tool context (here: that it read the file), or the approved Write fails."""

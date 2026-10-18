@@ -35,6 +35,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from typing import Any, BinaryIO
 
@@ -283,9 +284,12 @@ class StdioServer:
         elif isinstance(message, msg.Index):
             self._side(self._index(message.action))
         elif isinstance(message, msg.RagCandidates):
-            self._side(self._rag_candidates())
+            self._side(
+                self._rag_candidates(),
+                lambda e: ev.RagCandidatesList(likely=[], other=[], errors={"cmcoder": e}),
+            )
         elif isinstance(message, msg.RagSetup):
-            self._side(self._rag_setup(message))
+            self._side(self._rag_setup(message), lambda e: ev.RagSetupResult(ok=False, message=e))
         elif isinstance(message, msg.SetCritique):
             if self.agent.critic is not None:
                 self.agent.critic.enabled = message.enabled
@@ -424,9 +428,20 @@ class StdioServer:
 
     # --- code search (VS Code's status bar and setup) ------------------------------
 
-    def _side(self, job: Any) -> None:
-        """Run a job beside the conversation (indexing can take a while)."""
-        task = asyncio.get_running_loop().create_task(job)
+    def _side(self, job: Any, reply: Callable[[str], ev.Event] | None = None) -> None:
+        """Run a job beside the conversation (indexing can take a while).
+
+        A job that fails unexpectedly still answers (`reply`, else a warning):
+        the client waits for an answer to its request."""
+
+        async def run() -> None:
+            try:
+                await job
+            except Exception as e:  # never take the session down, never leave it waiting
+                text = f"{type(e).__name__}: {e}"
+                self.emit(reply(text) if reply else ev.Warning(message=text))
+
+        task = asyncio.get_running_loop().create_task(run())
         self.side_tasks.add(task)
         task.add_done_callback(self.side_tasks.discard)
 

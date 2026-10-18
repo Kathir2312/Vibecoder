@@ -67,7 +67,7 @@ from ..agents.main import Agent
 from ..core.checkpoints import Checkpoints
 from ..images import Image
 from ..middleware.compaction import CompactionMiddleware, is_summary
-from ..middleware.permission import PERMISSION_KIND
+from ..middleware.permission import PERMISSION_KIND, STOPPED, stopped
 from ..middleware.tool_text import ToolCallHoldback
 from ..middleware.vision import DESCRIPTIONS_KEY, describe
 from ..models.chat import REASONING_KEY
@@ -337,11 +337,13 @@ class Session:
             yield state.held
         for key in usage:
             self.usage[key] += usage[key]
+        # A user's "Deny" ended the turn (middleware/permission.py).
+        denied = error is None and stopped(await self.messages())
         await self._after_turn(prompt)
         yield ev.Result(
-            subtype="error" if error else "success",
+            subtype="error" if error else "interrupted" if denied else "success",
             is_error=error is not None,
-            result=error.message if error else state.final_text,
+            result=error.message if error else STOPPED if denied else state.final_text,
             review=state.review,
             num_turns=state.model_calls,
             duration_ms=int((time.monotonic() - started) * 1000),
