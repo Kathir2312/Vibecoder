@@ -61,6 +61,7 @@ IDE_TOOL_TIMEOUT = 30.0  # seconds
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
+    "index",
 }  # fmt: skip
 # Features of later phases that IDE panels may ask for: answered with the
 # protocol's own "not set up / not available" events, so panels show a state.

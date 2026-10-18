@@ -67,6 +67,7 @@ from ..core.prompt import build_system_prompt, load_memory_files
 from ..core.skills import SkillTool, load_skills, skills_prompt
 from ..mcp import McpManager
 from ..middleware.checkpoint import FileCheckpointMiddleware
+from ..middleware.code_context import AutoContextMiddleware
 from ..middleware.compaction import CompactionMiddleware
 from ..middleware.critic import CriticMiddleware
 from ..middleware.guards import (
@@ -82,12 +83,15 @@ from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
+from ..rag.index import CodeIndex
+from ..rag.session import open_code_index
 from ..runtime.serde import checkpoint_serde
 from ..sandbox import Sandbox, make_sandbox
 from ..telemetry import Telemetry
 from ..telemetry import from_settings as telemetry_from_settings
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
+from ..tools.code_search import CodeSearchTool
 from ..tools.registry import default_tools
 from .context import RunContext
 from .subagents import SubagentRuntime, build_task_tool
@@ -131,6 +135,7 @@ class Agent:
     critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
     team: bool = False  # the Team tool is offered (`team.enabled`; agents/team.py)
     sandbox: Sandbox | None = None  # the Bash sandbox (sandbox/; None: unsandboxed)
+    code_index: CodeIndex | None = None  # code search (rag/; None: off or not indexed)
     telemetry: Telemetry | None = None  # OpenTelemetry metrics (off by default)
     frontend: str = "cli"
     # Shown once, with the first turn (e.g. a sandbox asked for that can't run here).
@@ -144,6 +149,8 @@ class Agent:
             await self.subagents.close()
         if self.sandbox is not None:
             await self.sandbox.close()
+        if self.code_index is not None:
+            await self.code_index.close()
         if self.telemetry is not None:
             await self.telemetry.close()  # sends what's left
 
@@ -179,10 +186,13 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
         opts = AgentOptions(**{**opts.__dict__, "model": changes["model"]})
         await prepare_agent(settings, opts)
     # The sandbox (its proxy, its temp folder) carries over too.
+    spec.setdefault("code_index", old.code_index)
     new = build_agent(settings, opts, sandbox=old.sandbox, telemetry=old.telemetry, **spec)
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
     old.sandbox = old.telemetry = None
+    if old.code_index is new.code_index:
+        old.code_index = None
     await old.close()
     return new
 
@@ -260,8 +270,10 @@ def build_agent(
     mcp: McpManager | None = None,
     sandbox: Sandbox | None = None,
     telemetry: Telemetry | None = None,
+    code_index: CodeIndex | None = None,
 ) -> Agent:
-    """`sandbox`, `telemetry`: reuse these (a rebuild); else made from settings."""
+    """`sandbox`, `telemetry`, `code_index`: reuse these (a rebuild, or /index
+    turning code search on); else made from settings."""
     cwd = opts.cwd.resolve()
     root = find_project_root(cwd)
     bundle = build_chat_model(settings, opts.model)
@@ -280,9 +292,15 @@ def build_agent(
     if sandbox is None:
         sandbox, warning = make_sandbox(settings.sandbox, root)
         warnings += [warning] if warning else []
-    ctx = ToolContext(cwd=cwd, project_root=root, sandbox=sandbox)
+    # Code search (Phase 5): the project's index, when it has one (rag/).
+    if code_index is None:
+        code_index, warning = open_code_index(settings, root)
+        warnings += [warning] if warning else []
+    ctx = ToolContext(cwd=cwd, project_root=root, sandbox=sandbox, code_index=code_index)
     ctx.max_output_chars = output_budget_chars(profile.context_window)
     tools = {t.name: t for t in default_tools() if t.name != "TodoWrite"}
+    if code_index is not None:
+        tools["CodeSearch"] = CodeSearchTool()
     # Tools an IDE runs for the agent (getDiagnostics, openFile; core/ide.py).
     tools.update({t.name: t for t in extra_tools or []})
     # Skills (SKILL.md folders): only their descriptions go in the prompt; the
@@ -305,6 +323,7 @@ def build_agent(
         memory=load_memory_files(cwd, root),
         skills=skills_prompt(skills),
         sandbox=sandbox.prompt_note() if sandbox else None,
+        code_search=code_index is not None,
     )
 
     # 3. Middleware: see the module docstring for the order.
@@ -316,6 +335,11 @@ def build_agent(
         # (so it survives compaction and --resume).
         TodoListMiddleware(),
     ]
+    if code_index is not None:
+        # RAG before the model: the index's best matches for the user's message.
+        middleware.append(
+            AutoContextMiddleware(code_index, settings.rag.auto_context, profile.context_window)
+        )
     # Images: for a main model that can't see them, `visionModel` describes
     # them (the session asks it; middleware/vision.py sends the descriptions).
     vision = build_chat_model(settings, settings.vision_model) if settings.vision_model else None
@@ -361,6 +385,7 @@ def build_agent(
         langchain_tools=mcp.langchain_tools() if mcp is not None else [],
         permission_tools=tools,
         sandbox=sandbox,
+        code_index=code_index,
     )
     lc_tools.append(build_task_tool(subagents))
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
@@ -401,6 +426,7 @@ def build_agent(
         critic=critic,
         team=settings.team.enabled,
         sandbox=sandbox,
+        code_index=code_index,
         telemetry=telemetry
         if telemetry is not None
         else telemetry_from_settings(settings.telemetry),

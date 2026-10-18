@@ -231,6 +231,7 @@ class SubagentRuntime:
     langchain_tools: list[BaseTool]  # MCP tools (already LangChain tools)
     permission_tools: dict[str, Tool]  # what the permission rules know (incl. MCP stand-ins)
     sandbox: Any = None  # the main agent's Bash sandbox (shared; its own shell)
+    code_index: Any = None  # the project's code index (rag/), for CodeSearch
     runs: dict[str, SubagentRun] = field(default_factory=dict)
     # A paused subagent's tool context (what it has read, its shell), by call id:
     # LangGraph re-runs the tool on resume and the subagent must continue with it.
@@ -444,7 +445,9 @@ async def run_agent(
         _emit(writer, run.status())
         ctx = rt.contexts.get(call_id)
         if ctx is None:  # its own shell and read-before-write tracking
-            ctx = ToolContext(cwd=rt.opts.cwd, project_root=rt.root, sandbox=rt.sandbox)
+            ctx = ToolContext(
+                cwd=rt.opts.cwd, project_root=rt.root, sandbox=rt.sandbox, code_index=rt.code_index
+            )
             ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
             rt.contexts[call_id] = ctx
         graph = rt.build(

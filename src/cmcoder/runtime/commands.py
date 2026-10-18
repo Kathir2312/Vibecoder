@@ -42,6 +42,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
+    ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
     ("exit", "", "Quit"),
@@ -227,6 +228,10 @@ async def run_command(
         return CommandResult(
             [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
         )
+    if name == "index":
+        from ..rag.session import index_command
+
+        return CommandResult(await index_command(session, arg))
     if name == "team":
         if not a.team:
             return CommandResult(
