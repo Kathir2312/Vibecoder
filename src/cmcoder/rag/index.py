@@ -29,21 +29,17 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config.settings import RagConfig, Settings, config_dir
 from ..models.gateway import Gateway, gateway_for
 from .chunker import Chunk, chunk_file
-from .embed import GatewayEmbeddings
+from .common import StoreError, chroma_needs_url, private_folder
 from .files import FileSelector, FileState
-from .stores import (
-    ChromaVectorStore,
-    LocalVectorStore,
-    StoreError,
-    _CodeStore,
-    chroma_needs_url,
-    private_folder,
-)
+
+if TYPE_CHECKING:
+    from .embed import GatewayEmbeddings
+    from .stores import _CodeStore
 
 
 @dataclass
@@ -410,6 +406,8 @@ class CodeIndex:
 def open_store(
     cfg: RagConfig, root: Path, model: str, folder: Path, embedding: GatewayEmbeddings
 ) -> _CodeStore:
+    from .stores import ChromaVectorStore, LocalVectorStore
+
     store = cfg.store
     meta: dict[str, Any] = {"cmcoder": 1, "embedding_model": model}
     if store.type == "local":
@@ -442,6 +440,8 @@ def open_index(settings: Settings, root: Path, gateway: Gateway | None = None) -
     folder = index_folder(root, ref)
     owns = gateway is None or gateway.name != provider
     gw = gateway_for(settings, provider) if owns or gateway is None else gateway
+    from .embed import GatewayEmbeddings
+
     # (An unused httpx client needs no closing if opening the store fails.)
     store = open_store(cfg, root, ref, folder, GatewayEmbeddings(gw, model))
     return CodeIndex(root, cfg, store, folder, ref, owns_gateway=owns)

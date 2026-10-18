@@ -15,7 +15,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..config.settings import (
     Settings,
@@ -24,9 +24,10 @@ from ..config.settings import (
 )
 from ..models.gateway import gateway_for
 from ..providers.auth import store_api_key
-from .embed import GatewayEmbeddings
-from .index import CodeIndex
-from .stores import ChromaVectorStore, StoreError, chroma_key_name, chroma_needs_url
+from .common import StoreError, chroma_key_name, chroma_needs_url
+
+if TYPE_CHECKING:
+    from .index import CodeIndex
 
 # "chroma-server": Chroma at a URL, on this PC (http://localhost:8000) or a
 # server. (Chroma inside cmcoder isn't offered for now.)
@@ -80,6 +81,8 @@ async def embedding_candidates(settings: Settings) -> tuple[list[str], list[str]
 async def check_embedding_model(settings: Settings, ref: str) -> tuple[str, int]:
     """("provider:model", vector size) after a test request; raises
     EmbeddingError (or SettingsError for an unknown provider)."""
+    from .embed import GatewayEmbeddings
+
     name, model = settings.resolve_model(ref)
     gateway = gateway_for(settings, name)
     embedder = GatewayEmbeddings(gateway, model)
@@ -98,6 +101,8 @@ async def check_store(choice: SetupChoice) -> str:
     if not choice.url:
         raise StoreError(chroma_needs_url())
     headers = {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {}
+    from .stores import ChromaVectorStore
+
     # No embeddings needed to check a server: only its heartbeat and listing.
     store = ChromaVectorStore(choice.url, "cmcoder-check", None, headers=headers)  # type: ignore[arg-type]
     try:

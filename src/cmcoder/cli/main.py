@@ -28,11 +28,13 @@ main_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 sub_app = typer.Typer(add_completion=False, pretty_exceptions_enable=False, no_args_is_help=True)
 SUBCOMMANDS = {
     "doctor",
+    "index",
     "login",
     "logout",
     "mcp",
     "models",
     "protocol-schema",
+    "rag",
     "sessions",
     "setup",
     "terminal-profile",
@@ -426,13 +428,18 @@ def version() -> None:
     print(VERSION_TEXT)
 
 
-def _add_mcp() -> None:
+def _add_subapps() -> None:
     from .mcp_cmd import mcp_app
+    from .rag_cmd import index_command, rag_app
 
     sub_app.add_typer(mcp_app, name="mcp")
+    sub_app.add_typer(rag_app, name="rag")
+    sub_app.command(
+        "index", help="Build or update this project's code index (changed files only)."
+    )(index_command)
 
 
-_add_mcp()
+_add_subapps()
 
 
 def run() -> None:

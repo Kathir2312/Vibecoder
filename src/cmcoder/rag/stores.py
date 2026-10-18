@@ -42,18 +42,16 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 
-from ..config.settings import config_dir
 from ..mcp.manager import expand
 from ..providers.auth import load_stored_api_key
 from ..providers.transport import TransportOptions, build_client
+from .common import StoreError, chroma_key_name, chroma_needs_url, private_folder
 from .embed import GatewayEmbeddings
+
+__all__ = ["StoreError", "chroma_key_name", "chroma_needs_url", "private_folder"]
 
 BATCH = 100  # records per request to a Chroma server
 ASYNC_ONLY = "cmcoder's vector stores are async: use the a... methods"
-
-
-class StoreError(Exception):
-    """The store can't be used (unreachable, refused): say why."""
 
 
 def embedding_text(text: str, metadata: dict[str, Any]) -> str:
@@ -62,20 +60,6 @@ def embedding_text(text: str, metadata: dict[str, Any]) -> str:
     if metadata.get("symbol"):
         head += f"\nDefines: {metadata['symbol']}"
     return f"{head}\n\n{text}"
-
-
-def private_folder(path: Path) -> None:
-    """Create `path` readable by the user only, like the folders above it up to
-    ~/.cmcoder/index (an index holds copies of the code)."""
-    path.mkdir(parents=True, exist_ok=True)
-    top = config_dir() / "index"
-    for folder in [path, *path.parents]:
-        try:
-            folder.chmod(0o700)
-        except OSError:
-            pass
-        if folder == top or top not in folder.parents:
-            break
 
 
 def prefix_ok(path: str, prefix: str | None) -> bool:
@@ -279,11 +263,6 @@ class LocalVectorStore(_CodeStore):
 # --- a Chroma server -----------------------------------------------------------
 
 
-def chroma_key_name(url: str) -> str:
-    """Where `cmcoder rag setup` keeps a Chroma server's API key (keychain account)."""
-    return "chroma:" + url.rstrip("/")
-
-
 class ChromaVectorStore(_CodeStore):
     def __init__(
         self,
@@ -426,15 +405,6 @@ class ChromaVectorStore(_CodeStore):
 
     async def aclose(self) -> None:
         await self.client.aclose()
-
-
-def chroma_needs_url() -> str:
-    """Chroma is always used through its URL; what to set instead."""
-    return (
-        'Chroma needs its URL: "store": {"type": "chroma", "url": "http://localhost:8000"} '
-        "for a Chroma running on this PC, or your Chroma server's address. "
-        'Or use the built-in index ("store": {"type": "local"}). `cmcoder rag setup` sets either.'
-    )
 
 
 def documents_of(hits: Sequence[tuple[Document, float]]) -> list[Document]:

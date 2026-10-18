@@ -113,8 +113,7 @@ jobs:
         shell: bash
         run: |
           export CMCODER_TEST_PYTHON="$(uv run python -c 'import sys; print(sys.executable)')"
-          # CodeSearchTest needs code search, which is Phase 5 of the LangGraph engine.
-          mvn -B -f clients/jvm-core/pom.xml verify "-Dtest=!CodeSearchTest" -Dsurefire.failIfNoSpecifiedTests=false
+          mvn -B -f clients/jvm-core/pom.xml verify
 
   visualstudio-core:
     # The C# core of the Visual Studio extension (visualstudio/src/Cmcoder.Core),

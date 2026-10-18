@@ -28,17 +28,14 @@ import numpy as np
 from langchain_core.embeddings import Embeddings
 
 from ..models.gateway import Gateway
+from .common import EmbeddingError
+
+__all__ = ["EmbeddingError"]
 
 # Texts per request, and the longest text sent (characters): embedding
 # models take a few thousand tokens at most; a chunk is far smaller anyway.
 BATCH_SIZE = 32
 MAX_CHARS = 6000
-
-
-class EmbeddingError(Exception):
-    def __init__(self, message: str, hint: str | None = None) -> None:
-        super().__init__(message)
-        self.hint = hint
 
 
 class GatewayEmbeddings(Embeddings):

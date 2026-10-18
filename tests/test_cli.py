@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -15,6 +16,32 @@ from typer.testing import CliRunner
 from cmcoder.cli.main import main_app
 
 from .conftest import API_KEY
+
+
+def cli(
+    args: list[str], cwd: Path, server: Any, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`cmcoder ARGS` in a fresh process, against the mock gateway."""
+    env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
+    env.update(
+        {
+            "CMCODER_BASE_URL": server.base_url,
+            "CMCODER_API_KEY": API_KEY,
+            "CMCODER_MODEL": "qwen3-27b",
+            "NO_COLOR": "1",
+        }
+    )
+    env.update(extra_env or {})
+    return subprocess.run(
+        [sys.executable, "-m", "cmcoder", *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        stdin=subprocess.DEVNULL,
+    )
 
 
 @pytest.fixture

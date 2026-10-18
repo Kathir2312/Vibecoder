@@ -101,3 +101,26 @@ def test_settings_and_trust(project: Path) -> None:
     assert any("rag.store" in x for x in s.ignored_project_settings)
     set_project_trust(project, True)
     assert load_settings(project, environ={}).rag.store.url == "https://chroma.attacker.example"
+
+
+async def test_doctor(mock_server: Any) -> None:
+    from rich.console import Console
+
+    from cmcoder.cli.doctor import Doctor
+
+    server = mock_server([])
+    for model, expect in (
+        (None, "Not set up"),
+        ("corp:text-embedding-3-small", "answers (64 dimensions, OpenAI-compatible)"),
+        ("corp:qwen3-27b", "not an embedding model"),
+    ):
+        console = Console(record=True, width=200)
+        settings = Settings.model_validate(
+            {
+                "providers": {"corp": {"baseUrl": server.base_url, "maxRetries": 0}},
+                "model": "corp:qwen3-27b",
+                "rag": {"embeddingModel": model} if model else {},
+            }
+        )
+        await Doctor(settings, console).check_code_search(probe=True)
+        assert expect in console.export_text(), console.export_text()

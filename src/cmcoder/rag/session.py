@@ -20,10 +20,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..config.settings import Settings, SettingsError
-from .embed import EmbeddingError
+from .common import EmbeddingError, StoreError
 from .index import CodeIndex, Progress, open_index
 from .setup import status_lines
-from .stores import StoreError
 
 if TYPE_CHECKING:
     from ..runtime.session import Session

@@ -244,7 +244,6 @@ def test_the_windows_exe_has_the_icon_and_details() -> None:
     assert product == brand["productName"]
 
 
-@pytest.mark.skip(reason="code search (RAG) is Phase 5 of the LangGraph engine")
 def test_code_search(mock_server: Any, project: Path) -> None:
     """numpy and the code index work in the standalone build."""
     (project / "auth.py").write_text("def refresh_auth_token(session):\n    return session\n")

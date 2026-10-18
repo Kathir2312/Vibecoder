@@ -27,9 +27,10 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.documents import Document
+if TYPE_CHECKING:
+    from langchain_core.documents import Document
 
 MAX_LINES = 80
 MAX_CHARS = 2400
@@ -136,6 +137,8 @@ class Chunk:
         }
 
     def to_document(self) -> Document:
+        from langchain_core.documents import Document
+
         return Document(page_content=self.text, metadata=self.metadata(), id=self.id)
 
     @classmethod

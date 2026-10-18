@@ -724,6 +724,79 @@ class Doctor:
         finally:
             await manager.close()
 
+    async def check_code_search(self, probe: bool) -> None:
+        """The embedding model answers, and the project's index."""
+        cfg = self.settings.rag
+        if cfg.enabled is False:
+            return
+        self.section("Code search (RAG)")
+        if not cfg.embedding_model:
+            self.report(INFO, "Not set up", "`cmcoder rag setup` chooses an embedding model.")
+            return
+        try:
+            provider, model = self.settings.resolve_model(cfg.embedding_model)
+            gateway = gateway_for(self.settings, provider)
+        except Exception as e:  # a settings problem, reported as such
+            self.report(FAIL, f"Embedding model {cfg.embedding_model}: {e}")
+            return
+        try:
+            if probe:
+                from ..rag.common import EmbeddingError
+                from ..rag.embed import GatewayEmbeddings
+
+                embedder = GatewayEmbeddings(gateway, model)
+                try:
+                    await embedder.embed(["def hello(): return 'world'"])
+                except EmbeddingError as e:
+                    hint = f"\n{e.hint}" if e.hint else ""
+                    self.report(FAIL, f"Embedding model {provider}:{model}", f"{e}{hint}")
+                    return
+                self.report(
+                    OK,
+                    f"Embedding model {provider}:{model} answers "
+                    f"({embedder.dim} dimensions, {embedder.gateway_kind})",
+                )
+            else:
+                self.report(INFO, f"Embedding model {provider}:{model} (not checked)")
+        finally:
+            await gateway.aclose()
+        await self._check_index()
+
+    async def _check_index(self) -> None:
+        from ..config.settings import SettingsError
+        from ..rag.common import StoreError
+        from ..rag.index import open_index
+        from ..rag.setup import age
+        from ..rag.stores import ChromaVectorStore
+
+        root = find_project_root(Path.cwd().resolve())
+        try:
+            index = open_index(self.settings, root)
+        except (SettingsError, StoreError) as e:
+            self.report(FAIL, "Index store", str(e))
+            return
+        if index is None:
+            return
+        try:
+            if isinstance(index.store, ChromaVectorStore):
+                try:
+                    await index.store.check()
+                except StoreError as e:
+                    self.report(FAIL, index.store.describe(), str(e))
+                    return
+            st = await index.status()
+            if st.files or (st.read_only and st.chunks):
+                self.report(
+                    OK,
+                    f"This project's index: {st.files:,} files, {st.chunks:,} pieces, "
+                    f"updated {age(st.updated)}",
+                    st.store + (" (read-only)" if st.read_only else ""),
+                )
+            else:
+                self.report(INFO, "No index for this project yet", "`cmcoder index` builds it.")
+        finally:
+            await index.close()
+
     # ------------------------------------------------------------------------------------
 
     async def run(self, model_refs: list[str], probe: bool) -> int:
@@ -749,6 +822,7 @@ class Doctor:
         await self.check_mcp(probe)
         self.check_hooks()
         self.check_sandbox()
+        await self.check_code_search(probe)
         await self.check_telemetry()
         self.check_extensions()
         self.console.print()

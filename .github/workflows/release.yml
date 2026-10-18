@@ -92,8 +92,7 @@ jobs:
           exe=$PWD/dist/cmcoder/cmcoder; [ "$RUNNER_OS" = Windows ] && exe=$PWD/dist/cmcoder/cmcoder.exe
           mvn=mvn; [ "$RUNNER_OS" = Windows ] && mvn=mvn.cmd
           export CMCODER_TEST_PYTHON="$(uv run python -c 'import sys; print(sys.executable)')"
-          # CodeSearchTest needs code search, which is Phase 5 of the LangGraph engine.
-          CMCODER_TEST_BINARY=$exe uv run python packaging/no_python.py run -- $mvn -B -f clients/jvm-core/pom.xml verify "-Dtest=!CodeSearchTest" -Dsurefire.failIfNoSpecifiedTests=false
+          CMCODER_TEST_BINARY=$exe uv run python packaging/no_python.py run -- $mvn -B -f clients/jvm-core/pom.xml verify
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "8.0.x"
