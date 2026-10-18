@@ -36,13 +36,18 @@ need_node() {
   [ "$major" -ge 22 ] || die "Node.js 22 or newer is needed (this is $(node --version))"
 }
 
-# need_java MIN: a JDK of at least that version, as `java` on PATH.
+# need_java MIN: a JDK of at least that version: JAVA_HOME's when it is set
+# (Maven and Gradle build with that one), else `java` on PATH.
 need_java() {
-  need java "install a JDK $1 or newer (for example Eclipse Temurin)"
-  local v
-  v="$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java\.specification\.version = //p' | head -n 1 || true)"
+  local java=java v
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    java="$JAVA_HOME/bin/java"
+  else
+    need java "install a JDK $1 or newer (for example Eclipse Temurin)"
+  fi
+  v="$("$java" -XshowSettings:properties -version 2>&1 | sed -n 's/^ *java\.specification\.version = //p' | head -n 1 || true)"
   v="${v#1.}"
-  [ -n "$v" ] && [ "${v%%.*}" -ge "$1" ] || die "JDK $1 or newer is needed (java -version says ${v:-nothing}); set JAVA_HOME and PATH to it"
+  [ -n "$v" ] && [ "${v%%.*}" -ge "$1" ] || die "JDK $1 or newer is needed ($java says ${v:-nothing}); set JAVA_HOME and PATH to it"
 }
 
 need_maven() {
