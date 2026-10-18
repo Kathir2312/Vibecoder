@@ -39,16 +39,18 @@ def classify(exc: BaseException) -> ev.Error:
             hint="The conversation is too long for the model. Start a new session or /clear.",
         )
     if isinstance(exc, openai.APIConnectionError):
-        cause = exc.__cause__
+        # The TLS error is somewhere down the chain (httpx, httpcore, ssl), linked
+        # by `raise ... from` or, on macOS (truststore), only as the context.
+        cause: BaseException | None = exc.__cause__ or exc.__context__
         while cause is not None:
-            if isinstance(cause, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(cause):
+            if isinstance(cause, ssl.SSLError) or "certificate verify failed" in str(cause).lower():
                 return ev.Error(
                     kind="tls",
                     message=msg,
                     hint="The gateway's certificate isn't trusted. Set `caCertPath` to your "
                     "company root CA, then run `cmcoder doctor`.",
                 )
-            cause = cause.__cause__
+            cause = cause.__cause__ or cause.__context__
         return ev.Error(
             kind="connection",
             message=msg,

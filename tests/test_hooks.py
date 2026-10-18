@@ -50,7 +50,9 @@ async def test_pre_tool_use_allow_skips_the_prompt_and_runs_once(
     log = project / "hook.log"
     allow = json.dumps({"hookSpecificOutput": {"permissionDecision": "allow"}})
     server = mock_server([call("Write", file_path="a.txt", content="x"), {"content": "done"}])
-    settings = hooks("PreToolUse", f"echo run >> {log}; echo '{allow}'", matcher="Write")
+    settings = hooks(
+        "PreToolUse", f"echo run >> '{log.as_posix()}'; echo '{allow}'", matcher="Write"
+    )
     asked: list[ev.PermissionRequest] = []
 
     async def ask(req: ev.PermissionRequest) -> dict:
@@ -73,7 +75,7 @@ async def test_pre_tool_use_runs_once_across_a_permission_prompt(
     # tool node on resume, and the hook must not run a second time.
     log = project / "hook.log"
     server = mock_server([call("Write", file_path="a.txt", content="x"), {"content": "done"}])
-    settings = hooks("PreToolUse", f"echo run >> {log}", matcher="Write")
+    settings = hooks("PreToolUse", f"echo run >> '{log.as_posix()}'", matcher="Write")
 
     async def ask(req: ev.PermissionRequest) -> dict:
         return {"allow": True}

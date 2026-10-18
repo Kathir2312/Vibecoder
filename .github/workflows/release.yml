@@ -61,6 +61,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      # Linux runs every IDE gate (Eclipse, NetBeans, IntelliJ, VS Code): the runner's
+      # disk ran out in the IntelliJ one. Tool caches no job here uses go first.
+      - name: Disk space for the IDE gates (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # (not /usr/share/dotnet: the Visual Studio core's test uses it)
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: bubblewrap (Linux)
         if: runner.os == 'Linux'
         run: |

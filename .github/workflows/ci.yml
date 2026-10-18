@@ -218,6 +218,12 @@ jobs:
     name: IntelliJ plugin (build, Plugin Verifier)
     runs-on: ubuntu-latest
     steps:
+      # The verifier unpacks three IDEs; the runner's disk ran out and the job
+      # died without a log. Tool caches this job doesn't use are removed first.
+      - name: Disk space for the IDEs
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
