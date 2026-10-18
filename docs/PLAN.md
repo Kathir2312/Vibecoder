@@ -271,3 +271,37 @@ Not checked here (CI and the company network):
 - the release gates in real IDEs and on Windows and macOS;
 - `cmcoder doctor` and the evals against the real LiteLLM + Qwen3 gateway;
 - how reliably Qwen3 27B fills the critic's and the team's structured outputs in prompted tool mode.
+
+## Phase 5 status: complete
+
+Done:
+- **Embeddings through the gateway** (`rag/embed.py`). `GatewayEmbeddings` is a LangChain `Embeddings` that uses the gateway's own client: LiteLLM `/v1/embeddings` and Open WebUI `/api/embeddings` (which sends Ollama models on to Ollama). It works in batches, returns unit vectors, and explains a wrong model or one Open WebUI doesn't know.
+- **Two `VectorStore`s** (`rag/stores.py`):
+  - `LocalVectorStore`: SQLite plus a matrix in memory, built in, works in the standalone build;
+  - `ChromaVectorStore`: Chroma's REST API, so no `chromadb` package; on this PC or a team server, with its key in the keychain.
+
+  Both give `as_retriever()`.
+- **Chunking along code structure** (`rag/chunker.py`, from cmcoderagent): Python by its parser, other languages at their definitions, Markdown by headings. Each chunk becomes a `Document` with path, lines and symbol. LangChain's character splitter isn't used because results need line numbers and names.
+- **An incremental index** (`rag/index.py`):
+  - a manifest per project and model;
+  - only changed files are embedded again;
+  - the agent's edits are re-indexed before the next search, and stale results are refreshed;
+  - a background update starts with the session;
+  - index folders are private (0700).
+- **In the agent**:
+  - the `CodeSearch` tool (read-only), shared with subagents;
+  - automatic context (`AutoContextMiddleware`, `abefore_agent`): the best matches go in front of the user's message, within a token budget, never the same code twice, with a warning once if the index fails;
+  - `/index`, which attaches a new index by rebuilding the agent on the same conversation.
+- **Commands and IDEs**:
+  - `cmcoder rag setup|status|on|off` and `cmcoder index`;
+  - the doctor's code-search section;
+  - the IDE protocol's `index`, `rag_candidates` and `rag_setup` (`index_status`, `index_progress`);
+  - the CLI still loads without LangChain (`rag/common.py`).
+
+Checked here:
+- 611 tests; ruff and pyright clean. The index tests ran against a real Chroma server too (`CMCODER_TEST_CHROMA_URL`).
+- Evals: all 26 tasks (`BUILT_PHASE = 5`), 52/52 through `-p` and `--protocol stdio`, 26/26 the same both ways. `code-search` finds the VAT bug through CodeSearch.
+- The JVM core's `CodeSearchTest` passes again and is back in CI; the VS Code extension's tests pass 7/7.
+- The standalone build with code search: 160 MB (numpy), `--version` in about 0.55 s. Its code-search test passes with no Python in reach.
+
+Not checked here: the real gateway's embedding model (bge-m3, nomic-embed-text, ...) on the company network, and retrieval quality on a large real repository (the evals use the mock's word-hash embeddings).

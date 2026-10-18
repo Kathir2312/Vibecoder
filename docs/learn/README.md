@@ -59,7 +59,10 @@ Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 | 22 | [`src/cmcoder/middleware/vision.py`](../../src/cmcoder/middleware/vision.py) | **Multimodal messages** (`image_url` blocks); `awrap_model_call` changing one request while the state keeps the original; `astream` with an idle timeout |
 | 23 | [`src/cmcoder/models/gateway.py`](../../src/cmcoder/models/gateway.py), [`models/chat.py`](../../src/cmcoder/models/chat.py) | What LangChain's model classes *don't* cover (a gateway's model list and limits); `model_copy` vs `bind` for a variant of a model; `include_response_headers` and `response_metadata` |
 | 24 | [`src/cmcoder/runtime/serde.py`](../../src/cmcoder/runtime/serde.py) | **Checkpoint serialisation**: `JsonPlusSerializer(allowed_msgpack_modules=...)`, what is saved and what may be loaded |
-| 25 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py), [`tests/test_team.py`](../../tests/test_team.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
+| 25 | [`src/cmcoder/rag/embed.py`](../../src/cmcoder/rag/embed.py) | **`Embeddings`**: `aembed_documents` / `aembed_query`, writing your own for a gateway (and why not `OpenAIEmbeddings` here) |
+| 26 | [`src/cmcoder/rag/stores.py`](../../src/cmcoder/rag/stores.py), [`rag/chunker.py`](../../src/cmcoder/rag/chunker.py) | **`VectorStore`** subclasses (a local one and Chroma over REST), `Document` with metadata, `as_retriever()` for free; splitting code along definitions |
+| 27 | [`src/cmcoder/rag/index.py`](../../src/cmcoder/rag/index.py), [`middleware/code_context.py`](../../src/cmcoder/middleware/code_context.py), [`tools/code_search.py`](../../src/cmcoder/tools/code_search.py) | **RAG two ways**: retrieval before the model (`abefore_agent` adds the best matches to the message) and retrieval as a tool the model calls; keeping an index current |
+| 28 | [`tests/test_agent_e2e.py`](../../tests/test_agent_e2e.py), [`tests/test_phase1.py`](../../tests/test_phase1.py), [`tests/test_stdio.py`](../../tests/test_stdio.py), [`tests/test_team.py`](../../tests/test_team.py) | Testing an agent end to end against a scripted OpenAI-compatible server |
 
 ## Key ideas, briefly
 
@@ -148,6 +151,15 @@ and later deserialised. Keep state to messages, dicts and a few pydantic
 models of your own, and tell the serializer exactly which classes may be
 built (runtime/serde.py).
 
+**RAG is two patterns.** *Retrieve, then generate*: before the model runs,
+search with the user's words and put the matches in the prompt
+(middleware/code_context.py, in `abefore_agent`). *Retrieval as a tool*: give
+the model a search tool and let it decide what to look for
+(tools/code_search.py). cmcoder does both: the first is cheap context for
+every question, the second lets the model dig further. Both sit on the same
+`VectorStore`, and a `VectorStore` is also a `Retriever`
+(`store.as_retriever()`), the runnable most LangChain RAG chains start from.
+
 **Counting tokens is your job.** `SummarizationMiddleware` counts the tokens
 of the *messages*; the system prompt and tool schemas also take room in the
 window. With small (32K) windows, account for that (see compaction.py).
@@ -212,7 +224,14 @@ README), then `uv run cmcoder login` and `uv run cmcoder doctor`.
    `run_id`), pass it in `config["callbacks"]` in a test, and run a turn with
    a Task call: do the subagent's tools show up?
 
+10. **A retriever in a chain.** In a test, index a small project
+    (`tests/test_rag_index.py` shows how), take `idx.store.as_retriever()`,
+    and build `retriever | format_docs | prompt | model` with LCEL (`|`).
+    Compare its answer with the agent's, which decides for itself when to call
+    CodeSearch.
+
 ## Where things go next
 
-See [the plan](../PLAN.md):
-- Phase 5: RAG with LangChain `Embeddings` and `VectorStore`.
+All five phases of [the plan](../PLAN.md) are built. What is left is
+checking them against the real gateway and IDEs on the company network (see
+each phase's "Not checked here").

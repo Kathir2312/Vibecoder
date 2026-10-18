@@ -11,7 +11,7 @@ with [docs/learn/](docs/learn/README.md). Every engine file explains the
 framework concepts it uses.
 
 - Requirements and roadmap: [docs/PLAN.md](docs/PLAN.md)
-- Status: **Phases 0–4 done**: agent loop, tools, permissions with
+- Status: **all five phases done**: agent loop, tools, permissions with
   human-in-the-loop interrupts, Qwen3 reasoning and text tool calls, saved
   sessions (`--continue`, `--resume`), auto-compaction, `/rewind`, todos, slash
   commands, `-p` mode, REPL, `doctor`, `setup`, and the IDE protocol
@@ -22,7 +22,9 @@ framework concepts it uses.
   hardening: Open WebUI as a gateway, the Bash sandbox, images through a
   `visionModel`, OpenTelemetry (off by default), the full `cmcoder doctor`,
   standalone builds and IDE packages, and a [security
-  review](docs/SECURITY-REVIEW.md). Next: code search (Phase 5).
+  review](docs/SECURITY-REVIEW.md), and code search (Phase 5: LangChain
+  `Embeddings` and `VectorStore`s, the `CodeSearch` tool and automatic
+  context).
 
 ## Quick start
 
@@ -83,6 +85,20 @@ The project's own `.cmcoder/` files are used only in a trusted project
 | Checks | `cmcoder doctor`: network, TLS, key, every model (window, streaming, thinking, tool calling, images), MCP, hooks, sandbox, telemetry |
 | Packages | `uv run --with pyinstaller python packaging/build.py` (standalone, no Python needed), then `packaging/package-all.sh`: see [docs/build-package/](docs/build-package/README.md) |
 
+## Code search (Phase 5)
+
+```bash
+uv run cmcoder rag setup   # pick an embedding model on your gateway, and where the index lives
+uv run cmcoder index       # build or update this project's index (changed files only)
+uv run cmcoder rag status
+```
+
+In a session the agent gets the `CodeSearch` tool, and each question of a few
+words gets the best-matching code added to it automatically
+(`rag.autoContext`). `/index` builds or updates the index from the chat. The
+index is built in (`~/.cmcoder/index/`, readable by you only) or kept on a
+Chroma server (`"store": {"type": "chroma", "url": "..."}`).
+
 ## Layout
 
 | Folder | What |
@@ -90,6 +106,7 @@ The project's own `.cmcoder/` files are used only in a trusted project
 | `src/cmcoder/models/` | `CmcoderChatModel` (ChatOpenAI for LiteLLM / Open WebUI and Qwen3), the gateway's own endpoints, learned windows, reasoning split, error hints |
 | `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack; subagents; the team `StateGraph` |
 | `src/cmcoder/mcp/` | MCP servers through `langchain-mcp-adapters` |
+| `src/cmcoder/rag/` | Code search: embeddings, vector stores, chunking, the incremental index |
 | `src/cmcoder/middleware/` | Permissions (interrupts), hooks, the critic, compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
 | `src/cmcoder/runtime/` | `Session` (streaming, interrupts, compaction, rewind), SQLite session store, slash commands, titles |
 | `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash and the LangChain adapter (todos: LangChain's `write_todos`) |

@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parent
 TASKS = ROOT / "tasks"
 FILE_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep")
 # The plan phase this engine has reached; tasks needing a later phase are skipped.
-BUILT_PHASE = 4
+BUILT_PHASE = 5
 
 
 def load_tasks(names: list[str] | None = None, include_later: bool = False) -> list[Path]:
@@ -172,6 +172,7 @@ def run_task(
     timeout: float,
     shell: str,
     via: str = "cli",
+    rag: str = "on",
 ) -> dict[str, Any]:
     spec = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
     work = run_dir / via / task_dir.name
@@ -194,6 +195,8 @@ def run_task(
                 "CMCODER_API_KEY": "sk-eval",
                 "CMCODER_MODEL": "qwen3-27b",
                 "CMCODER_CONFIG_DIR": str(run_dir / ".config"),
+                # The mock's embedding model, for tasks with "index": true.
+                "CMCODER_EMBEDDING_MODEL": "text-embedding-3-small",
             }
         )
         for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
@@ -211,11 +214,40 @@ def run_task(
     ]
     if model:
         cmd += ["--model", model]
+    indexed = False
+    if rag == "off":
+        env["CMCODER_RAG"] = "off"
+    elif spec.get("index"):
+        # Code search: index the working copy first (a failure leaves the
+        # task to run without it, as a project without an index would).
+        built = subprocess.run(
+            [sys.executable, "-m", "cmcoder", "index"],
+            cwd=work,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=600,
+            stdin=subprocess.DEVNULL,
+        )
+        indexed = built.returncode == 0
+        if not indexed:
+            print(f"      (no code index: {(built.stderr or built.stdout).strip()[-200:]})")
     started = time.monotonic()
     run = run_stdio if via == "stdio" else run_cli
     try:
         stdout, stderr, timed_out = run(cmd, spec["prompt"], work, env, timeout)
     finally:
+        if indexed:  # its index lives in the config folder: don't leave it behind
+            subprocess.run(
+                [sys.executable, "-m", "cmcoder", "index", "--clear"],
+                cwd=work,
+                env=env,
+                capture_output=True,
+                timeout=120,
+                stdin=subprocess.DEVNULL,
+            )
         if server is not None:
             server.__exit__(None, None, None)
     duration = time.monotonic() - started
@@ -287,6 +319,12 @@ def main() -> int:
         help="drive cmcoder with -p (cli), through the IDE protocol (stdio), or both and "
         "check they agree",
     )
+    ap.add_argument(
+        "--rag",
+        choices=["on", "off"],
+        default="on",
+        help="code search for tasks with an index (off: compare without it)",
+    )
     args = ap.parse_args()
 
     shell = find_shell()
@@ -309,6 +347,7 @@ def main() -> int:
                 timeout=args.timeout,
                 shell=shell,
                 via=via,
+                rag=args.rag,
             )
             r["via"] = via
             by_via[via] = r
