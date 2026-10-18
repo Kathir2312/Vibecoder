@@ -165,6 +165,11 @@ class StdioServer:
                 found = await (store.find(self.resume) if self.resume else store.latest())
                 if found is not None:
                     await self.session.resume(found.thread_id)
+            if sys.platform == "win32":
+                # On Windows, loading numpy's C extension while the reader thread
+                # is blocked reading the stdin pipe hangs for good (DLL loading
+                # waits on the pipe). Code search needs numpy, so load it first.
+                import numpy  # noqa: F401  # pyright: ignore[reportUnusedImport]
             self._start_reader(stdin_fd)
             init = self.session.init_event()
             init.critique = bool(agent.critic and agent.critic.enabled)
