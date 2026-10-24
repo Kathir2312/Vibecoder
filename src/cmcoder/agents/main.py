@@ -21,13 +21,20 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
 * `context_schema=RunContext`: per-run data middleware can read
   (agents/context.py), such as the turn number for file snapshots.
 
-* Middleware order (first = outermost). Model-call wrappers, outer to inner:
+* Middleware order (first in the list = outermost wrapper). Model-call
+  wrappers, outer to inner (Compaction runs before them, as a before_model
+  node; Vision only when the main model can't see images):
 
-        Compaction (before_model) -> ContextEditing -> ModelProfile -> TextToolCalls -> model
+        TodoList -> Vision -> ContextEditing -> ModelProfile -> TextToolCalls -> model
 
-  Tool-call wrappers, outer to inner:
+  Tool-call wrappers, outer to inner (Hooks only when hooks are configured):
 
-        LoopGuard -> BashFileWork -> Permission -> FileCheckpoint -> tool
+        PlainToolText -> LoopGuard -> BashFileWork -> Permission -> Hooks
+            -> FileCheckpoint -> tool
+
+  The node hooks run in list order for `before_*` and in *reverse* list order
+  for `after_*` (the outermost middleware sees the reply last, as with
+  wrappers).
 
   The guards answer before anyone is asked. Permission comes after them, so a
   call only reaches the user once the guards have let it through, and file
