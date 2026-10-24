@@ -22,7 +22,7 @@ Two kinds of "checkpoint" meet in `/rewind`:
   as it was before the agent changed it. LangGraph doesn't know about files
   on disk, so this middleware takes them.
 
-It is the innermost tool wrapper: it only runs once the permission check has
+It is cmcoder's innermost tool wrapper: it only runs once the permission check has
 let the call through, right before the tool writes. The snapshot store and
 the turn number come from the run's context (agents/context.py).
 """

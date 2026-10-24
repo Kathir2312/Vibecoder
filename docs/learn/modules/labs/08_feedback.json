@@ -1,0 +1,5 @@
+[
+ {"tool_calls": [{"name": "Bash", "arguments": {"command": "rm -rf build"}}]},
+ {"tool_calls": [{"name": "Edit", "arguments": {"file_path": "app.py", "old_string": "return a - b", "new_string": "return a + b"}}]},
+ {"content": "Understood: I'll rename add() to sum() instead of changing it."}
+]

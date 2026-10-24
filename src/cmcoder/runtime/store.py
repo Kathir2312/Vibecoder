@@ -9,7 +9,7 @@ LANGGRAPH CONCEPTS IN THIS FILE
   change at all: a checkpointer is just a constructor argument of
   `create_agent`.
 * Every step is kept, not only the latest: that history is what `/rewind`
-  uses (runtime/rewind.py) through `graph.aget_state_history(config)`.
+  uses (runtime/session.py) through `graph.aget_state_history(config)`.
 * `adelete_thread(thread_id)` removes a conversation and all of its checkpoints.
 
 What LangGraph doesn't store is our own index of sessions (title, last use,

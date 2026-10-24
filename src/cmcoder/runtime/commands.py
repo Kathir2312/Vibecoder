@@ -1,7 +1,7 @@
 """Built-in slash commands and `#` memory notes, shared by every front end.
 
 Each command works on a `Session` and returns lines to show. Front ends (the
-REPL now, the IDE protocol in Phase 2) only render the result, so the
+REPL, `-p` and the IDE protocol) only render the result, so the
 commands behave the same everywhere.
 
 Most of them are thin wrappers over LangGraph operations on the thread:
