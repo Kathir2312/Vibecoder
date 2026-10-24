@@ -8,6 +8,10 @@ order that teaches the concepts best. Every file it points to starts with a
 Versions used: `langgraph` 1.2, `langchain` 1.4, `langchain-core` 1.6,
 `langchain-openai` 1.7 (see `pyproject.toml` and `uv.lock`).
 
+New to cmcoder? Start with **[the zero-to-hero journey](JOURNEY.md)**: it
+pairs using cmcoder with learning each concept below, level by level, with
+labs you run against the mock server. This page is the reference it points to.
+
 ## The big picture
 
 ```
