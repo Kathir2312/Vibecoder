@@ -51,14 +51,16 @@ arguments and returns its result. A compiled graph takes its state (here
 `config` (callbacks, `thread_id`, …). cmcoder is async throughout, so you'll
 see `ainvoke` and `astream`.
 
-A minimal standalone example (any OpenAI-compatible server; the mock server
-works):
+A minimal standalone example (any OpenAI-compatible server; with the mock
+server keep `streaming=True`, because it always answers with a stream):
 
 ```python
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
-model = ChatOpenAI(base_url="http://127.0.0.1:8765/v1", api_key="x", model="qwen3-27b")
+model = ChatOpenAI(
+    base_url="http://127.0.0.1:8765/v1", api_key="x", model="qwen3-27b", streaming=True
+)
 print(model.invoke("Say hello").content)      # an AIMessage
 
 @tool

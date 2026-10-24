@@ -1,0 +1,111 @@
+[
+ {
+  "tool_calls": [
+   {
+    "name": "Team",
+    "arguments": {
+     "feature": "greet(name) returns 'Hello, <name>!'"
+    }
+   }
+  ]
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "Write",
+    "arguments": {
+     "file_path": "docs/stories/greet.md",
+     "content": "# Greet\n"
+    }
+   }
+  ]
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "Stories",
+    "arguments": {
+     "file": "docs/stories/greet.md",
+     "summary": "One story: greet a user by name.",
+     "criteria": [
+      "greet('Ann') == 'Hello, Ann!'"
+     ],
+     "needs_devops": true
+    }
+   }
+  ]
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "Write",
+    "arguments": {
+     "file_path": "greet.py",
+     "content": "def greet(n):\n    return 'Hi ' + n\n"
+    }
+   }
+  ]
+ },
+ {
+  "content": "Changed greet.py: added greet()."
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "TestReport",
+    "arguments": {
+     "verdict": "fail",
+     "summary": "greet is wrong.",
+     "failures": [
+      {
+       "test": "test_greet",
+       "error": "'Hi Ann' != 'Hello, Ann!'",
+       "where": "greet.py:2"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "Read",
+    "arguments": {
+     "file_path": "greet.py"
+    }
+   }
+  ]
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "Write",
+    "arguments": {
+     "file_path": "greet.py",
+     "content": "def greet(n):\n    return f'Hello, {n}!'\n"
+    }
+   }
+  ]
+ },
+ {
+  "content": "Fixed greet.py: the greeting text."
+ },
+ {
+  "tool_calls": [
+   {
+    "name": "TestReport",
+    "arguments": {
+     "verdict": "pass",
+     "summary": "greet passes."
+    }
+   }
+  ]
+ },
+ {
+  "content": "CI already runs every test: nothing to change."
+ },
+ {
+  "content": "The team built greet()."
+ }
+]
