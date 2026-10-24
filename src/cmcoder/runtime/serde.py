@@ -8,10 +8,15 @@ checkpoint database that was tampered with can't make cmcoder build anything
 else; LangGraph's own safe types (messages, Send, Interrupt, ...) are always
 allowed.
 
-LANGGRAPH CONCEPT: `JsonPlusSerializer(allowed_msgpack_modules=[...])`, given
-to a checkpointer as `serde=` (`AsyncSqliteSaver(conn, serde=...)`,
-`InMemorySaver(serde=...)`). The same as `LANGGRAPH_STRICT_MSGPACK=true`,
-plus our own types.
+LANGGRAPH CONCEPTS IN THIS FILE
+
+* **Checkpoint serialisation**: every value in graph state is written with
+  the checkpointer's serializer (`JsonPlusSerializer`, msgpack) and read back
+  on resume. Keep state to messages, dicts and a few pydantic models.
+* **`JsonPlusSerializer(allowed_msgpack_modules=[...])`**, given to a
+  checkpointer as `serde=` (`AsyncSqliteSaver(conn, serde=...)`,
+  `InMemorySaver(serde=...)`): an allow-list of the classes a checkpoint may
+  build. The same as `LANGGRAPH_STRICT_MSGPACK=true`, plus our own types.
 """
 
 from __future__ import annotations

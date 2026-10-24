@@ -1,5 +1,17 @@
 """Small guards that keep mid-sized open models (Qwen3) on track.
 
+LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
+
+* **`aafter_model`**: a hook that runs after every model reply, before the
+  tools node. What it returns is a state update.
+* **Reducers.** `messages` uses the `add_messages` reducer: a message with a
+  new id is appended, one with an existing id *replaces* that message. That
+  is how a reply is corrected in place.
+* **`awrap_tool_call` without calling the handler**: returning a
+  `ToolMessage` yourself answers for the tool, and it never runs.
+* **Post-processing a tool result**: call `handler(request)`, then change
+  the `ToolMessage` it returns (`model_copy(update=...)`).
+
 Each class is a short example of one middleware hook:
 
 * `ToolCallRepairMiddleware.aafter_model`: runs right after each model reply
@@ -9,6 +21,8 @@ Each class is a short example of one middleware hook:
   one.
 * `BashFileWorkMiddleware` and `LoopGuardMiddleware`: `awrap_tool_call` that
   answers for the tool without running it (returns a `ToolMessage`).
+* `PlainToolTextMiddleware`: `awrap_tool_call` that runs the tool and then
+  turns content blocks into plain text.
 
 Ported from cmcoderagent's hand-written loop (core/agent.py::_run_call).
 """

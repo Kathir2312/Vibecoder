@@ -7,6 +7,20 @@ line (protocol/events.py). Nothing else ever goes to stdout: stray prints go
 to stderr. The protocol is the same one cmcoderagent speaks, so the IDE
 plugins work unchanged on the LangGraph engine.
 
+LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
+
+* **Driving a compiled graph from a long-lived server**: each user message
+  is one `astream` run on the same `thread_id`; the checkpointer carries the
+  conversation from run to run.
+* **Interrupts across processes' time**: a run that hit `interrupt()` is
+  resumed by a *later* client message (`Command(resume=...)`), not by a
+  function call returning.
+* **When not to use an interrupt**: quick IDE tool calls just await the
+  client's answer inside the tool.
+* **Rebuilding a graph on the same checkpointer**: `create_agent` compiles a
+  fixed model and tool list; a new graph on the same thread continues the
+  conversation.
+
 HOW THE PIECES MEET
 
 * A turn runs as an asyncio task (`Session.run`, a LangGraph stream), while

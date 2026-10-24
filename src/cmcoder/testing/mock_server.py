@@ -17,6 +17,20 @@ prompt plus max_tokens exceeds the model's window is rejected with vLLM's
 "maximum context length" error, as a real server would.
 
 Run standalone:  python -m cmcoder.testing.mock_server --script s.json --port 8765
+
+LANGCHAIN CONCEPTS IN THIS FILE
+
+* **What `ChatOpenAI` sends and expects**: an OpenAI-compatible
+  `/v1/chat/completions` request (messages, `tools`, `stream`) and a
+  response or SSE stream of chunks with `delta.content`, `delta.tool_calls`
+  and `usage`. Serving that from a script is enough to drive a whole
+  LangChain agent, so tests are repeatable.
+* **Testing an agent**: script the model's side (which tool calls, which
+  text), run the real graph, then assert on the events, the files and the
+  recorded requests (what the model was shown).
+* **Alternatives in LangChain**: `GenericFakeChatModel` fakes the model
+  *object*; this fakes the *server*, so cmcoder's own HTTP client, TLS,
+  auth, retries and streaming are tested too.
 """
 
 from __future__ import annotations
