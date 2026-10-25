@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Id="cmcoder.visualstudio.6b1f4c0e" Version="0.1.0" Language="en-US" Publisher="cmcoder" />
+    <Identity Id="cmcoder.visualstudio.6b1f4c0e" Version="0.2.0" Language="en-US" Publisher="cmcoder" />
     <DisplayName>cmcoder</DisplayName>
     <Description xml:space="preserve">A coding agent in Visual Studio: a chat that reads, explains and changes the code of your solution, with every change shown in the diff window first. cmcoder itself is inside; nothing else to install.</Description>
     <Icon>icon.png</Icon>

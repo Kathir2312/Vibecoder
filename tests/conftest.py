@@ -48,14 +48,20 @@ def ctx(project: Path) -> Iterator[ToolContext]:
     yield ToolContext(cwd=project, project_root=project)
 
 
+def start_mock(script: list[dict[str, Any]], **kw: Any) -> MockServer:
+    """A scripted OpenAI-compatible server, started (stop it with __exit__)."""
+    server = MockServer(MockState(script, api_key=API_KEY, **kw))
+    server.__enter__()
+    return server
+
+
 @pytest.fixture
 def mock_server() -> Iterator[Any]:
     """Start scripted OpenAI-compatible servers; all are stopped after the test."""
     servers: list[MockServer] = []
 
     def make(script: list[dict[str, Any]], **kw: Any) -> MockServer:
-        server = MockServer(MockState(script, api_key=API_KEY, **kw))
-        server.__enter__()
+        server = start_mock(script, **kw)
         servers.append(server)
         return server
 

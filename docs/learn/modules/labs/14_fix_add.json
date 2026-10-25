@@ -1,0 +1,5 @@
+[
+ {"tool_calls": [{"name": "Read", "arguments": {"file_path": "app.py"}}]},
+ {"tool_calls": [{"name": "Edit", "arguments": {"file_path": "app.py", "old_string": "return a - b", "new_string": "return a + b"}}]},
+ {"content": "Fixed add()."}
+]

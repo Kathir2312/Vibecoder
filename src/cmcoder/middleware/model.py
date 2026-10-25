@@ -24,7 +24,7 @@ from typing import Any
 import openai
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, SystemMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 from ..models.chat import REASONING_KEY, ModelBundle
@@ -113,6 +113,12 @@ class ModelProfileMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
+        system = request.system_message
+        if system is not None and isinstance(system.content, list):
+            # Middleware such as TodoListMiddleware appends its instructions to
+            # the system message as content blocks. Self-hosted servers often
+            # want one plain string there.
+            request = request.override(system_message=SystemMessage(system.text))
         settings = self._settings(request)
         try:
             response = await handler(request.override(model_settings=settings))

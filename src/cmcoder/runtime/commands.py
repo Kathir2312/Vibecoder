@@ -1,7 +1,7 @@
 """Built-in slash commands and `#` memory notes, shared by every front end.
 
 Each command works on a `Session` and returns lines to show. Front ends (the
-REPL now, the IDE protocol in Phase 2) only render the result, so the
+REPL, `-p` and the IDE protocol) only render the result, so the
 commands behave the same everywhere.
 
 Most of them are thin wrappers over LangGraph operations on the thread:
@@ -16,7 +16,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core.commands import (
+    CommandSource,
+    SlashCommand,
+    mcp_prompt_commands,
+    prompt_arguments,
+    substitute,
+)
+from ..core.commands import help_lines as custom_help_lines
 from ..core.permissions import ModeNotAllowed
+from ..middleware.compaction import CompactionBlocked
 from .session import Session
 from .store import SessionInfo
 
@@ -30,6 +39,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("mode", "[mode]", "Show or change the permission mode (also Shift+Tab)"),
     ("model", "[provider:model]", "Show or switch the model"),
     ("todos", "", "Show the todo list"),
+    ("mcp", "", "MCP servers: status and tools"),
+    ("agents", "", "Subagent types, and this session's subagent runs"),
+    ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
+    ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
+    ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
     ("exit", "", "Quit"),
@@ -44,13 +58,44 @@ class CommandResult:
     lines: list[str] = field(default_factory=list)
     prompt: str | None = None  # text to put back in the input box (after /rewind)
     exit: bool = False
+    # A custom command or MCP prompt: send this as the user's message, with
+    # these allow rules for that turn only (the command's `allowed-tools`).
+    send: str | None = None
+    allow: list[str] = field(default_factory=list)
 
 
-def help_lines() -> list[str]:
+def help_lines(custom: dict[str, SlashCommand] | None = None) -> list[str]:
     width = max(len(f"/{n} {a}") for n, a, _ in BUILT_IN)
     lines = [f"  {f'/{n} {a}'.ljust(width)}  {d}" for n, a, d in BUILT_IN]
     lines.append(f"  {'# note'.ljust(width)}  Add a line to the project's CMCODER.md")
+    if custom:
+        lines += ["", "Custom commands and MCP prompts:", *custom_help_lines(custom)]
     return lines
+
+
+def custom_commands(session: Session) -> dict[str, SlashCommand]:
+    """Markdown commands (.cmcoder/commands, ~/.cmcoder/commands) and MCP prompts.
+
+    Read again on each use, so a new or edited file works without a restart."""
+    a = session.agent
+    settings = a.spec.get("settings")
+    trusted = bool(settings and settings.project_trusted)
+    found = CommandSource(a.ctx.project_root, trusted).load()
+    mcp = a.spec.get("mcp")
+    if mcp is not None:
+        found.update(mcp_prompt_commands(mcp.connected()))
+    return found
+
+
+async def expand(command: SlashCommand, arguments: str) -> CommandResult:
+    if command.mcp is not None:
+        from ..mcp.manager import prompt_text
+
+        server, prompt = command.mcp
+        names = [x.name for x in (prompt.arguments or [])]
+        text = await prompt_text(server, prompt.name, prompt_arguments(names, arguments))
+        return CommandResult(send=text)
+    return CommandResult(send=substitute(command.body, arguments), allow=command.allowed_tools)
 
 
 def age(seconds: float) -> str:
@@ -87,12 +132,15 @@ async def run_command(
     if name in ("exit", "quit"):
         return CommandResult(exit=True)
     if name == "help":
-        return CommandResult(help_lines())
+        return CommandResult(help_lines(custom_commands(session)))
     if name == "clear":
         await session.clear()
         return CommandResult(["Started a new conversation."])
     if name == "compact":
-        result = await session.compact(arg or None)
+        try:
+            result = await session.compact(arg or None)
+        except CompactionBlocked as e:
+            return CommandResult([f"Not compacted: a PreCompact hook declined ({e})."])
         if result is None:
             return CommandResult(["Nothing to compact yet."])
         return CommandResult(
@@ -160,6 +208,45 @@ async def run_command(
             return CommandResult(["Switching models isn't available here."])
         await switch_model(arg)
         return CommandResult([f"Model: {session.agent.bundle.ref}"])
+    if name == "mcp":
+        from ..mcp import status_lines
+
+        return CommandResult(status_lines(a.spec.get("mcp")))
+    if name == "agents":
+        rt = a.subagents
+        if rt is None:
+            return CommandResult(["No subagents."])
+        lines = [f"  {d.name} ({d.origin}): {d.description}" for d in rt.definitions().values()]
+        for r in rt.runs.values():
+            lines.append(
+                f"  #{r.number} {r.agent_type}: {r.description} · {r.state} · "
+                f"{r.steps} steps · {r.tool_uses} tools · {r.tokens} tokens"
+            )
+        return CommandResult(lines)
+    if name == "critic":
+        if a.critic is None:
+            return CommandResult(["No critic here."])
+        if arg in ("on", "off"):
+            a.critic.enabled = arg == "on"
+        state = "on" if a.critic.enabled else "off"
+        return CommandResult(
+            [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
+        )
+    if name == "index":
+        from ..rag.session import index_command
+
+        return CommandResult(await index_command(session, arg))
+    if name == "team":
+        if not a.team:
+            return CommandResult(
+                ['The team is off: set "team": {"enabled": true} in your settings.']
+            )
+        if not arg:
+            return CommandResult(["Usage: /team <the feature to build>"])
+        return CommandResult(
+            send="Run the Team tool for this feature request (pass it on complete, "
+            f"as `feature`), then summarise the team's result for me:\n\n{arg}"
+        )
     if name == "todos":
         todos = await session.todos()
         marks = {"completed": "[x]", "in_progress": "[~]", "pending": "[ ]"}
@@ -169,8 +256,9 @@ async def run_command(
         )
     if name == "cost":
         u = session.usage
+        cost = f" Cost: ${session.cost:.4f} (from the gateway)." if session.cost else ""
         return CommandResult(
-            [f"Tokens this session: {u['prompt_tokens']} in, {u['completion_tokens']} out."]
+            [f"Tokens this session: {u['prompt_tokens']} in, {u['completion_tokens']} out.{cost}"]
         )
     if name == "context":
         from langchain_core.messages.utils import count_tokens_approximately
@@ -184,4 +272,6 @@ async def run_command(
                 f"Auto-compaction at {int(a.auto_compact_threshold * 100)}%."
             ]
         )
+    if (command := custom_commands(session).get(name)) is not None:
+        return await expand(command, arg)
     return CommandResult([f"Unknown command /{name}. /help lists them."])

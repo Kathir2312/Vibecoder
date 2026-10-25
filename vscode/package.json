@@ -2,7 +2,7 @@
   "name": "cmcoder",
   "displayName": "cmcoder",
   "description": "Agentic coding assistant for your company's model gateway, in VS Code.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "cmcoder",
   "icon": "media/icon.png",
   "private": true,

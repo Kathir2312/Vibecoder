@@ -1,0 +1,4 @@
+[
+  {"tool_calls": [{"name": "inspect_run", "arguments": {"note": "first look"}}]},
+  {"content": "The tool saw the conversation so far."}
+]

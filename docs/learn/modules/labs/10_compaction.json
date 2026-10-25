@@ -1,0 +1,5 @@
+[
+  {"tool_calls": [{"name": "Read", "arguments": {"file_path": "big.txt"}}]},
+  {"content": "It is a big file of numbered lines."},
+  {"content": "Still here, with a shorter history."}
+]

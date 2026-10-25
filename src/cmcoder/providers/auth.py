@@ -1,8 +1,9 @@
 """Authentication providers.
 
-Every request gets its credentials through `AuthProvider`, so SSO (e.g.
-Okta/OIDC) can be added later as another provider without touching the rest
-of the engine.
+Credentials come from an `AuthProvider`. Today that is `ApiKeyAuth`: its
+`resolve_key()` gives the chat model its `api_key` (models/chat.py). SSO
+(e.g. Okta/OIDC) can be added later as another provider without touching the
+rest of the engine.
 """
 
 from __future__ import annotations

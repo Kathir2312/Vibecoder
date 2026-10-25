@@ -1,0 +1,4 @@
+[
+  {"content": "Let me look.\n<tool_call>\n{\"name\": \"Read\", \"arguments\": {\"file_path\": \"app.py\"}}\n</tool_call>"},
+  {"content": "<think>It returns a - b, so add() subtracts.</think>add() subtracts instead of adding."}
+]

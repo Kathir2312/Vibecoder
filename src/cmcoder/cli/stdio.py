@@ -7,6 +7,20 @@ line (protocol/events.py). Nothing else ever goes to stdout: stray prints go
 to stderr. The protocol is the same one cmcoderagent speaks, so the IDE
 plugins work unchanged on the LangGraph engine.
 
+LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
+
+* **Driving a compiled graph from a long-lived server**: each user message
+  is one `astream` run on the same `thread_id`; the checkpointer carries the
+  conversation from run to run.
+* **Interrupts across processes' time**: a run that hit `interrupt()` is
+  resumed by a *later* client message (`Command(resume=...)`), not by a
+  function call returning.
+* **When not to use an interrupt**: quick IDE tool calls just await the
+  client's answer inside the tool.
+* **Rebuilding a graph on the same checkpointer**: `create_agent` compiles a
+  fixed model and tool list; a new graph on the same thread continues the
+  conversation.
+
 HOW THE PIECES MEET
 
 * A turn runs as an asyncio task (`Session.run`, a LangGraph stream), while
@@ -29,21 +43,27 @@ HOW THE PIECES MEET
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from typing import Any, BinaryIO
 
 from pydantic import ValidationError
 
-from ..agents.main import Agent, AgentOptions, build_agent
+from ..agents.main import Agent, AgentOptions, build_agent, prepare_agent, rebuild_agent
 from ..config.settings import Settings, SettingsError, add_local_allow_rule, find_project_root
+from ..core.hooks import Hook
 from ..core.ide import IDE_TOOLS, format_ide_context
 from ..core.permissions import MODES, Decision, ModeNotAllowed
 from ..images import Image, ImageError, from_base64
+from ..mcp import McpManager
+from ..mcp.manager import McpServer
+from ..middleware.compaction import CompactionBlocked
 from ..protocol import events as ev
 from ..protocol import messages as msg
 from ..runtime.commands import BUILT_IN, run_command
@@ -55,10 +75,10 @@ from ..tools.files import ReadInput, ReadTool
 IDE_TOOL_TIMEOUT = 30.0  # seconds
 # Built-in commands that work in an IDE panel; the others (/clear, /resume,
 # /mode) are the panel's own buttons.
-PANEL_COMMANDS = {"help", "compact", "rewind", "model", "cost", "todos", "context"}
-# Features of later phases that IDE panels may ask for: answered with the
-# protocol's own "not set up / not available" events, so panels show a state.
-CODE_SEARCH_LATER = "Code search arrives in Phase 5 of the LangGraph engine."
+PANEL_COMMANDS = {
+    "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
+    "index",
+}  # fmt: skip
 _READ = ReadTool()
 
 
@@ -73,6 +93,7 @@ class StdioServer:
         resume: str | None = None,
     ) -> None:
         self.settings = settings
+        self.side_tasks: set[asyncio.Task[Any]] = set()  # indexing, beside the turn
         self.opts = opts
         self.out = out
         self.continue_session = continue_session
@@ -83,6 +104,7 @@ class StdioServer:
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.ide_pending: dict[str, asyncio.Future[ToolResult]] = {}
         self.ide_tools: list[Tool] = []
+        self.mcp: McpManager | None = None
         self.inbox: asyncio.Queue[bytes] = asyncio.Queue()
 
     def emit(self, event: ev.Event) -> None:
@@ -138,10 +160,15 @@ class StdioServer:
             add_local_allow_rule(root, rule)
 
         self.opts.on_rule_saved = save_rule
+        self.opts.approve_hook = self._approve_hook
         async with SessionStore.open(root, persist=self.settings.persist_sessions) as store:
             self.store = store
             try:
-                agent = build_agent(self.settings, self.opts, checkpointer=store.checkpointer)
+                self.mcp = McpManager(self.settings, root)
+                await prepare_agent(self.settings, self.opts)
+                agent = build_agent(
+                    self.settings, self.opts, checkpointer=store.checkpointer, mcp=self.mcp
+                )
             except (SettingsError, ValueError) as e:
                 hint = "In a terminal, run:  cmcoder setup" if "cmcoder setup" in str(e) else None
                 self.error("startup", str(e), hint)
@@ -151,8 +178,15 @@ class StdioServer:
                 found = await (store.find(self.resume) if self.resume else store.latest())
                 if found is not None:
                     await self.session.resume(found.thread_id)
+            if sys.platform == "win32":
+                # On Windows, loading numpy's C extension while the reader thread
+                # is blocked reading the stdin pipe hangs for good (DLL loading
+                # waits on the pipe). Code search needs numpy, so load it first.
+                import numpy  # noqa: F401  # pyright: ignore[reportUnusedImport]
             self._start_reader(stdin_fd)
-            self.emit(self.session.init_event())
+            init = self.session.init_event()
+            init.critique = bool(agent.critic and agent.critic.enabled)
+            self.emit(init)
             if self.session.turn:  # a resumed conversation: show it again
                 self.emit(ev.History(messages=await self.session.history()))
                 if todos := await self.session.todos():
@@ -168,14 +202,22 @@ class StdioServer:
                         message = msg.parse_message(line)
                     except ValidationError as e:
                         self.error("protocol", f"Invalid message: {_first_error(e)}")
+                        if _is_user_message(line):  # the client waits for this turn's result
+                            self.emit(
+                                self._result("error", "Invalid message.", True, time.monotonic())
+                            )
                         continue
                     if isinstance(message, msg.Shutdown):
                         break
                     await self.handle(message)
             finally:
                 await self._stop_turn()
+                for task in list(self.side_tasks):  # indexing: what's done is saved
+                    task.cancel()
+                await asyncio.gather(*self.side_tasks, return_exceptions=True)
                 await self.session.close()
                 await self.agent.close()
+                await self.mcp.close()
         return 0
 
     async def handle(self, message: msg.ClientMessage) -> None:
@@ -258,31 +300,84 @@ class StdioServer:
         elif isinstance(message, msg.ListCommands):
             self.emit(ev.CommandList(commands=command_list()))
         elif isinstance(message, msg.Index):
-            self.emit(ev.IndexStatus(set_up=False, active=False, lines=[CODE_SEARCH_LATER]))
+            self._side(self._index(message.action))
         elif isinstance(message, msg.RagCandidates):
-            self.emit(ev.RagCandidatesList(likely=[], other=[], errors={}))
+            self._side(
+                self._rag_candidates(),
+                lambda e: ev.RagCandidatesList(likely=[], other=[], errors={"cmcoder": e}),
+            )
         elif isinstance(message, msg.RagSetup):
-            self.emit(ev.RagSetupResult(ok=False, message=CODE_SEARCH_LATER))
+            self._side(self._rag_setup(message), lambda e: ev.RagSetupResult(ok=False, message=e))
         elif isinstance(message, msg.SetCritique):
-            self.emit(ev.CritiqueChanged(enabled=False))
-            if message.enabled:
-                self.emit(ev.Warning(message="The critic arrives in Phase 3."))
+            if self.agent.critic is not None:
+                self.agent.critic.enabled = message.enabled
+                self.opts.critic = message.enabled  # kept when the graph is rebuilt
+            self.emit(
+                ev.CritiqueChanged(enabled=bool(self.agent.critic and self.agent.critic.enabled))
+            )
         elif isinstance(message, msg.StopSubagent):
-            self.error("not_running", f"No running subagent {message.id!r} (subagents: Phase 3).")
+            # The turn and the other subagents go on; this one writes its report
+            # at its next model call (agents/subagents.py StopRequestMiddleware).
+            rt = self.agent.subagents
+            run = rt.stop(message.id) if rt is not None else None
+            if run is None:
+                self.error("not_running", f"No running subagent {message.id!r}.")
+            else:
+                self.emit(run.status())  # "stopping" (or "queued" until it's dropped)
 
-    async def _rebuild(self, model: str | None = None) -> None:
-        """A new graph (another model, or IDE tools) on the same checkpointer and thread."""
-        assert self.session is not None and self.store is not None
-        opts = AgentOptions(**{**self.opts.__dict__, "model": model or self.agent.bundle.ref})
-        new = build_agent(
-            self.settings, opts, checkpointer=self.store.checkpointer, extra_tools=self.ide_tools
-        )
-        new.policy.mode = self.agent.policy.mode
-        new.policy.allow = self.agent.policy.allow  # "always allow" answers so far
-        await self.agent.close()
-        self.session.agent = new
+    async def _rebuild(self, model: str | None = None, **more: Any) -> None:
+        """A new graph (another model, IDE tools, MCP tools, a code index) on the
+        same checkpointer and thread."""
+        assert self.session is not None
+        changes: dict[str, Any] = {"extra_tools": self.ide_tools, "mcp": self.mcp, **more}
         if model:
+            changes["model"] = model
             self.opts.model = model
+        self.session.agent = await rebuild_agent(self.agent, **changes)
+
+    async def _start_mcp(self) -> None:
+        """MCP servers start with the first message, as in cmcoderagent; a
+        project's own servers ask first (through the permission prompt)."""
+        if self.mcp is None or self.mcp.started:
+            return
+        for warning in await self.mcp.start(self._approve_server):
+            self.emit(ev.Warning(message=warning))
+        if self.mcp.connected():
+            await self._rebuild()
+
+    async def _approve_hook(self, hook: Hook) -> bool:
+        request = ev.PermissionRequest(
+            request_id=f"hook-{hook.event}-{uuid.uuid4().hex[:6]}",
+            tool_use_id=f"hook-{hook.event}",
+            name="Hook",
+            label=f"Run this project's {hook.event} hook",
+            input={
+                "event": hook.event,
+                "matcher": hook.matcher or "*",
+                "command": hook.command.command,
+            },
+            suggested_rule="",
+            reason=f"This project's settings want to run a command on every {hook.event} "
+            "event; it runs with your permissions. Allowing is remembered until the command changes.",
+            can_remember=False,
+        )
+        self.emit(request)
+        return bool((await self.ask(request)).get("allow"))
+
+    async def _approve_server(self, server: McpServer) -> bool:
+        request = ev.PermissionRequest(
+            request_id=f"mcp-{server.name}-{uuid.uuid4().hex[:6]}",
+            tool_use_id=f"mcp-{server.name}",
+            name="McpServer",
+            label=f"Start MCP server {server.name}",
+            input={"server": server.name, **server.config.approval_details()},
+            suggested_rule="",
+            reason="This project's settings (.mcp.json) want to start an MCP server; it runs "
+            "with your permissions. Allowing is remembered until its settings change.",
+            can_remember=False,
+        )
+        self.emit(request)
+        return bool((await self.ask(request)).get("allow"))
 
     def _withheld(self, path: str) -> bool:
         """Files whose contents Read would refuse (secrets, deny rules)."""
@@ -316,11 +411,24 @@ class StdioServer:
             name = text[1:].split(" ", 1)[0] if text.startswith("/") else ""
             if name == "compact":
                 arg = text.partition(" ")[2].strip()
-                if compacted := await session.compact(arg or None):
-                    self.emit(compacted)
+                try:
+                    if compacted := await session.compact(arg or None):
+                        self.emit(compacted)
+                except CompactionBlocked as e:
+                    self.emit(
+                        ev.Warning(message=f"Not compacted: a PreCompact hook declined ({e}).")
+                    )
                 self.emit(self._result("success", "", False, started))
             elif name in PANEL_COMMANDS:  # answered here, not sent to the model
-                if name == "rewind" and not text.partition(" ")[2].strip():
+                if name == "index":  # with progress, and the status bar after it
+                    from ..rag.session import index_command
+
+                    arg = text.partition(" ")[2].strip()
+                    lines = await index_command(session, arg, self._progress)
+                    body = "\n".join(lines)
+                    self.emit(ev.AssistantMessage(text=f"**Code index**\n\n```text\n{body}\n```"))
+                    self._side(self._index("status"))
+                elif name == "rewind" and not text.partition(" ")[2].strip():
                     points = await session.rewind_points()
                     self.emit(ev.RewindPoints(points=points[-20:]))
                 else:
@@ -329,7 +437,17 @@ class StdioServer:
                     self.emit(ev.AssistantMessage(text=f"```text\n{body}\n```"))
                 self.emit(self._result("success", "", False, started))
             else:
-                async for event in session.run(text, note=note, images=images):
+                await self._start_mcp()
+                allow: list[str] = []
+                if name:  # maybe a custom command or an MCP prompt; else a plain prompt
+                    result = await run_command(session, text)
+                    if result.send is not None:
+                        text, allow = result.send, result.allow
+                    elif name == "team":  # its usage or "the team is off": no model turn
+                        self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
+                        self.emit(self._result("success", "", False, started))
+                        return
+                async for event in session.run(text, note=note, images=images, allow=allow):
                     self.emit(event)
         except asyncio.CancelledError:
             self.emit(self._result("interrupted", "Interrupted by the user.", False, started))
@@ -337,6 +455,125 @@ class StdioServer:
         except Exception as e:  # a bug: report it instead of dying silently
             self.error("internal", f"{type(e).__name__}: {e}")
             self.emit(self._result("error", str(e), True, started))
+
+    # --- code search (VS Code's status bar and setup) ------------------------------
+
+    def _side(self, job: Any, reply: Callable[[str], ev.Event] | None = None) -> None:
+        """Run a job beside the conversation (indexing can take a while).
+
+        A job that fails unexpectedly still answers (`reply`, else a warning):
+        the client waits for an answer to its request."""
+
+        async def run() -> None:
+            try:
+                await job
+            except Exception as e:  # never take the session down, never leave it waiting
+                text = f"{type(e).__name__}: {e}"
+                self.emit(reply(text) if reply else ev.Warning(message=text))
+
+        task = asyncio.get_running_loop().create_task(run())
+        self.side_tasks.add(task)
+        task.add_done_callback(self.side_tasks.discard)
+
+    def _progress(self, p: Any) -> None:
+        self.emit(ev.IndexProgress(done=p.done, total=p.total, chunks=p.chunks))
+
+    async def _index_status(self) -> ev.IndexStatus:
+        from ..rag.common import EmbeddingError, StoreError
+        from ..rag.index import open_index
+        from ..rag.setup import status_lines
+
+        cfg = self.settings.rag
+        if cfg.enabled is False or not cfg.embedding_model:
+            return ev.IndexStatus(set_up=False, active=False)
+        index = self.agent.code_index
+        attached = index is not None
+        if index is None:
+            try:
+                index = open_index(self.settings, self.agent.ctx.project_root)
+            except (SettingsError, StoreError) as e:
+                return ev.IndexStatus(set_up=True, active=False, error=str(e))
+            if index is None:
+                return ev.IndexStatus(set_up=False, active=False)
+        try:
+            st = await index.status()
+            lines = await status_lines(index)
+        except (StoreError, EmbeddingError) as e:
+            return ev.IndexStatus(set_up=True, active=attached, error=str(e))
+        finally:
+            if not attached:
+                await index.close()
+        return ev.IndexStatus(
+            set_up=True,
+            active=attached,
+            model=st.model,
+            store=st.store,
+            files=st.files,
+            chunks=st.chunks,
+            updated=st.updated,
+            read_only=st.read_only,
+            updating=index.updating,
+            error=index.last_error,
+            lines=lines,
+        )
+
+    async def _index(self, action: str) -> None:
+        from ..rag.session import index_command
+
+        try:
+            if action != "status":
+                assert self.session is not None
+                lines = await index_command(self.session, action, self._progress)
+                text = "\n".join(lines)
+                if text.startswith(("Indexing failed", "Code search", "This index")):
+                    self.emit(ev.Warning(message=text))
+            self.emit(await self._index_status())
+        except Exception as e:  # never take the session down
+            self.emit(ev.Warning(message=f"Code index: {type(e).__name__}: {e}"))
+
+    async def _rag_candidates(self) -> None:
+        from ..rag.setup import embedding_candidates
+
+        likely, other, errors = await embedding_candidates(self.settings)
+        self.emit(ev.RagCandidatesList(likely=likely, other=other, errors=errors))
+
+    async def _rag_setup(self, m: msg.RagSetup) -> None:
+        """Set up code search as `cmcoder rag setup` does, and use it now."""
+        from ..config.settings import RagConfig
+        from ..rag.common import EmbeddingError, StoreError
+        from ..rag.session import index_command
+        from ..rag.setup import (
+            SetupChoice,
+            apply_setup,
+            check_embedding_model,
+            check_store,
+            rag_block,
+        )
+
+        choice = SetupChoice(m.embedding_model, m.store, m.url, m.api_key, m.scope, m.read_only)
+        try:
+            ref, dim = await check_embedding_model(self.settings, m.embedding_model)
+            choice.embedding_model = ref
+            where = await check_store(choice)
+        except (EmbeddingError, SettingsError, StoreError) as e:
+            self.emit(ev.RagSetupResult(ok=False, message=str(e)))
+            return
+        path = apply_setup(choice, self.agent.ctx.project_root)
+        # The session uses what was just chosen (a project's store would wait for trust).
+        self.settings.rag = RagConfig.model_validate(
+            {**self.settings.rag.model_dump(by_alias=True), **rag_block(choice)}
+        )
+        if self.agent.code_index is not None:  # another model or store: start again
+            await self._rebuild(code_index=None)
+        message = f"Code search uses {ref} ({dim} dimensions), kept in {where}; saved in {path}."
+        if m.index_now and not m.read_only:
+            assert self.session is not None
+            lines = await index_command(self.session, "update", self._progress)
+            message += "\n" + "\n".join(lines)
+        elif m.read_only:
+            await self._rebuild(code_index=None)  # opens the shared index, if it has one
+        self.emit(ev.RagSetupResult(ok=True, message=message, settings_file=str(path)))
+        self.emit(await self._index_status())
 
     async def _switch_model(self, ref: str) -> None:
         await self._rebuild(model=ref)
@@ -407,6 +644,14 @@ def command_list() -> list[ev.CommandInfo]:
         for n, h, d in BUILT_IN
         if n in PANEL_COMMANDS
     ]
+
+
+def _is_user_message(line: str | bytes) -> bool:
+    try:
+        data = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("type") == "user_message"
 
 
 def _first_error(e: ValidationError) -> str:

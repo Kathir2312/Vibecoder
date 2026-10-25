@@ -54,9 +54,6 @@
   ]
  },
  {
-  "content": "Reported one problem."
- },
- {
   "tool_calls": [
    {
     "name": "Edit",
@@ -101,8 +98,5 @@
     }
    }
   ]
- },
- {
-  "content": "Passed."
  }
 ]

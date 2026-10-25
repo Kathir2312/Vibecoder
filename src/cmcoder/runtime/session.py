@@ -66,9 +66,10 @@ from ..agents.context import RunContext
 from ..agents.main import Agent
 from ..core.checkpoints import Checkpoints
 from ..images import Image
-from ..middleware.compaction import CompactionMiddleware, is_summary
-from ..middleware.permission import PERMISSION_KIND
+from ..middleware.compaction import CompactionBlocked, CompactionMiddleware, is_summary
+from ..middleware.permission import PERMISSION_KIND, STOPPED, stopped
 from ..middleware.tool_text import ToolCallHoldback
+from ..middleware.vision import DESCRIPTIONS_KEY, describe
 from ..models.chat import REASONING_KEY
 from ..models.errors import classify
 from ..models.reasoning import ThinkSplitter, split_think
@@ -92,6 +93,10 @@ def _text(message: AnyMessage) -> str:
     return message.content if isinstance(message.content, str) else message.text
 
 
+# What this cmcoder can do beyond the base protocol (system_init.features).
+FEATURES = ("images",)
+
+
 class Session:
     """One conversation (= one LangGraph thread) with the agent."""
 
@@ -108,9 +113,13 @@ class Session:
         self.store = store
         self.turn = 0  # the number of the last user turn
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        self.cost = 0.0  # USD, when the gateway says (LiteLLM)
         self._titled = False
-        self._background: set[asyncio.Task[None]] = set()
+        self._session_started = False  # SessionStart hooks have run
+        self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
+        if agent.telemetry is not None:  # counted when it starts, even without a turn
+            agent.telemetry.session_started(agent.frontend, self.session_id)
 
     # --- threads ---------------------------------------------------------------
     def _use_thread(self, thread_id: str) -> None:
@@ -153,46 +162,126 @@ class Session:
             await asyncio.gather(*self._background, return_exceptions=True)
 
     def init_event(self) -> ev.SystemInit:
+        """`system_init`: the session, and what this cmcoder can do beyond the
+        base protocol (`features`; IDE panels show the image button for "images")."""
         a = self.agent
         return ev.SystemInit(
             session_id=self.session_id,
             cwd=str(a.ctx.cwd),
             model=a.bundle.name,
             provider=a.bundle.provider,
-            tools=[*a.tools, "write_todos"],
+            tools=[*a.tools, "write_todos", "Task", *(["Team"] if a.team else [])],
             permission_mode=a.policy.mode,
             version=__version__,
+            features=list(FEATURES),
         )
 
     # --- one user turn -----------------------------------------------------------
     async def run(
-        self, prompt: str, *, note: str | None = None, images: list[Image] | None = None
+        self,
+        prompt: str,
+        *,
+        note: str | None = None,
+        images: list[Image] | None = None,
+        allow: list[str] | None = None,
     ) -> AsyncIterator[ev.Event]:
         """Run one user turn; yields protocol events, ending with a `result` event.
 
         `note`: context for the model that isn't part of the prompt (the IDE's
         open file, selection and problems), sent before it in the same message.
         `images`: sent as image content blocks when the model can see images.
+        `allow`: permission rules for this turn only (a custom command's `allowed-tools`).
         """
+        self.agent.policy.set_turn_allow(allow or [])
+        telemetry = self.agent.telemetry
+        if telemetry is not None:
+            telemetry.turn_started(self.session_id)
+        try:
+            async for event in self._run(prompt, note=note, images=images):
+                if telemetry is not None:
+                    telemetry.observe(event, self.agent.bundle.name, self.session_id)
+                yield event
+        finally:
+            self.agent.policy.set_turn_allow([])
+
+    async def _run(
+        self, prompt: str, *, note: str | None, images: list[Image] | None
+    ) -> AsyncIterator[ev.Event]:
         started = time.monotonic()
         usage = {"prompt_tokens": 0, "completion_tokens": 0}
-        self.turn += 1
-        context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
-        state = _TurnState(await self.messages())
+        # Hooks that run outside the graph: SessionStart (once) and
+        # UserPromptSubmit (may block the prompt or add context).
+        extra: list[str] = []
+        if not self._session_started:
+            for w in self.agent.startup_warnings:  # e.g. a sandbox that can't run here
+                yield ev.Warning(message=w)
+        hooks = self.agent.hooks
+        if hooks is not None:
+            opts = self.agent.spec.get("opts")
+            approve = opts.approve_hook if opts is not None else None
+            if not self._session_started and hooks.has("SessionStart"):
+                out = await hooks.run(
+                    "SessionStart",
+                    {"source": "resume" if self.turn else "startup"},
+                    approve_fn=approve,
+                )
+                extra += out.context
+                for w in out.warnings:
+                    yield ev.Warning(message=w)
+            if hooks.has("UserPromptSubmit"):
+                out = await hooks.run("UserPromptSubmit", {"prompt": prompt}, approve_fn=approve)
+                for w in out.warnings:
+                    yield ev.Warning(message=w)
+                if out.block:
+                    reason = f"A UserPromptSubmit hook blocked the prompt: {out.reason}"
+                    yield ev.Error(kind="hook", message=reason)
+                    yield ev.Result(
+                        subtype="error",
+                        is_error=True,
+                        result=reason,
+                        num_turns=0,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        usage=usage,
+                        session_id=self.session_id,
+                    )
+                    return
+                extra += out.context
+        self._session_started = True
+        if extra:
+            note = "\n\n".join(x for x in (note, *extra) if x)
         text = f"{note}\n\n{prompt}" if note else prompt
         content: str | list[str | dict[str, Any]] = text
+        kwargs: dict[str, Any] = {}
         if images:
-            if self.agent.bundle.profile.vision:
-                # LangChain's standard multimodal content: a list of blocks.
-                content = [
-                    {"type": "text", "text": text},
-                    *({"type": "image_url", "image_url": {"url": i.data_url}} for i in images),
-                ]
-            else:
-                yield ev.Warning(
-                    message=f"{self.agent.bundle.name} can't see images; they were left out."
-                )
-        message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn})
+            # LangChain's standard multimodal content: a list of blocks.
+            blocks = [{"type": "image_url", "image_url": {"url": i.data_url}} for i in images]
+            content = [{"type": "text", "text": text}, *blocks]
+            if not self.agent.bundle.profile.vision:
+                # A model that can't see images gets descriptions (middleware/vision.py),
+                # written now; without them the turn doesn't start.
+                failure: str | None = None
+                async for event in self._describe(blocks, prompt, kwargs):
+                    if isinstance(event, ev.Error):
+                        failure = event.message
+                    yield event
+                if failure is not None:
+                    yield ev.Result(
+                        subtype="error",
+                        is_error=True,
+                        result=failure,
+                        num_turns=0,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        usage=usage,
+                        session_id=self.session_id,
+                    )
+                    return
+        self.turn += 1
+        context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
+        critic = self.agent.critic
+        # With the critic on, the answer is held until it is reviewed: the
+        # user sees only the final one, not drafts the critic sent back.
+        state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
+        message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn, **kwargs})
         state.apply([message])
         graph_input: Any = {"messages": [message]}
         error: ev.Error | None = None
@@ -223,6 +312,11 @@ class Session:
                         change=ev.FileChange(**value["change"]) if value.get("change") else None,
                     )
                     yield request
+                    if hooks is not None and hooks.has("Notification"):
+                        msg = f"cmcoder needs your permission to use {request.label}"
+                        task = asyncio.create_task(hooks.run("Notification", {"message": msg}))
+                        self._background.add(task)  # type: ignore[arg-type]
+                        task.add_done_callback(self._background.discard)  # type: ignore[arg-type]
                     answer = await self.ask(request)
                     answers[intr.id] = answer
                     if not answer.get("allow"):
@@ -238,13 +332,19 @@ class Session:
             error = classify(e)
             yield error
             await self.repair_after_interrupt()
+        if state.held is not None:
+            yield ev.AssistantDelta(text=state.held.text)
+            yield state.held
         for key in usage:
             self.usage[key] += usage[key]
+        # A user's "Deny" ended the turn (middleware/permission.py).
+        denied = error is None and stopped(await self.messages())
         await self._after_turn(prompt)
         yield ev.Result(
-            subtype="error" if error else "success",
+            subtype="error" if error else "interrupted" if denied else "success",
             is_error=error is not None,
-            result=error.message if error else state.final_text,
+            result=error.message if error else STOPPED if denied else state.final_text,
+            review=state.review,
             num_turns=state.model_calls,
             duration_ms=int((time.monotonic() - started) * 1000),
             usage=usage,
@@ -267,30 +367,86 @@ class Session:
                 return
 
             async def title() -> None:
-                await store.set_title(thread_id, await make_title(self.agent.small.model, prompt))
+                await store.set_title(thread_id, await make_title(self.agent.small.quick(), prompt))
 
             task = asyncio.create_task(title())  # in the background: nothing waits for it
             self._background.add(task)
             task.add_done_callback(self._background.discard)
 
+    async def _describe(
+        self, blocks: list[dict[str, Any]], prompt: str, kwargs: dict[str, Any]
+    ) -> AsyncIterator[ev.Event]:
+        """The vision model's descriptions of the user's images, into `kwargs`."""
+        vision = self.agent.vision
+        if vision is None:
+            yield ev.Error(
+                kind="images",
+                message=f"{self.agent.bundle.name} can't see images, and no visionModel is set "
+                'to describe them: set "visionModel" in your settings to a model on your '
+                "gateway that sees images (a Qwen-VL, for example).",
+            )
+            return
+        yield ev.ImagesDescribing(model=vision.name, count=len(blocks))
+        try:
+            descriptions = [
+                await describe(vision.quick(), vision.name, block, prompt) for block in blocks
+            ]
+        except Exception as e:  # VisionError, or the gateway refused
+            yield ev.Error(
+                kind="images",
+                message=f"The vision model {vision.name} couldn't describe the image: {e}",
+            )
+            return
+        kwargs[DESCRIPTIONS_KEY] = descriptions
+        yield ev.ImagesDescribed(model=vision.name, count=len(blocks))
+
     async def _stream(
         self, graph_input: Any, context: RunContext, state: _TurnState, usage: dict[str, int]
     ) -> AsyncIterator[ev.Event]:
+        config: RunnableConfig = self.config
+        if self.agent.telemetry is not None:
+            # A LangChain callback handler: it sees every model call and tool
+            # run of this turn, the subagents' too (telemetry.py).
+            config = {**config, "callbacks": [self.agent.telemetry.callback(self.session_id)]}
         async for part in self.agent.graph.astream(
             graph_input,
-            self.config,
+            config,
             context=context,
             # "tasks" says when a node *starts*: the tools node starting means
             # the model's reply is final, so its tool calls can be shown now,
             # before a long command finishes.
-            stream_mode=["messages", "updates", "tasks"],
+            # "custom": what middleware writes with get_stream_writer() (warnings).
+            stream_mode=["messages", "updates", "tasks", "custom"],
             version="v2",
         ):
             if part["type"] == "messages":
                 chunk, meta = part["data"]
-                if isinstance(chunk, AIMessageChunk) and meta.get("langgraph_node") == MODEL_NODE:
+                # Only the main agent's own tokens: a subagent's LLM calls run
+                # inside a tool, under a nested namespace ("tools:…|model:…").
+                nested = "|" in str(meta.get("langgraph_checkpoint_ns", ""))
+                if (
+                    isinstance(chunk, AIMessageChunk)
+                    and meta.get("langgraph_node") == MODEL_NODE
+                    and not nested
+                ):
                     for event in state.on_token(chunk):
                         yield event
+                continue
+            if part["type"] == "custom":
+                data = part["data"]
+                if isinstance(data, dict) and data.get("type") == "warning":
+                    yield ev.Warning(message=str(data.get("message")))
+                elif isinstance(data, dict) and data.get("type") == "event":
+                    # A subagent's status and tool calls (agents/subagents.py),
+                    # and the critic's verdict (middleware/critic.py).
+                    event = ev.parse_event(data["event"])
+                    if isinstance(event, ev.ReviewResult) and event.final:
+                        state.review = {
+                            "verdict": event.verdict,
+                            "rounds": event.round,
+                            "issues": [i.model_dump() for i in event.issues],
+                        }
+                    yield event
                 continue
             if part["type"] == "tasks":
                 data = part["data"]
@@ -322,10 +478,13 @@ class Session:
                             if msg.usage_metadata:
                                 usage["prompt_tokens"] += msg.usage_metadata["input_tokens"]
                                 usage["completion_tokens"] += msg.usage_metadata["output_tokens"]
+                                cost = msg.response_metadata.get("cost")
+                                self.cost += cost or 0.0  # LiteLLM's cost header, in USD
                                 yield ev.UsageUpdate(
                                     prompt_tokens=msg.usage_metadata["input_tokens"],
                                     completion_tokens=msg.usage_metadata["output_tokens"],
                                     context_window=self.agent.bundle.profile.context_window,
+                                    cost=cost,
                                 )
                         # After-model middlewares (repair, <think> split) send a
                         # fixed copy with the same id: the latest one wins.
@@ -395,15 +554,25 @@ class Session:
 
     # --- /compact ------------------------------------------------------------------
     async def compact(self, focus: str | None = None) -> ev.Compacted | None:
-        """Summarise the conversation now, with the same middleware auto-compaction uses."""
+        """Summarise the conversation now, with the same middleware auto-compaction uses.
+
+        Raises `CompactionBlocked` when a PreCompact hook declines."""
         messages = await self.messages()
         if len(messages) < 3:
             return None
+        opts = self.agent.spec.get("opts")
         mw = CompactionMiddleware(
-            self.agent.bundle.model, self.agent.small.model, always=True, focus=focus
+            self.agent.bundle.model,
+            self.agent.small.quick(),
+            always=True,
+            focus=focus,
+            hooks=self.agent.hooks,  # PreCompact runs for /compact too (trigger "manual")
+            approve_hook=opts.approve_hook if opts is not None else None,
         )
         # Middleware hooks are plain async methods: callable outside a graph too.
         update = await mw.abefore_model({"messages": messages}, cast(Any, None))
+        if mw.blocked is not None:
+            raise CompactionBlocked(mw.blocked)
         if not update:
             return None
         await self.agent.graph.aupdate_state(self.config, update)
@@ -468,8 +637,11 @@ class Session:
 class _TurnState:
     """Bookkeeping while the stream runs: tokens, the reply in progress, the messages."""
 
-    def __init__(self, messages: list[AnyMessage]) -> None:
+    def __init__(self, messages: list[AnyMessage], *, hold_answer: bool = False) -> None:
         self.messages: list[AnyMessage] = list(messages)
+        self.hold_answer = hold_answer
+        self.held: ev.AssistantMessage | None = None  # the latest draft answer
+        self.review: dict[str, Any] | None = None  # the critic's final verdict
         self.splitters: dict[str, ThinkSplitter] = {}
         self.holdback = ToolCallHoldback()
         self.pending_ai: AIMessage | None = None
@@ -502,6 +674,8 @@ class _TurnState:
             for kind, piece in splitter.feed(text):
                 if kind == "reasoning":
                     out.append(ev.ReasoningDelta(text=piece))
+                elif self.hold_answer:
+                    continue  # shown when the review is done
                 elif shown := self.holdback.feed(piece):  # hide text tool calls
                     out.append(ev.AssistantDelta(text=shown))
         return out
@@ -526,14 +700,17 @@ class _TurnState:
             x for x in (str(msg.additional_kwargs.get(REASONING_KEY) or ""), think) if x
         )
         self.final_text = visible
-        out.append(
-            ev.AssistantMessage(
-                text=visible,
-                reasoning=reasoning,
-                tool_calls=[dict(c) for c in msg.tool_calls],
-                model=msg.response_metadata.get("model_name"),
-            )
+        message = ev.AssistantMessage(
+            text=visible,
+            reasoning=reasoning,
+            tool_calls=[dict(c) for c in msg.tool_calls],
+            model=msg.response_metadata.get("model_name"),
         )
+        if self.hold_answer and not msg.tool_calls:
+            out = [e for e in out if not isinstance(e, ev.AssistantDelta)]
+            self.held = message  # a later draft replaces it
+            return out
+        out.append(message)
         for c in msg.tool_calls:
             out.append(
                 ev.ToolUse(id=c["id"] or "", name=c["name"], input=c["args"], label=_label(c))
@@ -549,7 +726,7 @@ def _label(call: ToolCall) -> str:
 
 
 def _tool_result_event(msg: ToolMessage) -> ev.Event:
-    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+    content = msg.content if isinstance(msg.content, str) else msg.text
     return ev.ToolResult(
         id=msg.tool_call_id,
         name=msg.name or "",

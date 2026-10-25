@@ -1,5 +1,17 @@
 """Small guards that keep mid-sized open models (Qwen3) on track.
 
+LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
+
+* **`aafter_model`**: a hook that runs after every model reply, before the
+  tools node. What it returns is a state update.
+* **Reducers.** `messages` uses the `add_messages` reducer: a message with a
+  new id is appended, one with an existing id *replaces* that message. That
+  is how a reply is corrected in place.
+* **`awrap_tool_call` without calling the handler**: returning a
+  `ToolMessage` yourself answers for the tool, and it never runs.
+* **Post-processing a tool result**: call `handler(request)`, then change
+  the `ToolMessage` it returns (`model_copy(update=...)`).
+
 Each class is a short example of one middleware hook:
 
 * `ToolCallRepairMiddleware.aafter_model`: runs right after each model reply
@@ -9,6 +21,8 @@ Each class is a short example of one middleware hook:
   one.
 * `BashFileWorkMiddleware` and `LoopGuardMiddleware`: `awrap_tool_call` that
   answers for the tool without running it (returns a `ToolMessage`).
+* `PlainToolTextMiddleware`: `awrap_tool_call` that runs the tool and then
+  turns content blocks into plain text.
 
 Ported from cmcoderagent's hand-written loop (core/agent.py::_run_call).
 """
@@ -29,7 +43,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from ..core.steer import file_work_redirect
-from .permission import denied
+from .permission import call_key, denied
 
 MAX_IDENTICAL_CALLS = 3
 
@@ -131,7 +145,7 @@ class BashFileWorkMiddleware(AgentMiddleware):
         self, request: ToolCallRequest, handler: ToolHandler
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
-        call_id = call["id"] or ""
+        call_id = call_key(call)
         if not self.enabled or call["name"] != "Bash" or call_id in self._passed:
             return await handler(request)
         command = str(call["args"].get("command", ""))
@@ -161,7 +175,7 @@ class LoopGuardMiddleware(AgentMiddleware):
         self, request: ToolCallRequest, handler: ToolHandler
     ) -> ToolMessage | Command[Any]:
         call = request.tool_call
-        call_id = call["id"] or ""
+        call_id = call_key(call)
         if call_id not in self._seen_ids:  # count each call once, even when re-run
             self._seen_ids.add(call_id)
             key = json.dumps([call["name"], call["args"]], sort_keys=True, default=str)
@@ -174,3 +188,22 @@ class LoopGuardMiddleware(AgentMiddleware):
                 "in a row. Stop repeating it and try a different approach.",
             )
         return await handler(request)
+
+
+class PlainToolTextMiddleware(AgentMiddleware):
+    """Turn tool results made of content blocks into plain text.
+
+    MCP tools (langchain-mcp-adapters) return LangChain content blocks:
+    `[{"type": "text", "text": "5", "id": ...}]`. OpenAI's own API accepts
+    that for tool messages, but many self-hosted servers expect a string, and
+    the UIs show text. A post-processing tool wrapper: call the handler,
+    then change the `ToolMessage` it returns.
+    """
+
+    async def awrap_tool_call(
+        self, request: ToolCallRequest, handler: ToolHandler
+    ) -> ToolMessage | Command[Any]:
+        result = await handler(request)
+        if isinstance(result, ToolMessage) and isinstance(result.content, list):
+            return result.model_copy(update={"content": result.text})
+        return result

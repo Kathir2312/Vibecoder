@@ -34,9 +34,9 @@ from langchain_openai import ChatOpenAI
 
 from ..config.settings import ProviderConfig, Settings, SettingsError, env_api_key_source
 from ..providers.auth import ApiKeyAuth
-from ..providers.profiles import ModelProfile, resolve_profile
+from ..providers.profiles import ModelProfile
 from ..providers.transport import TransportOptions, build_client
-from .windows import learned_window
+from .gateway import api_base, profile_for, server_info_for
 
 REASONING_KEY = "reasoning_content"
 # Field names servers use for reasoning text: LiteLLM/vLLM use
@@ -88,7 +88,7 @@ class CmcoderChatModel(ChatOpenAI):
         base_generation_info: dict[str, Any] | None,
     ) -> ChatGenerationChunk | None:
         generation = super()._convert_chunk_to_generation_chunk(
-            chunk, default_chunk_class, base_generation_info
+            chunk, default_chunk_class, _cost_only(base_generation_info)
         )
         if generation is None:
             return None
@@ -104,13 +104,31 @@ class CmcoderChatModel(ChatOpenAI):
     def _create_chat_result(
         self, response: Any, generation_info: dict[str, Any] | None = None
     ) -> ChatResult:
-        result = super()._create_chat_result(response, generation_info)
+        result = super()._create_chat_result(response, _cost_only(generation_info))
         data = response if isinstance(response, dict) else response.model_dump()
         for generation, choice in zip(result.generations, data.get("choices") or [], strict=False):
             reasoning = _reasoning_of(choice.get("message"))
             if reasoning:
                 generation.message.additional_kwargs[REASONING_KEY] = reasoning
         return result
+
+
+COST_HEADER = "x-litellm-response-cost"
+
+
+def _cost_only(info: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The response headers (`include_response_headers`) reduced to the one we
+    use: LiteLLM's cost of the call, in USD. The rest stays out of the
+    message's `response_metadata`, which is saved with the conversation."""
+    if not info or "headers" not in info:
+        return info
+    info = dict(info)
+    headers = {k.lower(): v for k, v in (info.pop("headers") or {}).items()}
+    try:
+        info["cost"] = float(headers[COST_HEADER])
+    except (KeyError, TypeError, ValueError):
+        pass
+    return info
 
 
 @dataclass
@@ -127,11 +145,34 @@ class ModelBundle:
     def ref(self) -> str:
         return f"{self.provider}:{self.name}"
 
+    def quick(self) -> CmcoderChatModel:
+        """This model with thinking switched off, for quick jobs (titles,
+        summaries): a copy (`model_copy`) with these request fields added.
+        A copy, not `.bind(...)`: LangChain's SummarizationMiddleware wants a
+        chat model, and a bound runnable isn't one.
+
+        The switch depends on the server (the profile's `thinkingSwitch`):
+        Qwen3 on vLLM reads `chat_template_kwargs`, Ollama behind Open WebUI
+        reads `options.think`. "prompt" (`/no_think` in the text) is left to
+        the caller; "none": the model doesn't think, or can't be told."""
+        p = self.profile
+        extra = dict(self.model.extra_body or {})
+        if p.backend == "ollama" and p.thinking_switch != "none":
+            extra["options"] = {**extra.get("options", {}), "think": False}
+        elif p.thinking_switch == "chat_template_kwargs":
+            kwargs = extra.get("chat_template_kwargs", {})
+            extra["chat_template_kwargs"] = {**kwargs, "enable_thinking": False}
+        else:
+            return self.model
+        return self.model.model_copy(update={"extra_body": extra})
+
     def set_context_window(self, window: int, source: str) -> None:
         """Use a newly learned window everywhere: our profile and LangChain's."""
         self.profile.context_window = window
         self.profile.context_window_source = source
         self.model.profile = _langchain_profile(self.profile)
+        if self.profile.backend == "ollama" and self.model.extra_body:
+            self.model.extra_body["options"]["num_ctx"] = window
 
 
 def _langchain_profile(profile: ModelProfile) -> LCModelProfile:
@@ -163,14 +204,12 @@ def build_chat_model(settings: Settings, ref: str | None = None) -> ModelBundle:
     cfg = settings.providers.get(provider)
     if cfg is None:
         raise SettingsError(f"Unknown provider {provider!r}.")
-    if cfg.type != "openai":
-        # Open WebUI has its own API paths; it is Phase 4 of the plan.
-        raise SettingsError(f"Provider type {cfg.type!r} is not supported yet (Phase 4).")
-    # Window order, most trusted last: built-in < learned from the server's
-    # own error (models/windows.py) < an explicit setting.
-    profile = resolve_profile(
-        name, settings.model_profiles, learned_window=learned_window(cfg.base_url, name)
-    )
+    # Open WebUI serves the OpenAI API under /api (models/gateway.py).
+    base_url = api_base(cfg)
+    # The profile from everything known, most trusted last: built-in < the
+    # gateway's model info (cached by prepare_models) < learned from the server
+    # (its "maximum context length" error, or a probe) < an explicit setting.
+    profile = profile_for(settings, provider, name, server_info_for(settings, provider, name))
 
     # Our own httpx client: company CA trust, proxies from the environment and
     # timeouts sized for a slow first token. LangChain passes it to the OpenAI SDK.
@@ -185,7 +224,7 @@ def build_chat_model(settings: Settings, ref: str | None = None) -> ModelBundle:
 
     kwargs: dict[str, Any] = {
         "model": name,
-        "base_url": cfg.base_url,
+        "base_url": base_url,
         # The OpenAI SDK insists on a key; "none" is harmless for servers without auth.
         "api_key": api_key_for(provider, cfg) or "none",
         "default_headers": cfg.headers or None,
@@ -199,16 +238,24 @@ def build_chat_model(settings: Settings, ref: str | None = None) -> ModelBundle:
         "streaming": True,
         # Ask the server to include token counts in the stream (usage_metadata).
         "stream_usage": profile.stream_usage,
+        # The response headers come with the first chunk; LiteLLM's cost header
+        # becomes `response_metadata["cost"]` (see _cost_only).
+        "include_response_headers": True,
         "temperature": profile.temperature,
         "top_p": profile.top_p,
         "max_tokens_param": profile.max_tokens_param,
         "profile": _langchain_profile(profile),
     }
-    if profile.extra_body:
+    extra_body = dict(profile.extra_body)
+    if profile.backend == "ollama":
+        # An Ollama model behind Open WebUI: Open WebUI passes `options` on to
+        # Ollama, which silently drops the start of a prompt longer than num_ctx.
+        extra_body["options"] = {"num_ctx": profile.context_window}
+    if extra_body:
         # Extra JSON fields sent with every request, e.g. Qwen3's
         # {"chat_template_kwargs": {"enable_thinking": false}}.
-        kwargs["extra_body"] = profile.extra_body
+        kwargs["extra_body"] = extra_body
     model = CmcoderChatModel(**{k: v for k, v in kwargs.items() if v is not None})
     return ModelBundle(
-        model=model, profile=profile, provider=provider, name=name, base_url=cfg.base_url
+        model=model, profile=profile, provider=provider, name=name, base_url=base_url
     )

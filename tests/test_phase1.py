@@ -153,7 +153,7 @@ async def test_context_window_is_learned_from_the_server(mock_server, project: P
     assert events[-1].result == "fits now"
     assert session.agent.bundle.profile.context_window == 6000
     saved = json.loads((config_dir() / "context-windows.json").read_text())
-    assert list(saved.values()) == [6000]
+    assert [e["tokens"] for e in saved.values()] == [6000]
 
 
 # --- tool calls as text (Qwen without a tool parser) -------------------------------------------
@@ -271,5 +271,50 @@ async def test_clear_starts_a_new_thread(mock_server, project: Path) -> None:
         assert session.session_id != old and await session.messages() == []
         await run_turn(session, "second")
         assert "zebra" not in str(server.requests[-1]["messages"])
+    finally:
+        await session.agent.close()
+
+
+def test_learned_windows_age_and_the_first_format(tmp_path: Path) -> None:
+    from cmcoder.models import windows
+
+    path = config_dir() / "context-windows.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"https://gw/v1|old": 8192}))  # the first format: a number
+    assert windows.learned_window("https://gw/v1", "old") == (8192, windows.SOURCE)
+    windows.save_window("https://gw/v1", "unknown", None, windows.PROBE_SOURCE)
+    assert windows.learned_window("https://gw/v1", "unknown") is None  # no answer: no window
+    assert windows.learned_entry("https://gw/v1", "unknown") is not None  # but don't re-probe
+    data = json.loads(path.read_text())
+    data["https://gw/v1|unknown"]["at"] -= 2 * 24 * 3600  # two days later: probe again
+    path.write_text(json.dumps(data))
+    assert windows.learned_entry("https://gw/v1", "unknown") is None
+
+
+async def test_no_summary_is_asked_for_and_thrown_away(mock_server, project: Path) -> None:
+    # Turn 1: the big tool output pushes the history past the threshold while
+    # the user's request is the only older message: nothing worth summarising,
+    # so the summarizer must not be called at all (it used to be, then the
+    # summary was dropped).
+    (project / "big.txt").write_text("\n".join(f"line {i}: filler text" for i in range(400)))
+    server = mock_server(
+        [
+            {"tool_calls": [{"name": "Read", "arguments": {"file_path": "big.txt"}}]},
+            {"content": "It is a big file."},
+            {"content": "Still here."},
+        ]
+    )
+    settings = {
+        "modelProfiles": [{"match": "*", "contextWindow": 6000}],
+        "autoCompactThreshold": 0.3,
+    }
+    session = make_session(server.base_url, project, settings=settings)
+    try:
+        first = await run_turn(session, "read big.txt")
+        assert not of_type(first, ev.Compacted)
+        assert server.state.summary_requests == []
+        second = await run_turn(session, "and now?")
+        assert of_type(second, ev.Compacted)
+        assert len(server.state.summary_requests) == 1
     finally:
         await session.agent.close()

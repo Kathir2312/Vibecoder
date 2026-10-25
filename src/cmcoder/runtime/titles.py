@@ -4,9 +4,17 @@ After the first turn the small model is asked for a short title in the
 background (`asyncio.create_task`): nothing waits for it, and if it fails the
 title falls back to the start of the first message.
 
-LANGCHAIN CONCEPT: `model.ainvoke([SystemMessage(...), HumanMessage(...)],
-max_tokens=40)`. Extra keyword arguments to `ainvoke` are passed through to
-the request, so a single call can use a smaller output limit.
+LANGCHAIN CONCEPTS IN THIS FILE
+
+* **Calling a chat model directly**, outside any agent:
+  `model.ainvoke([SystemMessage(...), HumanMessage(...)])` returns an
+  `AIMessage`; `.text` is its text.
+* **Per-call options**: extra keyword arguments to `ainvoke` (`max_tokens=40`)
+  are passed through to the request, so one call can use a smaller output
+  limit without a second model object (compare `bind`, which makes a
+  reusable runnable with those options).
+* **The small/fast model**: a second chat model for cheap jobs (titles,
+  summaries), chosen in settings (`smallFastModel`).
 """
 
 from __future__ import annotations

@@ -41,10 +41,17 @@ class Agent:
                     "CMCODER_MODEL": "qwen3-27b",
                 }
             )
+        # A process stuck for longer than a test waits prints every thread's
+        # stack to stderr, which `next()` shows when it times out.
+        launcher = (
+            "import faulthandler, runpy, sys; "
+            f"faulthandler.dump_traceback_later({TIMEOUT - 5}, exit=False); "
+            "sys.argv[0] = 'cmcoder'; runpy.run_module('cmcoder', run_name='__main__')"
+        )
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
-            "-m",
-            "cmcoder",
+            "-c",
+            launcher,
             "--protocol",
             "stdio",
             *args,
@@ -67,7 +74,13 @@ class Agent:
 
     async def next(self) -> dict[str, Any]:
         assert self.proc.stdout
-        line = await asyncio.wait_for(self.proc.stdout.readline(), TIMEOUT)
+        try:
+            line = await asyncio.wait_for(self.proc.stdout.readline(), TIMEOUT)
+        except TimeoutError:
+            self.proc.kill()
+            raise AssertionError(
+                f"no event for {TIMEOUT}s; cmcoder's stderr:\n{await self.stderr()}"
+            ) from None
         assert line, f"agent exited: {await self.stderr()}"
         event = json.loads(line)  # every stdout line is a JSON event...
         parse_event(event)  # ...that matches the protocol
@@ -354,3 +367,15 @@ async def test_editor_context_withholds_secret_files(mock_server: Any, project: 
         await agent.close()
     sent = server.requests[0]["messages"][1]["content"]
     assert "abc123" not in sent and "contents are not shared" in sent
+
+
+async def test_stop_subagent_for_one_that_is_not_running(mock_server, project: Path) -> None:
+    server = mock_server([])
+    agent = await Agent.start(project, server)
+    try:
+        await agent.until("system_init")
+        await agent.send(type="stop_subagent", id="call_nope")
+        err = await agent.until("error")
+        assert err["kind"] == "not_running" and "call_nope" in err["message"]
+    finally:
+        await agent.close()

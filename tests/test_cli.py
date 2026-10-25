@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
+import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -12,6 +16,32 @@ from typer.testing import CliRunner
 from cmcoder.cli.main import main_app
 
 from .conftest import API_KEY
+
+
+def cli(
+    args: list[str], cwd: Path, server: Any, extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`cmcoder ARGS` in a fresh process, against the mock gateway."""
+    env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
+    env.update(
+        {
+            "CMCODER_BASE_URL": server.base_url,
+            "CMCODER_API_KEY": API_KEY,
+            "CMCODER_MODEL": "qwen3-27b",
+            "NO_COLOR": "1",
+        }
+    )
+    env.update(extra_env or {})
+    return subprocess.run(
+        [sys.executable, "-m", "cmcoder", *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        stdin=subprocess.DEVNULL,
+    )
 
 
 @pytest.fixture
@@ -68,3 +98,65 @@ def test_cli_module_does_not_import_langchain() -> None:
     code = "import sys, cmcoder.cli.main; print(any(m.startswith(('langchain', 'langgraph')) for m in sys.modules))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+def test_mcp_commands(project: Path, tmp_path: Path) -> None:
+    env = {k: v for k, v in os.environ.items() if not k.lower().endswith("_proxy")}
+    env["CMCODER_CONFIG_DIR"] = str(tmp_path / "config")
+    demo = str(Path(__file__).parent / "mcp_servers" / "demo_server.py")
+
+    def mcp(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "cmcoder", "mcp", *args],
+            cwd=project,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+
+    r = mcp("add", "demo", "--", sys.executable, demo)
+    assert r.returncode == 0, r.stderr
+    r = mcp(
+        "add", "web", "--url", "https://mcp.example/mcp", "-H", "Authorization: Bearer ${TOKEN}"
+    )
+    assert r.returncode == 0, r.stderr
+    saved = json.loads((tmp_path / "config" / "settings.json").read_text())
+    assert saved["mcpServers"]["web"]["headers"] == {"Authorization": "Bearer ${TOKEN}"}
+    assert mcp("remove", "web").returncode == 0
+    r = mcp("list", "--check")
+    assert r.returncode == 0 and re.search(
+        r"demo: connected · \d+ tools", " ".join(r.stdout.split())
+    ), r.stdout + r.stderr
+    assert mcp("add", "bad").returncode == 2  # neither --url nor a command
+    # `approve` on your own server: nothing to approve, and it says so.
+    r = mcp("approve", "demo")
+    out = " ".join(r.stdout.split())
+    assert r.returncode == 0 and "needs no approval" in out and "mcp list --check" in out
+
+    # A project's server: listed only once the project is trusted, then approved.
+    (project / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"proj": {"command": sys.executable, "args": [demo]}}})
+    )
+
+    def listed() -> str:
+        return " ".join(mcp("list").stdout.split())
+
+    assert "isn't trusted" in listed()
+    assert mcp("approve", "proj").returncode == 1
+    trusted = subprocess.run(
+        [sys.executable, "-m", "cmcoder", "trust", "--yes"],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        stdin=subprocess.DEVNULL,
+    )
+    assert ".mcp.json: mcpServers (proj)" in " ".join(trusted.stdout.split())
+    assert "not approved yet" in listed()
+    assert mcp("approve", "proj").returncode == 0
+    assert "this project; approved)" in listed()

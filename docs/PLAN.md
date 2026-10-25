@@ -224,3 +224,84 @@ Checked here, against the new engine:
 - The NetBeans and Eclipse plugins build.
 
 Not checked here (CI runs them): the release gates in real VS Code, IntelliJ IDEA, NetBeans and Eclipse, and the Visual Studio core and extension. VS Code and JetBrains downloads are blocked from this environment, and there is no .NET or Windows. CI now has the IDE jobs from cmcoderagent.
+
+## Phase 3 status: complete
+
+Done:
+- **MCP** (`mcp/manager.py`) through `langchain-mcp-adapters`: stdio, streamable HTTP and SSE servers, one persistent session per server, tools named `mcp__<server>__<tool>`, `${VAR}` expansion, a per-server tool timeout (a `tool_interceptor` that returns an error result), project servers approved before their first start, managed allow/deny lists, MCP prompts as slash commands; `/mcp`, `--mcp-config`.
+- **Hooks** (`middleware/hooks.py`, runner from cmcoderagent): PreToolUse in the permission middleware, PostToolUse in `awrap_tool_call`, Stop/SubagentStop in `aafter_agent` (a block jumps back to the model, at most 3 times), UserPromptSubmit, SessionStart and Notification in the session, PreCompact in compaction. Project hooks need approval.
+- **Custom commands and skills**: `.cmcoder/commands/*.md` (`$ARGUMENTS`, `allowed-tools`), `SKILL.md` folders with only descriptions in the prompt and a `Skill` tool for the body.
+- **Subagents** (`agents/subagents.py`): the `Task` tool runs a `create_agent` graph inside the tool, sharing the main checkpointer, so a subagent's permission prompt pauses the main graph. Built-in `general-purpose` and `explore`, your own `.cmcoder/agents/*.md`, a model per role, parallel runs capped by `maxParallelSubagents`, `subagent_status` events and `/agents`.
+- **Critic** (`middleware/critic.py`): an `after_agent` review by a read-only subagent with structured output (`ToolStrategy(Verdict)`); a failed review sends the findings back to the model, up to `critic.maxRounds`; only the reviewed answer is shown. `/critic`, `--critic`, the IDE's critique toggle.
+- **Team** (`agents/team.py`): an explicit `StateGraph` (PM → developer → tester, a failed test back to the developer up to `team.maxRounds`, DevOps when the stories say CI must change) behind a `Team` tool, with structured `Stories` and `TestReport` outputs. Roles from `.cmcoder/agents/` or built in. `team.enabled`, `/team <feature>`.
+
+Fixed on the way: a subagent paused by a permission prompt now keeps its tool context (what it read, its shell) for the resumed run; before, an approved Write after a Read failed with "not read yet".
+
+Checked:
+- 313 tests; ruff and pyright clean.
+- Evals at `BUILT_PHASE = 3`: 50/50 through `-p` and `--protocol stdio`, 25/25 tasks the same both ways. The Phase 3 tasks: `mcp-ticket`, `custom-command`, `subagent-search`, `critic-review`, `team-feature`.
+
+Not checked here: the team and critic with a real Qwen3 27B on the company gateway (how reliably it fills `Stories`/`TestReport`/`Verdict` in prompted tool mode). That's the first thing to run on the real network.
+
+## Phase 4 status: complete here; the release gates run in CI
+
+Done:
+- **Open WebUI as a gateway** (`"type": "openwebui"`). `models/gateway.py` covers the gateway's own endpoints: models, LiteLLM `/model/info`, Open WebUI's backends, Ollama's trained length, and a context-window probe. `prepare_agent()` caches what they say before the (synchronous) build. Ollama models get `num_ctx`. Learned windows keep their source and age.
+- **The Bash sandbox** (bubblewrap / `sandbox-exec`, from cmcoderagent) in the new engine: shared by subagents, kept across rebuilds, a warning when it was asked for and can't run.
+- **Images for a text-only model** (`visionModel`). The session has the vision model describe them first (`images_describing` / `images_described`); a failure stops the turn. `VisionMiddleware` sends the descriptions instead of the images, and summaries get them too.
+- **Thinking off for quick jobs** (titles, summaries): `ModelBundle.quick()`.
+- **OpenTelemetry** (off by default): model calls and tool runs through a LangChain callback handler, so subagents count too; turns and compactions from the session. LiteLLM's cost header becomes `response_metadata["cost"]` and `/cost` shows it.
+- **The full `cmcoder doctor`**: network/TLS (with the untrusted issuer), key, models, and per model the window, streaming, the thinking switch, tool calling and images; then the vision model, MCP, hooks, sandbox, telemetry and extensions.
+- **Packaging and release.** Branding, the shared program in `~/.cmcoder/bin`, the first-run user folder, the package scripts for the terminal and all IDEs, the release bundle with gate report and checksums, OSV checks, and the release and packaging-scripts workflows.
+- **One version everywhere** (0.2.0).
+- **Subcommands** `trust`, `mcp`, `models`, `version`, `terminal-profile`.
+- **Security review** ([SECURITY-REVIEW.md](SECURITY-REVIEW.md)). Two fixes:
+  - per-call caches keyed by the server's tool-call id now include name and arguments;
+  - checkpoints load only cmcoder's own types.
+
+Checked here:
+- 582 tests, ruff and pyright clean. The sandbox tests run under real bubblewrap.
+- Through a real Open WebUI (latest release), with an Ollama stand-in and the mock as an OpenAI-compatible backend: 2/2 (`tests/test_openwebui_real.py`).
+- Evals at `BUILT_PHASE = 4`: 50/50, 25/25 the same through `-p` and `--protocol stdio`.
+- The standalone build (Linux): 118 MB, `--version` in about 0.45 s. Its tests pass with no Python in reach.
+- The JVM core 31/31 (CodeSearch is Phase 5), the shared panel 76/76; the NetBeans and Eclipse plugins build at 0.2.0.
+- pip-audit over `uv.lock`: no known vulnerabilities. Semgrep: nothing to fix.
+
+Not checked here (CI and the company network):
+- the release gates in real IDEs and on Windows and macOS;
+- `cmcoder doctor` and the evals against the real LiteLLM + Qwen3 gateway;
+- how reliably Qwen3 27B fills the critic's and the team's structured outputs in prompted tool mode.
+
+## Phase 5 status: complete
+
+Done:
+- **Embeddings through the gateway** (`rag/embed.py`). `GatewayEmbeddings` is a LangChain `Embeddings` that uses the gateway's own client: LiteLLM `/v1/embeddings` and Open WebUI `/api/embeddings` (which sends Ollama models on to Ollama). It works in batches, returns unit vectors, and explains a wrong model or one Open WebUI doesn't know.
+- **Two `VectorStore`s** (`rag/stores.py`):
+  - `LocalVectorStore`: SQLite plus a matrix in memory, built in, works in the standalone build;
+  - `ChromaVectorStore`: Chroma's REST API, so no `chromadb` package; on this PC or a team server, with its key in the keychain.
+
+  Both give `as_retriever()`.
+- **Chunking along code structure** (`rag/chunker.py`, from cmcoderagent): Python by its parser, other languages at their definitions, Markdown by headings. Each chunk becomes a `Document` with path, lines and symbol. LangChain's character splitter isn't used because results need line numbers and names.
+- **An incremental index** (`rag/index.py`):
+  - a manifest per project and model;
+  - only changed files are embedded again;
+  - the agent's edits are re-indexed before the next search, and stale results are refreshed;
+  - a background update starts with the session;
+  - index folders are private (0700).
+- **In the agent**:
+  - the `CodeSearch` tool (read-only), shared with subagents;
+  - automatic context (`AutoContextMiddleware`, `abefore_agent`): the best matches go in front of the user's message, within a token budget, never the same code twice, with a warning once if the index fails;
+  - `/index`, which attaches a new index by rebuilding the agent on the same conversation.
+- **Commands and IDEs**:
+  - `cmcoder rag setup|status|on|off` and `cmcoder index`;
+  - the doctor's code-search section;
+  - the IDE protocol's `index`, `rag_candidates` and `rag_setup` (`index_status`, `index_progress`);
+  - the CLI still loads without LangChain (`rag/common.py`).
+
+Checked here:
+- 611 tests; ruff and pyright clean. The index tests ran against a real Chroma server too (`CMCODER_TEST_CHROMA_URL`).
+- Evals: all 26 tasks (`BUILT_PHASE = 5`), 52/52 through `-p` and `--protocol stdio`, 26/26 the same both ways. `code-search` finds the VAT bug through CodeSearch.
+- The JVM core's `CodeSearchTest` passes again and is back in CI; the VS Code extension's tests pass 7/7.
+- The standalone build with code search: 160 MB (numpy), `--version` in about 0.55 s. Its code-search test passes with no Python in reach.
+
+Not checked here: the real gateway's embedding model (bge-m3, nomic-embed-text, ...) on the company network, and retrieval quality on a large real repository (the evals use the mock's word-hash embeddings).

@@ -109,6 +109,30 @@ async def test_denied_edit_is_reported_to_the_model(mock_server, project: Path) 
     assert "use a different name" in tool_msgs[-1]["content"]
 
 
+async def test_a_plain_denial_ends_the_turn(mock_server, project: Path) -> None:
+    (project / "app.py").write_text("def add(a, b):\n    return a - b\n")
+    server = mock_server([*bug_fix_script()[:2], {"content": "Next turn."}])
+
+    async def ask(req: ev.PermissionRequest) -> dict:
+        return {"allow": False}
+
+    session = make_session(server.base_url, project, ask=ask)
+    try:
+        events = await run_turn(session, "fix add")
+        # As in cmcoderagent: the model isn't asked again until the user says what to do.
+        assert len(server.requests) == 2
+        assert events[-1].subtype == "interrupted" and "denied" in events[-1].result
+        edit = [r for r in of_type(events, ev.ToolResult) if r.name == "Edit"][0]
+        assert edit.is_error and "Stop and wait" in edit.content
+        # The conversation goes on, with the denial in it.
+        events = await run_turn(session, "never mind")
+    finally:
+        await session.agent.close()
+    assert events[-1].subtype == "success" and events[-1].result == "Next turn."
+    tool_msgs = [m for m in server.requests[-1]["messages"] if m["role"] == "tool"]
+    assert "denied" in tool_msgs[-1]["content"]
+
+
 async def test_non_interactive_mode_denies_instead_of_asking(mock_server, project: Path) -> None:
     (project / "app.py").write_text("def add(a, b):\n    return a - b\n")
     server = mock_server(bug_fix_script())

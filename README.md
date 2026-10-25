@@ -11,12 +11,20 @@ with [docs/learn/](docs/learn/README.md). Every engine file explains the
 framework concepts it uses.
 
 - Requirements and roadmap: [docs/PLAN.md](docs/PLAN.md)
-- Status: **Phases 0–2 done**: agent loop, tools, permissions with
+- Status: **all five phases done**: agent loop, tools, permissions with
   human-in-the-loop interrupts, Qwen3 reasoning and text tool calls, saved
   sessions (`--continue`, `--resume`), auto-compaction, `/rewind`, todos, slash
   commands, `-p` mode, REPL, `doctor`, `setup`, and the IDE protocol
   (`--protocol stdio`) with the VS Code, Visual Studio, Eclipse, NetBeans and
-  JetBrains plugins. Next: extensibility (Phase 3: MCP, hooks, subagents).
+  JetBrains plugins, plus MCP servers, hooks, custom commands, skills,
+  subagents (`Task`), the critic (`/critic`) and the team (`/team`: a
+  LangGraph `StateGraph` of PM, developer, tester and DevOps), and the
+  hardening: Open WebUI as a gateway, the Bash sandbox, images through a
+  `visionModel`, OpenTelemetry (off by default), the full `cmcoder doctor`,
+  standalone builds and IDE packages, and a [security
+  review](docs/SECURITY-REVIEW.md), and code search (Phase 5: LangChain
+  `Embeddings` and `VectorStore`s, the `CodeSearch` tool and automatic
+  context).
 
 ## Quick start
 
@@ -51,13 +59,55 @@ uv run cmcoder sessions  # list saved conversations; --resume <id> continues one
 uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-json
 ```
 
+## Extending it (Phase 3)
+
+| Feature | Where |
+|---|---|
+| MCP servers | `mcpServers` in settings, `.mcp.json` in a project (approved before first start), `--mcp-config`; `/mcp` |
+| Hooks | `hooks` in settings: PreToolUse, PostToolUse, Stop, SubagentStop, UserPromptSubmit, SessionStart, PreCompact, Notification |
+| Custom commands, skills | `.cmcoder/commands/*.md`, `.cmcoder/skills/<name>/SKILL.md` (yours in `~/.cmcoder/`) |
+| Subagents | the `Task` tool; your own in `.cmcoder/agents/*.md`; `/agents` |
+| Critic | `/critic on`, `--critic` or `"critic": {"enabled": true}`: a read-only reviewer checks each answer first |
+| Team | `"team": {"enabled": true}`, then `/team <feature>`: PM → developer → tester (↺ developer on a failure, up to `team.maxRounds`) → DevOps. Roles: `pm.md`, `developer.md`, `tester.md`, `devops.md` in `.cmcoder/agents/`, else built-in |
+
+The project's own `.cmcoder/` files are used only in a trusted project
+(`--trust-project`, or the IDE's trust setting).
+
+## Gateways, sandbox, images, telemetry, packages (Phase 4)
+
+| What | How |
+|---|---|
+| Open WebUI as the gateway | `"providers": {"webui": {"type": "openwebui", "baseUrl": "https://webui.corp"}}` with the API key from your Open WebUI account (Settings → Account). Ollama models behind it get cmcoder's context window as `num_ctx` |
+| Model limits | Read from LiteLLM's `/model/info` or Open WebUI, else probed once and cached; `cmcoder models` lists what the gateway offers |
+| Bash sandbox | On by itself where it can run (bubblewrap on Linux and WSL2, `sandbox-exec` on macOS): writes only in the project and a temp folder, network only through `sandbox.network.allowedHosts` |
+| Images | Pasted images go to a model that sees them; for one that doesn't, set `"visionModel"` (a Qwen-VL) and it describes them first |
+| Metrics | `"telemetry": {"enabled": true, "endpoint": "https://otel.corp:4318"}`: OpenTelemetry counts and timings only (off by default) |
+| Checks | `cmcoder doctor`: network, TLS, key, every model (window, streaming, thinking, tool calling, images), MCP, hooks, sandbox, telemetry |
+| Packages | `uv run --with pyinstaller python packaging/build.py` (standalone, no Python needed), then `packaging/package-all.sh`: see [docs/build-package/](docs/build-package/README.md) |
+
+## Code search (Phase 5)
+
+```bash
+uv run cmcoder rag setup   # pick an embedding model on your gateway, and where the index lives
+uv run cmcoder index       # build or update this project's index (changed files only)
+uv run cmcoder rag status
+```
+
+In a session the agent gets the `CodeSearch` tool, and each question of a few
+words gets the best-matching code added to it automatically
+(`rag.autoContext`). `/index` builds or updates the index from the chat. The
+index is built in (`~/.cmcoder/index/`, readable by you only) or kept on a
+Chroma server (`"store": {"type": "chroma", "url": "..."}`).
+
 ## Layout
 
 | Folder | What |
 |---|---|
-| `src/cmcoder/models/` | `CmcoderChatModel` (ChatOpenAI for Qwen3/LiteLLM), reasoning split, error hints |
-| `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack |
-| `src/cmcoder/middleware/` | Permissions (interrupts), compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
+| `src/cmcoder/models/` | `CmcoderChatModel` (ChatOpenAI for LiteLLM / Open WebUI and Qwen3), the gateway's own endpoints, learned windows, reasoning split, error hints |
+| `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack; subagents; the team `StateGraph` |
+| `src/cmcoder/mcp/` | MCP servers through `langchain-mcp-adapters` |
+| `src/cmcoder/rag/` | Code search: embeddings, vector stores, chunking, the incremental index |
+| `src/cmcoder/middleware/` | Permissions (interrupts), hooks, the critic, compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
 | `src/cmcoder/runtime/` | `Session` (streaming, interrupts, compaction, rewind), SQLite session store, slash commands, titles |
 | `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash and the LangChain adapter (todos: LangChain's `write_todos`) |
 | `src/cmcoder/core/`, `config/`, `protocol/`, `sandbox/` | Carried over from cmcoderagent: permission rules, high-risk command checks, settings, IDE protocol |

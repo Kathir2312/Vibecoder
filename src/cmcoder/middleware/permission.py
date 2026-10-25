@@ -22,6 +22,15 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
   Interrupts need a checkpointer (the graph's state is saved while it waits);
   agents/main.py always gives one.
 
+* `abefore_model` + `@hook_config(can_jump_to=["end"])`: a hook that runs
+  before every model call and may return `{"jump_to": "end"}` to finish the
+  run there. A user's "Deny" (without feedback) ends the turn this way, as in
+  cmcoderagent: the denial goes into the conversation as the tool's result,
+  but the model isn't asked again until the user says what to do. Why not
+  return `Command(goto=END)` from the tool call? `create_agent` routes the
+  tools node to the model with a conditional edge that always fires, so a
+  `goto` would add a destination, not replace it.
+
 WHY NOT LANGCHAIN'S BUILT-IN `HumanInTheLoopMiddleware`?
 It asks for configured tool names (approve / edit / reject). cmcoder needs
 much more: allow/ask/deny rules (`Bash(npm test:*)`, `Edit(src/**)`),
@@ -33,21 +42,28 @@ LangGraph.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
+from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
-from ..core.permissions import Decision, PermissionPolicy, suggest_rules
+from ..core.hooks import ApproveHookFn, HookRunner
+from ..core.permissions import Decision, PermissionCheck, PermissionPolicy, suggest_rules
 from ..tools.base import Tool, ToolContext
+from .hooks import warn
 
 # The `kind` field of our interrupt payload, so the runtime can tell
 # permission requests from other interrupts (IDE tools in Phase 2).
 PERMISSION_KIND = "permission"
+# Marks the tool result of a call the user denied without feedback: the turn stops.
+STOP_KEY = "cmcoder_stop_turn"
+STOPPED = "Stopped: the user denied a tool call."
 
 
 def denied(call: ToolCall, text: str) -> ToolMessage:
@@ -55,6 +71,28 @@ def denied(call: ToolCall, text: str) -> ToolMessage:
     return ToolMessage(
         content=text, tool_call_id=call["id"] or "", name=call["name"], status="error"
     )
+
+
+def stopped(messages: list[Any]) -> bool:
+    """Did the user deny a call of the last model reply (and give no feedback)?"""
+    for msg in reversed(messages):
+        if not isinstance(msg, ToolMessage):  # the reply, or the user's next message
+            return False
+        if msg.additional_kwargs.get(STOP_KEY):
+            return True
+    return False
+
+
+def call_key(call: ToolCall) -> str:
+    """One tool call, for "this call was seen / let through" caches.
+
+    LangGraph runs a tool call's middleware again when it resumes after a
+    permission prompt, so some answers are cached per call. The id alone is
+    not enough: it comes from the model server, and a server that reuses ids
+    (some number them call_0, call_1, ... per reply) would make an answer for
+    one call apply to a different one. The name and arguments go in too."""
+    args = json.dumps(call["args"], sort_keys=True, default=str)
+    return f"{call['id'] or ''}|{call['name']}|{args}"
 
 
 class PermissionMiddleware(AgentMiddleware):
@@ -72,8 +110,16 @@ class PermissionMiddleware(AgentMiddleware):
         *,
         interactive: bool,
         on_rule_saved: Callable[[str], None] | None = None,
+        hooks: HookRunner | None = None,
+        approve_hook: ApproveHookFn | None = None,
     ) -> None:
         super().__init__()
+        self.hooks = hooks
+        self.approve_hook = approve_hook
+        # PreToolUse answers per tool call (`call_key`). When LangGraph resumes after a
+        # permission prompt it runs this middleware again for the same call;
+        # the hook (a user's command, maybe with side effects) must not run twice.
+        self._pre_hook: dict[str, Any] = {}
         self.policy = policy
         self.ctx = ctx
         # Not `self.tools`: on AgentMiddleware that attribute means "extra tools
@@ -81,6 +127,12 @@ class PermissionMiddleware(AgentMiddleware):
         self.known_tools = tools
         self.interactive = interactive
         self.on_rule_saved = on_rule_saved
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(
+        self, state: AgentState, runtime: Runtime[Any]
+    ) -> dict[str, Any] | None:
+        return {"jump_to": "end"} if stopped(state["messages"]) else None
 
     async def awrap_tool_call(
         self,
@@ -98,6 +150,40 @@ class PermissionMiddleware(AgentMiddleware):
             return await handler(request)
 
         check = self.policy.check(tool, args, self.ctx)
+        hook_asks = False
+        if (
+            self.hooks is not None
+            and self.hooks.has("PreToolUse")
+            and check.decision != Decision.DENY
+        ):
+            outcome = self._pre_hook.get(call_key(call))
+            if outcome is None:
+                outcome = await self.hooks.run(
+                    "PreToolUse",
+                    {"tool_name": tool.name, "tool_input": args.model_dump()},
+                    match=tool.name,
+                    approve_fn=self.approve_hook,
+                )
+                self._pre_hook[call_key(call)] = outcome
+                for w in outcome.warnings:
+                    warn(w)
+            if outcome.block:
+                return denied(
+                    call, f"Permission denied: blocked by a PreToolUse hook: {outcome.reason}"
+                )
+            # A hook may skip a normal prompt (never a deny rule or a high-risk
+            # command), or ask for one where the rules would allow.
+            if (
+                outcome.permission == "allow"
+                and check.decision == Decision.ASK
+                and not check.high_risk
+            ):
+                check = PermissionCheck(Decision.ALLOW, "allowed by a PreToolUse hook")
+            elif outcome.permission == "ask" and check.decision == Decision.ALLOW:
+                hook_asks = True
+                check = PermissionCheck(
+                    Decision.ASK, outcome.reason or "a PreToolUse hook asks to confirm"
+                )
         if check.decision == Decision.DENY:
             return denied(call, f"Permission denied: {check.reason}")
         if check.decision == Decision.ALLOW:
@@ -121,7 +207,7 @@ class PermissionMiddleware(AgentMiddleware):
             return denied(call, f"Permission denied: {reason}")
 
         change = tool.proposed_change(args, self.ctx)
-        can_remember = not check.high_risk and not self.policy.allow_rules_locked
+        can_remember = not check.high_risk and not self.policy.allow_rules_locked and not hook_asks
         # ---- the graph pauses here until the user answers ----
         answer: dict[str, Any] = interrupt(
             {
@@ -147,7 +233,10 @@ class PermissionMiddleware(AgentMiddleware):
                 if feedback
                 else " Stop and wait for the user's instructions."
             )
-            return denied(call, text)
+            result = denied(call, text)
+            if not feedback:
+                result.additional_kwargs[STOP_KEY] = True
+            return result
         if answer.get("remember") and can_remember:
             for r in rules:
                 self.policy.add_allow(r)

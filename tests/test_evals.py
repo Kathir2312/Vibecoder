@@ -33,7 +33,10 @@ def test_task_is_well_formed(task: Path) -> None:
         "bypassPermissions",
     )
     script = json.loads((task / "mock_script.json").read_text(encoding="utf-8"))
-    assert isinstance(script, list) and "content" in script[-1]  # ends with an answer
+    assert isinstance(script, list) and script
+    last = script[-1]
+    # ends with an answer, or (critique on) with the critic's verdict on it
+    assert "content" in last or [c["name"] for c in last.get("tool_calls", [])] == ["Verdict"]
     assert (task / "repo").is_dir()
 
 

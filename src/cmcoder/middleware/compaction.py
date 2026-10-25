@@ -34,8 +34,12 @@ from typing import Any
 from langchain.agents.middleware import AgentState, SummarizationMiddleware
 from langchain.agents.middleware.summarization import DEFAULT_SUMMARY_PROMPT
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
+from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
+
+from ..core.hooks import ApproveHookFn, HookRunner
+from .vision import images_as_text
 
 # Recognised by the mock server in tests; harmless to real models.
 COMPACTION_TAG = "<cmcoder-compaction>"
@@ -54,6 +58,10 @@ def latest_request(messages: list[AnyMessage]) -> HumanMessage | None:
     return None
 
 
+class CompactionBlocked(Exception):
+    """`/compact` was asked for, and a PreCompact hook said no (the message says why)."""
+
+
 class CompactionMiddleware(SummarizationMiddleware):
     """LangChain's summarisation, keeping the latest user request verbatim."""
 
@@ -66,8 +74,15 @@ class CompactionMiddleware(SummarizationMiddleware):
         overhead_tokens: int = 0,
         focus: str | None = None,
         always: bool = False,
+        hooks: HookRunner | None = None,
+        approve_hook: ApproveHookFn | None = None,
     ) -> None:
         self.overhead_tokens = overhead_tokens
+        self.hooks = hooks
+        self.approve_hook = approve_hook
+        # Why the last attempt didn't compact, when a PreCompact hook said no.
+        self.blocked: str | None = None
+        self.trigger_name = "manual" if always else "auto"
         prompt = f"{COMPACTION_TAG}\n{DEFAULT_SUMMARY_PROMPT}"
         if focus:
             # `{messages}` is filled in by LangChain; keep it last.
@@ -93,21 +108,42 @@ class CompactionMiddleware(SummarizationMiddleware):
         room = max(1024, window - self.overhead_tokens)
         self.model.profile = {**(self.model.profile or {}), "max_input_tokens": room}
 
+    def _trim_messages_for_summary(self, messages: list[AnyMessage]) -> list[AnyMessage]:
+        # The summary prompt is text: images go in as their descriptions
+        # (middleware/vision.py), never as base64.
+        return super()._trim_messages_for_summary(images_as_text(messages))
+
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
-        update = await super().abefore_model(state, runtime)
-        if not update:
+        # LangChain's own steps (SummarizationMiddleware.abefore_model), taken
+        # one by one so that every reason *not* to compact is checked before the
+        # summarizer is called: a summary that is then thrown away still costs a
+        # model call.
+        messages = state["messages"]
+        self.blocked = None
+        self._ensure_message_ids(messages)
+        if not self._should_summarize(messages, self.token_counter(messages)):
             return None
-        new = update["messages"]
-        request = latest_request(state["messages"])
-        kept_ids = {m.id for m in new if not isinstance(m, RemoveMessage)}
-        summarised = {m.id for m in state["messages"]} - kept_ids
-        if request is not None and summarised <= {request.id}:
+        cutoff = self._determine_cutoff_index(messages)
+        if cutoff <= 0:
+            return None
+        to_summarize, preserved = self._partition_messages(messages, cutoff)
+        request = latest_request(messages)
+        if request is not None and {m.id for m in to_summarize} <= {request.id}:
             # Only the current request would go, and it is kept anyway: a
             # summary would add tokens, not save them. Leave the state as it is.
             return None
-        if request is not None and request.id not in kept_ids:
-            # [RemoveMessage, summary, *kept]: put the request right after the summary.
-            new.insert(2, HumanMessage(content=request.content, id=request.id))
-        return update
+        if self.hooks is not None and self.hooks.has("PreCompact"):
+            outcome = await self.hooks.run(
+                "PreCompact", {"trigger": self.trigger_name}, approve_fn=self.approve_hook
+            )
+            if outcome.block:  # the hook said no: keep the conversation as it is
+                self.blocked = outcome.reason or "a PreCompact hook declined"
+                return None
+        summary = self._build_new_messages(await self._acreate_summary(to_summarize))
+        new: list[BaseMessage] = [RemoveMessage(id=REMOVE_ALL_MESSAGES), *summary]
+        if request is not None and request.id not in {m.id for m in preserved}:
+            # Right after the summary: the request the model is answering, verbatim.
+            new.append(HumanMessage(content=request.content, id=request.id))
+        return {"messages": [*new, *preserved]}

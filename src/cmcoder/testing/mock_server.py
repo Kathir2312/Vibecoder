@@ -17,6 +17,20 @@ prompt plus max_tokens exceeds the model's window is rejected with vLLM's
 "maximum context length" error, as a real server would.
 
 Run standalone:  python -m cmcoder.testing.mock_server --script s.json --port 8765
+
+LANGCHAIN CONCEPTS IN THIS FILE
+
+* **What `ChatOpenAI` sends and expects**: an OpenAI-compatible
+  `/v1/chat/completions` request (messages, `tools`, `stream`) and a
+  response or SSE stream of chunks with `delta.content`, `delta.tool_calls`
+  and `usage`. Serving that from a script is enough to drive a whole
+  LangChain agent, so tests are repeatable.
+* **Testing an agent**: script the model's side (which tool calls, which
+  text), run the real graph, then assert on the events, the files and the
+  recorded requests (what the model was shown).
+* **Alternatives in LangChain**: `GenericFakeChatModel` fakes the model
+  *object*; this fakes the *server*, so cmcoder's own HTTP client, TLS,
+  auth, retries and streaming are tested too.
 """
 
 from __future__ import annotations
@@ -78,6 +92,7 @@ class MockState:
         self.title_requests: list[dict[str, Any]] = []
         self.think_tags = think_tags
         self.requests: list[dict[str, Any]] = []
+        self.probes: list[dict[str, Any]] = []  # context-window probes (huge max_tokens)
         self.summary_requests: list[dict[str, Any]] = []
         # Standalone (--record FILE): each chat request also goes to this file,
         # one JSON line each, for tests in another process (the IDE plugins').
@@ -163,6 +178,7 @@ def _chunks(
 
 
 OLLAMA_DEFAULT_NUM_CTX = 2048
+PROBE_TOKENS = 1_000_000  # a request asking for this many is a window probe
 
 
 def _ollama_chunks(reply: dict[str, Any], model: str, prompt_tokens: int) -> list[dict[str, Any]]:
@@ -354,7 +370,10 @@ def make_handler(state: MockState) -> type[BaseHTTPRequestHandler]:
                 self._json(404, {"error": {"message": f"not found: {self.path}"}})
                 return
             body = json.loads(raw or b"{}")
-            state.requests.append(body)
+            if int(body.get("max_tokens") or 0) >= PROBE_TOKENS:
+                state.probes.append(body)  # a context-window probe, kept apart
+            else:
+                state.requests.append(body)
             if state.record:
                 with state.lock, open(state.record, "a", encoding="utf-8") as f:
                     f.write(json.dumps(body) + "\n")
@@ -487,6 +506,10 @@ class MockServer:
     @property
     def requests(self) -> list[dict[str, Any]]:
         return self.state.requests
+
+    @property
+    def probes(self) -> list[dict[str, Any]]:
+        return self.state.probes
 
     def __enter__(self) -> MockServer:
         self.thread.start()

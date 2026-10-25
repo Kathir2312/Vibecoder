@@ -1,0 +1,10 @@
+{
+  "prompt": "Use the team (the Team tool) to add greet(name) in greet.py: it returns 'Hello, <name>!', as test_greet.py expects.",
+  "check": "\"$PYTHON\" -m unittest -q && ls docs/stories/*.md",
+  "permission_mode": "bypassPermissions",
+  "max_turns": 20,
+  "args": [
+    "--trust-project"
+  ],
+  "phase": 3
+}
