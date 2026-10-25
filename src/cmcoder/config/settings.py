@@ -217,7 +217,7 @@ HookConfig = dict[
 
 class CriticConfig(_Model):
     """Critique: a critic agent reviews the final answer before it's shown
-    (core/critic.py). Off unless switched on (decided 5 Oct)."""
+    (middleware/critic.py). Off unless switched on (decided 5 Oct)."""
 
     enabled: bool = False
     # Reviews per turn; after the last failed one the answer is shown "not validated".

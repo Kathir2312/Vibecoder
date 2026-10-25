@@ -1,9 +1,11 @@
 """Turn exceptions from the model call into protocol `error` events with hints.
 
-LangChain doesn't wrap provider errors: `ChatOpenAI` raises the OpenAI SDK's
-exceptions (`openai.AuthenticationError`, `openai.APIConnectionError`, ...).
-That's why error handling sits here, next to the model, rather than in the
-agent loop.
+`ChatOpenAI` raises the OpenAI SDK's exceptions (`openai.AuthenticationError`,
+`openai.APIConnectionError`, ...); langchain-openai 1.x raises subclasses of
+them that are also LangChain's own (`ModelAuthenticationError`), so matching
+on the SDK classes catches both. Turning them into a message and a hint for
+the user is cmcoder's job, which is why it sits here, next to the model,
+rather than in the agent loop.
 """
 
 from __future__ import annotations

@@ -78,8 +78,6 @@ PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
     "index",
 }  # fmt: skip
-# Features of later phases that IDE panels may ask for: answered with the
-# protocol's own "not set up / not available" events, so panels show a state.
 _READ = ReadTool()
 
 
@@ -317,7 +315,13 @@ class StdioServer:
                 ev.CritiqueChanged(enabled=bool(self.agent.critic and self.agent.critic.enabled))
             )
         elif isinstance(message, msg.StopSubagent):
-            self.error("not_running", f"No running subagent {message.id!r} (subagents: Phase 3).")
+            # Stopping one subagent while the others go on isn't supported yet;
+            # the panel's Stop (interrupt) ends the whole turn, subagents included.
+            self.error(
+                "not_supported",
+                f"Stopping one subagent ({message.id!r}) isn't supported yet: "
+                "stop the whole turn instead.",
+            )
 
     async def _rebuild(self, model: str | None = None, **more: Any) -> None:
         """A new graph (another model, IDE tools, MCP tools, a code index) on the

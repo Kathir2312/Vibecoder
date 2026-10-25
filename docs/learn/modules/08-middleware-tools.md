@@ -147,7 +147,7 @@ so cmcoder writes a small middleware that connects it to `interrupt()`.
 ### The tool wrappers, in order
 
 cmcoder's tool wrappers are in
-[`loop_middleware`](../../../src/cmcoder/agents/main.py#L223), outermost
+[`loop_middleware`](../../../src/cmcoder/agents/main.py#L230), outermost
 first:
 
 ```mermaid
@@ -164,10 +164,10 @@ flowchart LR
 [`PlainToolTextMiddleware`](../../../src/cmcoder/middleware/guards.py#L193),
 [`LoopGuardMiddleware`](../../../src/cmcoder/middleware/guards.py#L164) and
 [`BashFileWorkMiddleware`](../../../src/cmcoder/middleware/guards.py#L126)
-come first ([`loop_middleware`, lines 246–248](../../../src/cmcoder/agents/main.py#L246)),
-then [`PermissionMiddleware`](../../../src/cmcoder/agents/main.py#L249), the
+come first ([`loop_middleware`, lines 253–255](../../../src/cmcoder/agents/main.py#L253-L255)),
+then [`PermissionMiddleware`](../../../src/cmcoder/agents/main.py#L256), the
 hooks and, innermost,
-[`FileCheckpointMiddleware`](../../../src/cmcoder/agents/main.py#L259). Each
+[`FileCheckpointMiddleware`](../../../src/cmcoder/agents/main.py#L266). Each
 of the three guards is a short example of one pattern:
 
 * **Answering without running.** The loop guard counts identical calls; at the
@@ -366,7 +366,7 @@ Read it against the code:
    `build_agent(..., extra_middleware=[...])` that prints every call it sees.
    Where does it sit relative to `PermissionMiddleware`, and how many times
    does it see the Edit? (Hint: `extra_middleware` goes after
-   `loop_middleware` in [agents/main.py](../../../src/cmcoder/agents/main.py#L376).)
+   `loop_middleware` in [agents/main.py](../../../src/cmcoder/agents/main.py#L383).)
 3. **Stretch: a Stop hook.** Add a Stop hook that exits 2 with
    "run the tests first" unless the last answer mentions "tests". Give the
    mock server a script where the second answer does. How many model calls,
