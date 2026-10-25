@@ -289,3 +289,32 @@ def test_learned_windows_age_and_the_first_format(tmp_path: Path) -> None:
     data["https://gw/v1|unknown"]["at"] -= 2 * 24 * 3600  # two days later: probe again
     path.write_text(json.dumps(data))
     assert windows.learned_entry("https://gw/v1", "unknown") is None
+
+
+async def test_no_summary_is_asked_for_and_thrown_away(mock_server, project: Path) -> None:
+    # Turn 1: the big tool output pushes the history past the threshold while
+    # the user's request is the only older message: nothing worth summarising,
+    # so the summarizer must not be called at all (it used to be, then the
+    # summary was dropped).
+    (project / "big.txt").write_text("\n".join(f"line {i}: filler text" for i in range(400)))
+    server = mock_server(
+        [
+            {"tool_calls": [{"name": "Read", "arguments": {"file_path": "big.txt"}}]},
+            {"content": "It is a big file."},
+            {"content": "Still here."},
+        ]
+    )
+    settings = {
+        "modelProfiles": [{"match": "*", "contextWindow": 6000}],
+        "autoCompactThreshold": 0.3,
+    }
+    session = make_session(server.base_url, project, settings=settings)
+    try:
+        first = await run_turn(session, "read big.txt")
+        assert not of_type(first, ev.Compacted)
+        assert server.state.summary_requests == []
+        second = await run_turn(session, "and now?")
+        assert of_type(second, ev.Compacted)
+        assert len(server.state.summary_requests) == 1
+    finally:
+        await session.agent.close()

@@ -66,7 +66,7 @@ from ..agents.context import RunContext
 from ..agents.main import Agent
 from ..core.checkpoints import Checkpoints
 from ..images import Image
-from ..middleware.compaction import CompactionMiddleware, is_summary
+from ..middleware.compaction import CompactionBlocked, CompactionMiddleware, is_summary
 from ..middleware.permission import PERMISSION_KIND, STOPPED, stopped
 from ..middleware.tool_text import ToolCallHoldback
 from ..middleware.vision import DESCRIPTIONS_KEY, describe
@@ -554,15 +554,25 @@ class Session:
 
     # --- /compact ------------------------------------------------------------------
     async def compact(self, focus: str | None = None) -> ev.Compacted | None:
-        """Summarise the conversation now, with the same middleware auto-compaction uses."""
+        """Summarise the conversation now, with the same middleware auto-compaction uses.
+
+        Raises `CompactionBlocked` when a PreCompact hook declines."""
         messages = await self.messages()
         if len(messages) < 3:
             return None
+        opts = self.agent.spec.get("opts")
         mw = CompactionMiddleware(
-            self.agent.bundle.model, self.agent.small.quick(), always=True, focus=focus
+            self.agent.bundle.model,
+            self.agent.small.quick(),
+            always=True,
+            focus=focus,
+            hooks=self.agent.hooks,  # PreCompact runs for /compact too (trigger "manual")
+            approve_hook=opts.approve_hook if opts is not None else None,
         )
         # Middleware hooks are plain async methods: callable outside a graph too.
         update = await mw.abefore_model({"messages": messages}, cast(Any, None))
+        if mw.blocked is not None:
+            raise CompactionBlocked(mw.blocked)
         if not update:
             return None
         await self.agent.graph.aupdate_state(self.config, update)

@@ -45,16 +45,24 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelCallLimitMiddleware
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    AgentState,
+    ModelCallLimitMiddleware,
+    hook_config,
+)
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
 from langgraph.errors import GraphInterrupt
+from langgraph.runtime import Runtime
 from pydantic import BaseModel, Field
 
 from ..config.settings import Settings, config_dir, find_project_root
@@ -200,6 +208,17 @@ class SubagentRun:
     report: str = ""
     started_at: float | None = None
     ended_at: float | None = None
+    stop_requested: bool = False  # the user pressed Stop on it (`stop_subagent`)
+
+    def request_stop(self) -> bool:
+        """Stop it: a queued one doesn't start; a running one writes its report
+        at its next model call, without tools. False when it isn't active."""
+        if self.state not in ("queued", "running", "waiting") or self.stop_requested:
+            return False
+        self.stop_requested = True
+        if self.state != "queued":
+            self.state = "stopping"
+        return True
 
     def status(self) -> ev.SubagentStatus:
         end = self.ended_at or time.monotonic()
@@ -217,6 +236,46 @@ class SubagentRun:
             elapsed_ms=int((end - self.started_at) * 1000) if self.started_at else 0,
             activity=self.activity,
         )
+
+
+# What the main agent gets back from a subagent the user stopped (cmcoderagent's words).
+STOPPED_SUBAGENT = "Not run: the user stopped this subagent."
+STOPPED_SUBAGENT_REPORT = "The user stopped this subagent. Its report so far:"
+STOP_REQUEST = (
+    "<system-reminder>The user stopped you, so you can't use tools any more. Write "
+    "your report for the main agent now from what you have found so far, with file "
+    "paths, and say what you didn't get to.</system-reminder>"
+)
+
+
+class StopRequestMiddleware(AgentMiddleware):
+    """Stop one subagent gracefully when the user asks (`stop_subagent`).
+
+    Cancelling the subagent's task would lose what it found. Instead, its next
+    model call is its last: `awrap_model_call` sends it without tools and with a
+    "write your report now" reminder, and `aafter_model` then ends the run
+    (`jump_to: "end"`) whatever the reply holds. A tool already running finishes
+    first."""
+
+    def __init__(self, run: SubagentRun) -> None:
+        super().__init__()
+        self.run = run
+        self.wrapped_up = False
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        if not self.run.stop_requested:
+            return await handler(request)
+        self.wrapped_up = True
+        last = request.override(tools=[], messages=[*request.messages, HumanMessage(STOP_REQUEST)])
+        return await handler(last)
+
+    @hook_config(can_jump_to=["end"])
+    async def aafter_model(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
+        return {"jump_to": "end"} if self.wrapped_up else None
 
 
 @dataclass
@@ -248,6 +307,19 @@ class SubagentRuntime:
     @property
     def root(self) -> Path:
         return find_project_root(self.opts.cwd.resolve())
+
+    def find(self, ref: str) -> SubagentRun | None:
+        """A run by its id (the Task call's) or its number ("2", "#2")."""
+        if ref in self.runs:
+            return self.runs[ref]
+        number = ref.lstrip("#")
+        return next((r for r in self.runs.values() if str(r.number) == number), None)
+
+    def stop(self, ref: str) -> SubagentRun | None:
+        """Stop one subagent; the turn and the other subagents go on. None: no
+        such run, or it isn't running."""
+        run = self.find(ref)
+        return run if run is not None and run.request_stop() else None
 
     @property
     def ctx_for_labels(self) -> ToolContext:
@@ -283,6 +355,7 @@ class SubagentRuntime:
         *,
         response_format: Any = None,
         max_turns: int | None = None,
+        run: SubagentRun | None = None,
     ) -> Any:
         """A subagent's graph: the same loop middleware as the main agent.
 
@@ -296,6 +369,10 @@ class SubagentRuntime:
             t for t in self.langchain_tools if allowed(t.name, definition.tools)
         ]
         middleware = [
+            # Outermost: when the user stops this subagent, its next model call
+            # is the last one, with no tools (structured-output runs, the
+            # critic's, can't drop their tool and run to the end).
+            *([StopRequestMiddleware(run)] if run is not None and response_format is None else []),
             ModelCallLimitMiddleware(
                 run_limit=max_turns or self.settings.subagent_max_turns, exit_behavior="end"
             ),
@@ -398,6 +475,7 @@ class SubagentResult:
     report: str
     structured: Any = None  # with `response_format`: the parsed structured output
     stopped: bool = False  # the user denied one of its tool calls (no feedback)
+    user_stopped: bool = False  # the user pressed Stop on this subagent (the turn goes on)
 
 
 async def run_subagent(
@@ -421,6 +499,11 @@ async def run_subagent(
             status="error",
             additional_kwargs={STOP_KEY: True},
         )
+    if result.user_stopped:
+        # Unlike a denial, the main turn goes on: with what the subagent found.
+        if not result.report:
+            return STOPPED_SUBAGENT
+        return f"{STOPPED_SUBAGENT_REPORT}\n\n{result.report[:MAX_REPORT_CHARS]}"
     return result.report[:MAX_REPORT_CHARS] or "The subagent finished without a report."
 
 
@@ -463,8 +546,13 @@ async def run_agent(
             )
             ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
             rt.contexts[call_id] = ctx
+        if run.stop_requested:  # stopped while it waited for a slot: never starts
+            await _release(rt, call_id)
+            run.state, run.ended_at = "stopped", time.monotonic()
+            _emit(writer, run.status())
+            return SubagentResult("", user_stopped=True)
         graph = rt.build(
-            definition, bundle, ctx, response_format=response_format, max_turns=max_turns
+            definition, bundle, ctx, response_format=response_format, max_turns=max_turns, run=run
         )
         report = ""
         structured = None
@@ -499,10 +587,16 @@ async def run_agent(
             await _release(rt, call_id)
             raise
         await _release(rt, call_id)
-    run.state = "stopped" if stopped else "limit" if run.steps >= run.max_steps else "done"
+    run.state = (
+        "stopped"
+        if stopped or run.stop_requested
+        else "limit"
+        if run.steps >= run.max_steps
+        else "done"
+    )
     run.report, run.activity, run.ended_at = report, "", time.monotonic()
     _emit(writer, run.status())
-    return SubagentResult(report, structured, stopped)
+    return SubagentResult(report, structured, stopped, user_stopped=run.stop_requested)
 
 
 async def _release(rt: SubagentRuntime, call_id: str) -> None:

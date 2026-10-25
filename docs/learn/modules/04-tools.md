@@ -251,13 +251,13 @@ safer and their results are easier to review.
 
 cmcoder's own tools don't need `ToolRuntime` (their context comes from the
 adapter). The tools that start *other agents* do:
-[`build_task_tool`](../../../src/cmcoder/agents/subagents.py#L361) defines
+[`build_task_tool`](../../../src/cmcoder/agents/subagents.py#L438) defines
 the Task tool as a function with
-[`runtime: ToolRuntime`](../../../src/cmcoder/agents/subagents.py#L367),
+[`runtime: ToolRuntime`](../../../src/cmcoder/agents/subagents.py#L444),
 made into a tool with
-[`StructuredTool.from_function`](../../../src/cmcoder/agents/subagents.py#L378).
+[`StructuredTool.from_function`](../../../src/cmcoder/agents/subagents.py#L455).
 The subagent's progress goes to the UI through
-[`runtime.stream_writer`](../../../src/cmcoder/agents/subagents.py#L411),
+[`runtime.stream_writer`](../../../src/cmcoder/agents/subagents.py#L489),
 tagged with `runtime.tool_call_id`. The team tool does the same
 ([`agents/team.py`](../../../src/cmcoder/agents/team.py#L371)). Chapter 12
 covers both.

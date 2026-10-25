@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from cmcoder.middleware.compaction import CompactionBlocked
 from cmcoder.protocol import events as ev
+from cmcoder.runtime.commands import run_command
 
 from .conftest import API_KEY
 from .helpers import make_session, of_type, run_turn
@@ -210,3 +212,36 @@ async def test_a_reused_tool_call_id_doesnt_reuse_a_hooks_answer(
     assert (project / "ok.txt").exists()
     assert [r.input["file_path"] for r in asked] == ["other.txt"]  # asked, not waved through
     assert not (project / "other.txt").exists()
+
+
+async def test_pre_compact_runs_for_compact_by_hand_and_can_decline(
+    mock_server, project: Path
+) -> None:
+    log = project / "hook.log"
+    record = f"grep -o '\"trigger\": *\"[a-z]*\"' >> '{log.as_posix()}'"
+    server = mock_server([{"content": "one"}, {"content": "two"}, {"content": "three"}])
+    session = make_session(server.base_url, project, settings=hooks("PreCompact", record))
+    try:
+        for p in ("a", "b", "c"):
+            await run_turn(session, p)
+        assert await session.compact() is not None
+        assert '"manual"' in log.read_text()  # /compact ran the hook, as "manual"
+    finally:
+        await session.agent.close()
+
+    # A hook that exits 2 keeps the conversation as it is, and says why.
+    decline = "echo 'keep the details' >&2; exit 2"
+    server = mock_server([{"content": "one"}, {"content": "two"}, {"content": "three"}])
+    session = make_session(server.base_url, project, settings=hooks("PreCompact", decline))
+    try:
+        for p in ("a", "b", "c"):
+            await run_turn(session, p)
+        before = len(await session.messages())
+        with pytest.raises(CompactionBlocked, match="keep the details"):
+            await session.compact()
+        assert len(await session.messages()) == before
+        assert not server.state.summary_requests  # declined before any summary was asked for
+        lines = (await run_command(session, "/compact")).lines
+        assert "a PreCompact hook declined (keep the details)" in lines[0]
+    finally:
+        await session.agent.close()

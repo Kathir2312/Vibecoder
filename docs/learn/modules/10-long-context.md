@@ -141,28 +141,28 @@ an 80% trigger it decides whether compaction comes in time.
 
 ### The compaction middleware
 
-[`CompactionMiddleware`](../../../src/cmcoder/middleware/compaction.py#L60)
+[`CompactionMiddleware`](../../../src/cmcoder/middleware/compaction.py#L65)
 subclasses `SummarizationMiddleware`. Its
-[`__init__`](../../../src/cmcoder/middleware/compaction.py#L63):
+[`__init__`](../../../src/cmcoder/middleware/compaction.py#L68):
 
 - uses the small/fast model as `summarizer` (it's passed in as `summarizer`;
   [agents/main.py](../../../src/cmcoder/agents/main.py#L366-L368) gives it
   `small.quick()`, the small model with thinking switched off: a summary needs
   no reasoning);
-- triggers at [`("fraction", threshold)`](../../../src/cmcoder/middleware/compaction.py#L86)
+- triggers at [`("fraction", threshold)`](../../../src/cmcoder/middleware/compaction.py#L95)
   (the `autoCompactThreshold` setting, 0.8 by default) and
-  [keeps the newest quarter](../../../src/cmcoder/middleware/compaction.py#L88);
+  [keeps the newest quarter](../../../src/cmcoder/middleware/compaction.py#L97);
 - puts a tag in front of LangChain's default summary prompt
-  ([`COMPACTION_TAG`](../../../src/cmcoder/middleware/compaction.py#L77)) so
+  ([`COMPACTION_TAG`](../../../src/cmcoder/middleware/compaction.py#L86)) so
   the mock server can recognise summary requests in tests, and, for
   `/compact <focus>`, adds
-  ["Pay special attention to: …"](../../../src/cmcoder/middleware/compaction.py#L78-L82)
+  ["Pay special attention to: …"](../../../src/cmcoder/middleware/compaction.py#L87-L91)
   before the messages.
 
 **The window minus the fixed part.**
-[`set_window`](../../../src/cmcoder/middleware/compaction.py#L97) works
+[`set_window`](../../../src/cmcoder/middleware/compaction.py#L106) works
 around the counting trap above: it changes the profile *of its own copy of
-the model* ([`model.model_copy()`](../../../src/cmcoder/middleware/compaction.py#L84))
+the model* ([`model.model_copy()`](../../../src/cmcoder/middleware/compaction.py#L93))
 so that `max_input_tokens` is the window **minus the system prompt and the
 tool schemas**. That overhead is measured once by
 [`fixed_prompt_tokens`](../../../src/cmcoder/agents/main.py#L224):
@@ -172,22 +172,31 @@ LangChain's own, filled from cmcoder's model profile in
 [`_langchain_profile`](../../../src/cmcoder/models/chat.py#L178).
 
 **Keeping your latest request.**
-[`abefore_model`](../../../src/cmcoder/middleware/compaction.py#L107) calls
-LangChain's version, then adjusts the result:
+[`abefore_model`](../../../src/cmcoder/middleware/compaction.py#L116) takes
+LangChain's own steps one by one, using the same helpers as
+`SummarizationMiddleware` (`_should_summarize`, `_determine_cutoff_index`,
+`_partition_messages`), so that every reason *not* to compact is checked
+before the summarizer is called:
 
+- [past the trigger, and something to cut](../../../src/cmcoder/middleware/compaction.py#L126-L130),
+  as LangChain decides;
 - if the only message that would be summarised is your current request,
-  [it changes nothing](../../../src/cmcoder/middleware/compaction.py#L117-L120)
+  [it changes nothing](../../../src/cmcoder/middleware/compaction.py#L133-L136)
   (a summary would add tokens, not save them);
-- a [`PreCompact` hook](../../../src/cmcoder/middleware/compaction.py#L121-L124)
-  may block the compaction (chapter 11);
-- if your latest request fell into the summarised part, it is
-  [put back word for word](../../../src/cmcoder/middleware/compaction.py#L125-L127)
+- a [`PreCompact` hook](../../../src/cmcoder/middleware/compaction.py#L137-L143)
+  may decline (chapter 11);
+- only then is [the summary asked for](../../../src/cmcoder/middleware/compaction.py#L144),
+  and if your latest request fell into the summarised part, it is
+  [put back word for word](../../../src/cmcoder/middleware/compaction.py#L146-L148)
   right after the summary, so the model never works from a paraphrase of what
   you just asked.
 
-Note the order in `abefore_model`: LangChain's method has already asked the
-summarizer by the time the first check runs, so when the check says "change
-nothing", that summary request was made and is dropped. The lab shows it.
+Why not call LangChain's `abefore_model` and fix up its result? It calls the
+summarizer before you can look. A summary that is then thrown away is a model
+call for nothing (cmcoder did exactly that until the course found it; the
+test `test_no_summary_is_asked_for_and_thrown_away` keeps it fixed). Calling
+`_`-prefixed helpers ties the subclass to LangChain internals, a trade-off
+the pinned versions in `uv.lock` make acceptable.
 
 ### Context editing and the window learned from errors
 
@@ -204,7 +213,7 @@ catches the server's error, reads the real window from it
 stores it per gateway and model
 ([`save_window`](../../../src/cmcoder/models/windows.py#L81), in
 `~/.cmcoder/context-windows.json`), tells the compaction middleware through
-`on_window` (wired [here](../../../src/cmcoder/agents/main.py#L381)), and
+`on_window` (wired [here](../../../src/cmcoder/agents/main.py#L382)), and
 [retries once](../../../src/cmcoder/middleware/model.py#L139-L140) with old
 tool outputs cleared. Chapter 07 covers that middleware in full.
 
@@ -212,14 +221,15 @@ tool outputs cleared. Chapter 07 covers that middleware in full.
 
 [`Session.compact`](../../../src/cmcoder/runtime/session.py#L556) builds a
 `CompactionMiddleware` with `always=True` (trigger at 2 messages, keep the
-last exchange), and calls its hook
-[directly, outside any graph](../../../src/cmcoder/runtime/session.py#L565):
+last exchange) and the session's hooks, and calls its hook
+[directly, outside any graph](../../../src/cmcoder/runtime/session.py#L573):
 middleware hooks are plain async methods. It then writes the update into the
 checkpoint with
-[`graph.aupdate_state(config, update)`](../../../src/cmcoder/runtime/session.py#L568):
-the same `RemoveMessage` update a graph run would have made. This manual path
-creates the middleware without the hook runner, so `PreCompact` hooks run for
-automatic compaction only.
+[`graph.aupdate_state(config, update)`](../../../src/cmcoder/runtime/session.py#L578):
+the same `RemoveMessage` update a graph run would have made. `PreCompact`
+hooks run here too, with `"trigger": "manual"`; if one declines,
+[`CompactionBlocked`](../../../src/cmcoder/runtime/session.py#L575) carries
+its reason to `/compact`, which shows it.
 
 While streaming, [`Session`](../../../src/cmcoder/runtime/session.py#L467-L469)
 recognises a compaction by the `RemoveMessage` in a node's update and emits a
@@ -251,7 +261,7 @@ be inside the project (`safe_project_file`), and the total is capped at
 [40,000 characters](../../../src/cmcoder/core/prompt.py#L17).
 
 In the terminal, a line starting with `#` adds a note to the project's
-`CMCODER.md` ([`add_memory`](../../../src/cmcoder/runtime/commands.py#L116));
+`CMCODER.md` ([`add_memory`](../../../src/cmcoder/runtime/commands.py#L117));
 the REPL then [rebuilds the agent](../../../src/cmcoder/cli/repl.py#L180-L182),
 because the system prompt is fixed when the graph is compiled.
 
@@ -286,7 +296,6 @@ after turn 2: 4 messages
 
 requests the gateway got:
    agent    2 messages, starts 'You are cmcoder, an agentic coding assistant '
-   summary  1 messages, starts '<cmcoder-compaction>\n<role>\nContext Extractio'
    agent    4 messages, starts 'You are cmcoder, an agentic coding assistant '
    summary  1 messages, starts '<cmcoder-compaction>\n<role>\nContext Extractio'
    agent    4 messages, starts 'You are cmcoder, an agentic coding assistant '
@@ -302,9 +311,10 @@ Things to notice:
   fraction applies to that.
 - After turn 2 the tool output is gone, the AI's answer survived (`keep`),
   and `and now?` is there word for word.
-- **Two summary requests, one compaction.** The first came in turn 1, after
-  the big tool result: only your current request would have been summarised,
-  so cmcoder dropped that summary (see "Keeping your latest request").
+- **One summary request, in turn 2.** In turn 1 the big tool result already
+  passed the trigger, but only your current request would have been
+  summarised, so cmcoder decided not to compact *before* asking for a summary
+  (see "Keeping your latest request").
 - The summary requests start with `<cmcoder-compaction>` and have no system
   prompt or tools: the summariser is a separate, plain model call.
 

@@ -177,46 +177,46 @@ flowchart TB
 ```
 
 * **Reading without blocking the loop.**
-  [`_start_reader`](../../../src/cmcoder/cli/stdio.py#L122) reads stdin in a
+  [`_start_reader`](../../../src/cmcoder/cli/stdio.py#L123) reads stdin in a
   daemon thread with `os.read` (asyncio's stdin readers don't work with
   Windows pipes) and hands each line to the event loop with
-  [`call_soon_threadsafe`](../../../src/cmcoder/cli/stdio.py#L132), into the
+  [`call_soon_threadsafe`](../../../src/cmcoder/cli/stdio.py#L133), into the
   `inbox` queue.
-* **The main loop.** [`serve`](../../../src/cmcoder/cli/stdio.py#L154) opens
-  the session store, [builds the agent](../../../src/cmcoder/cli/stdio.py#L168)
-  on its checkpointer, then [takes messages from the inbox](../../../src/cmcoder/cli/stdio.py#L194)
-  and [handles](../../../src/cmcoder/cli/stdio.py#L222) them. It never waits
+* **The main loop.** [`serve`](../../../src/cmcoder/cli/stdio.py#L155) opens
+  the session store, [builds the agent](../../../src/cmcoder/cli/stdio.py#L169)
+  on its checkpointer, then [takes messages from the inbox](../../../src/cmcoder/cli/stdio.py#L195)
+  and [handles](../../../src/cmcoder/cli/stdio.py#L223) them. It never waits
   for a turn to finish.
 * **A turn is an asyncio task.** A `user_message`
-  [starts `_run_turn` as a task](../../../src/cmcoder/cli/stdio.py#L243),
-  which [iterates `session.run(...)`](../../../src/cmcoder/cli/stdio.py#L443)
+  [starts `_run_turn` as a task](../../../src/cmcoder/cli/stdio.py#L244),
+  which [iterates `session.run(...)`](../../../src/cmcoder/cli/stdio.py#L450)
   and emits each event. Because the loop keeps reading, an `interrupt`
-  message can [cancel the task](../../../src/cmcoder/cli/stdio.py#L445)
+  message can [cancel the task](../../../src/cmcoder/cli/stdio.py#L452)
   mid-turn.
 * **Permission prompts across time.** When the graph hits `interrupt()`, the
   session reads the [pending interrupts](../../../src/cmcoder/runtime/session.py#L294),
   emits a `permission_request` and [awaits `ask()`](../../../src/cmcoder/runtime/session.py#L320).
-  Here [`ask`](../../../src/cmcoder/cli/stdio.py#L587) parks a future under
+  Here [`ask`](../../../src/cmcoder/cli/stdio.py#L594) parks a future under
   the interrupt's id; the client's later `permission_response`
-  [sets its result](../../../src/cmcoder/cli/stdio.py#L246), and the session
+  [sets its result](../../../src/cmcoder/cli/stdio.py#L247), and the session
   [resumes the graph](../../../src/cmcoder/runtime/session.py#L327) with
   `Command(resume=answers)`.
 * **When *not* to use an interrupt.** IDE tools (`getDiagnostics`,
   `openFile`) are quick questions to the editor:
-  [`ide_call`](../../../src/cmcoder/cli/stdio.py#L602) sends a request and
+  [`ide_call`](../../../src/cmcoder/cli/stdio.py#L609) sends a request and
   awaits the answer inside the tool, with a 30-second timeout. An interrupt is
   for an answer that may take long or must survive a restart: a person's
   decision.
 * **Side tasks.** Indexing can take minutes, so `index` and `rag_setup` run
-  [beside the conversation](../../../src/cmcoder/cli/stdio.py#L454); a job that
+  [beside the conversation](../../../src/cmcoder/cli/stdio.py#L461); a job that
   fails still answers the client, which waits for a reply.
 * **A new graph, the same conversation.** `create_agent` compiles one model
   and a fixed tool list, so switching models or adding IDE tools means a new
-  graph: [`_rebuild`](../../../src/cmcoder/cli/stdio.py#L326) calls
+  graph: [`_rebuild`](../../../src/cmcoder/cli/stdio.py#L328) calls
   [`rebuild_agent`](../../../src/cmcoder/agents/main.py#L181), which builds it
   on the *same checkpointer*; the thread id stays, so the conversation goes on.
-* **stdout is the protocol.** [`run_stdio`](../../../src/cmcoder/cli/stdio.py#L656)
-  [points `sys.stdout` at stderr](../../../src/cmcoder/cli/stdio.py#L665), so
+* **stdout is the protocol.** [`run_stdio`](../../../src/cmcoder/cli/stdio.py#L663)
+  [points `sys.stdout` at stderr](../../../src/cmcoder/cli/stdio.py#L672), so
   a stray `print` can never corrupt the event stream.
 
 ### 2. Metrics through a callback handler: `telemetry.py`

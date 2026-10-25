@@ -369,6 +369,7 @@ def build_agent(
             threshold=settings.auto_compact_threshold,
             overhead_tokens=fixed_prompt_tokens(system_prompt, lc_tools),
             hooks=hooks,
+            approve_hook=opts.approve_hook,
         )
         middleware.append(compaction)
     middleware += loop_middleware(

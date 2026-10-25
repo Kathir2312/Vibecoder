@@ -183,9 +183,9 @@ The frontmatter can give a `description`, an `argument-hint` and
 group words); a body without placeholders
 [gets the arguments appended](../../../src/cmcoder/core/commands.py#L208-L209).
 At run time,
-[`custom_commands`](../../../src/cmcoder/runtime/commands.py#L75) reloads
+[`custom_commands`](../../../src/cmcoder/runtime/commands.py#L76) reloads
 the files on each use (edit a command, no restart) and adds MCP prompts, and
-[`expand`](../../../src/cmcoder/runtime/commands.py#L89) turns a command
+[`expand`](../../../src/cmcoder/runtime/commands.py#L90) turns a command
 into the prompt to send, with its `allowed-tools` as
 [allow rules for that turn only](../../../src/cmcoder/runtime/session.py#L195).
 A repository's commands

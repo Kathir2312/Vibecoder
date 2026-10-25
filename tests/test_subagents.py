@@ -202,3 +202,48 @@ async def test_custom_agent_definition_and_unknown_type(mock_server, project: Pa
     results = {r.id: r for r in of_type(events, ev.ToolResult)}
     assert results["t1"].content == "Looks fine."
     assert results["t2"].is_error and "Unknown subagent_type" in results["t2"].content
+
+
+async def test_stopping_one_subagent_lets_it_report_and_the_turn_go_on(
+    mock_server, project: Path
+) -> None:
+    (project / "auth.py").write_text("def refresh_token():\n    pass\n")
+    server = mock_server(
+        [
+            call("Task", "task1", description="find refresh", prompt="Where is refresh_token?"),
+            call("Grep", pattern="refresh_token"),  # the subagent's first step
+            {"content": "So far: refresh_token is in auth.py."},  # its wrap-up report
+            {"content": "Found it in auth.py."},  # the main agent goes on
+        ]
+    )
+    session = make_session(server.base_url, project)
+    events: list[ev.Event] = []
+    stopped: list[object] = []
+    try:
+        async for event in session.run("where is refresh_token?"):
+            events.append(event)
+            # The user presses Stop on the subagent as soon as it calls a tool.
+            if (
+                isinstance(event, ev.ToolUse)
+                and event.parent_tool_use_id == "task1"
+                and not stopped
+            ):
+                rt = session.agent.subagents
+                assert rt is not None
+                stopped.append(rt.stop("task1"))
+                assert rt.stop("task1") is None  # already stopping
+                assert rt.stop("nope") is None  # no such subagent
+    finally:
+        await session.agent.close()
+    assert stopped and stopped[0] is not None
+    # Its last model call had no tools and the "write your report" reminder.
+    wrap_up = server.requests[2]
+    assert not wrap_up.get("tools")
+    assert "The user stopped you" in wrap_up["messages"][-1]["content"]
+    # The main agent got the partial report and finished the turn normally.
+    task = [r for r in of_type(events, ev.ToolResult) if r.name == "Task"][0]
+    assert "The user stopped this subagent" in task.content and "auth.py" in task.content
+    assert events[-1].subtype == "success" and events[-1].result == "Found it in auth.py."
+    states = [s.state for s in of_type(events, ev.SubagentStatus)]
+    assert states[-1] == "stopped"
+    assert len(server.requests) == 4

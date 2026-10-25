@@ -198,10 +198,10 @@ those with no LangChain code at all:
 [`split_think`](../../../src/cmcoder/models/reasoning.py#L24) for a complete
 reply and [`ThinkSplitter`](../../../src/cmcoder/models/reasoning.py#L48) for
 a stream, which holds back text that could be half a tag (`"<thi"`). The
-session uses both: [per chunk](../../../src/cmcoder/runtime/session.py#L656)
+session uses both: [per chunk](../../../src/cmcoder/runtime/session.py#L666)
 it turns `additional_kwargs["reasoning_content"]` and think-tag text into
 `reasoning_delta` events, and for the finished message it
-[splits once more](../../../src/cmcoder/runtime/session.py#L688).
+[splits once more](../../../src/cmcoder/runtime/session.py#L698).
 
 ### Token counts and cost
 

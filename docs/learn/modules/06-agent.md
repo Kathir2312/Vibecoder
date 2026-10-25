@@ -146,8 +146,8 @@ steps, matching the comments in the code:
    when there are skills. They are wrapped as LangChain tools
    [later](../../../src/cmcoder/agents/main.py#L357) (chapter 04), MCP
    tools are added, and finally the
-   [`Task` tool](../../../src/cmcoder/agents/main.py#L397) and, with
-   `team.enabled`, the [`Team` tool](../../../src/cmcoder/agents/main.py#L400)
+   [`Task` tool](../../../src/cmcoder/agents/main.py#L398) and, with
+   `team.enabled`, the [`Team` tool](../../../src/cmcoder/agents/main.py#L401)
    (chapter 12).
 2. **System prompt.** [`build_system_prompt`](../../../src/cmcoder/agents/main.py#L325):
    stable instructions first, then the `CMCODER.md` memory, then the
@@ -157,11 +157,11 @@ steps, matching the comments in the code:
    LangChain middlewares first, then the optional ones (code context, vision,
    compaction), then [`loop_middleware`](../../../src/cmcoder/agents/main.py#L230),
    then your `extra_middleware`, and the critic
-   [last](../../../src/cmcoder/agents/main.py#L408).
-4. **The graph.** [`create_agent(...)`](../../../src/cmcoder/agents/main.py#L411)
+   [last](../../../src/cmcoder/agents/main.py#L409).
+4. **The graph.** [`create_agent(...)`](../../../src/cmcoder/agents/main.py#L412)
    with `context_schema=RunContext` and the checkpointer: the caller's
    (`AsyncSqliteSaver` in the CLI and IDEs) or, in tests,
-   [`InMemorySaver`](../../../src/cmcoder/agents/main.py#L417) with
+   [`InMemorySaver`](../../../src/cmcoder/agents/main.py#L418) with
    cmcoder's serializer (chapter 09).
 
 ### `loop_middleware`: the core every agent shares
@@ -281,7 +281,7 @@ and the conversation goes on. The permission mode and "always allow"
 answers [carry over](../../../src/cmcoder/agents/main.py#L198); so do the
 sandbox and the code index. It is used by `/model` in the
 [terminal](../../../src/cmcoder/cli/repl.py#L137), by the
-[IDE server](../../../src/cmcoder/cli/stdio.py#L334) and by
+[IDE server](../../../src/cmcoder/cli/stdio.py#L336) and by
 [`/index`](../../../src/cmcoder/rag/session.py#L109).
 
 ### `prepare_agent`: the async part

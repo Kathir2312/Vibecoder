@@ -63,6 +63,7 @@ from ..core.permissions import MODES, Decision, ModeNotAllowed
 from ..images import Image, ImageError, from_base64
 from ..mcp import McpManager
 from ..mcp.manager import McpServer
+from ..middleware.compaction import CompactionBlocked
 from ..protocol import events as ev
 from ..protocol import messages as msg
 from ..runtime.commands import BUILT_IN, run_command
@@ -315,13 +316,14 @@ class StdioServer:
                 ev.CritiqueChanged(enabled=bool(self.agent.critic and self.agent.critic.enabled))
             )
         elif isinstance(message, msg.StopSubagent):
-            # Stopping one subagent while the others go on isn't supported yet;
-            # the panel's Stop (interrupt) ends the whole turn, subagents included.
-            self.error(
-                "not_supported",
-                f"Stopping one subagent ({message.id!r}) isn't supported yet: "
-                "stop the whole turn instead.",
-            )
+            # The turn and the other subagents go on; this one writes its report
+            # at its next model call (agents/subagents.py StopRequestMiddleware).
+            rt = self.agent.subagents
+            run = rt.stop(message.id) if rt is not None else None
+            if run is None:
+                self.error("not_running", f"No running subagent {message.id!r}.")
+            else:
+                self.emit(run.status())  # "stopping" (or "queued" until it's dropped)
 
     async def _rebuild(self, model: str | None = None, **more: Any) -> None:
         """A new graph (another model, IDE tools, MCP tools, a code index) on the
@@ -409,8 +411,13 @@ class StdioServer:
             name = text[1:].split(" ", 1)[0] if text.startswith("/") else ""
             if name == "compact":
                 arg = text.partition(" ")[2].strip()
-                if compacted := await session.compact(arg or None):
-                    self.emit(compacted)
+                try:
+                    if compacted := await session.compact(arg or None):
+                        self.emit(compacted)
+                except CompactionBlocked as e:
+                    self.emit(
+                        ev.Warning(message=f"Not compacted: a PreCompact hook declined ({e}).")
+                    )
                 self.emit(self._result("success", "", False, started))
             elif name in PANEL_COMMANDS:  # answered here, not sent to the model
                 if name == "index":  # with progress, and the status bar after it

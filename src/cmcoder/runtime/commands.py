@@ -25,6 +25,7 @@ from ..core.commands import (
 )
 from ..core.commands import help_lines as custom_help_lines
 from ..core.permissions import ModeNotAllowed
+from ..middleware.compaction import CompactionBlocked
 from .session import Session
 from .store import SessionInfo
 
@@ -136,7 +137,10 @@ async def run_command(
         await session.clear()
         return CommandResult(["Started a new conversation."])
     if name == "compact":
-        result = await session.compact(arg or None)
+        try:
+            result = await session.compact(arg or None)
+        except CompactionBlocked as e:
+            return CommandResult([f"Not compacted: a PreCompact hook declined ({e})."])
         if result is None:
             return CommandResult(["Nothing to compact yet."])
         return CommandResult(

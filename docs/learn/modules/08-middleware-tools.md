@@ -250,7 +250,7 @@ model call and returns `{"jump_to": "end"}` when
 the model just isn't asked again until you speak. The session then reports
 the turn as [`interrupted`](../../../src/cmcoder/runtime/session.py#L341). A
 subagent that was denied passes the same mark up through its Task result
-([agents/subagents.py](../../../src/cmcoder/agents/subagents.py#L422)), so the
+([agents/subagents.py](../../../src/cmcoder/agents/subagents.py#L500)), so the
 main turn stops too.
 
 ### The round trip
@@ -366,7 +366,7 @@ Read it against the code:
    `build_agent(..., extra_middleware=[...])` that prints every call it sees.
    Where does it sit relative to `PermissionMiddleware`, and how many times
    does it see the Edit? (Hint: `extra_middleware` goes after
-   `loop_middleware` in [agents/main.py](../../../src/cmcoder/agents/main.py#L383).)
+   `loop_middleware` in [agents/main.py](../../../src/cmcoder/agents/main.py#L384).)
 3. **Stretch: a Stop hook.** Add a Stop hook that exits 2 with
    "run the tests first" unless the last answer mentions "tests". Give the
    mock server a script where the second answer does. How many model calls,

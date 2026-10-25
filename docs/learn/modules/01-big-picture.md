@@ -155,7 +155,7 @@ sequenceDiagram
    [iterates `session.run(prompt)`](../../../src/cmcoder/cli/headless.py#L73).
 3. [`build_agent`](../../../src/cmcoder/agents/main.py#L270) makes the chat
    model, the tools, the middleware list, and finally calls
-   [`create_agent(...)`](../../../src/cmcoder/agents/main.py#L411): the
+   [`create_agent(...)`](../../../src/cmcoder/agents/main.py#L412): the
    compiled graph.
 4. [`Session.run`](../../../src/cmcoder/runtime/session.py#L180) sends the
    message into the graph with

@@ -228,7 +228,7 @@ and dispatches on `part["type"]`:
 
 During the turn, `_TurnState` keeps its own copy of the conversation with the
 graph's own reducer,
-[`add_messages`](../../../src/cmcoder/runtime/session.py#L642), so an
+[`add_messages`](../../../src/cmcoder/runtime/session.py#L652), so an
 after-model middleware that sends a corrected reply *with the same id*
 replaces it there too.
 
@@ -246,23 +246,23 @@ state from outside a run.
 `/compact` uses the same trick:
 [`compact()`](../../../src/cmcoder/runtime/session.py#L556) calls the
 compaction middleware's hook directly (hooks are plain async methods,
-[line 565](../../../src/cmcoder/runtime/session.py#L565)) and
-[writes the result](../../../src/cmcoder/runtime/session.py#L568) with
+[line 565](../../../src/cmcoder/runtime/session.py#L573)) and
+[writes the result](../../../src/cmcoder/runtime/session.py#L578) with
 `aupdate_state`. Chapter 10 explains the summary itself.
 
 ### `/rewind`: a fork plus file snapshots
 
-[`rewind(turn)`](../../../src/cmcoder/runtime/session.py#L589) undoes two
+[`rewind(turn)`](../../../src/cmcoder/runtime/session.py#L599) undoes two
 things:
 
 * **Code**: the file snapshots `FileCheckpointMiddleware` took (chapter 08)
   are restored.
 * **Conversation**:
-  [`_fork_before`](../../../src/cmcoder/runtime/session.py#L614) walks
-  [`aget_state_history`](../../../src/cmcoder/runtime/session.py#L616) for
+  [`_fork_before`](../../../src/cmcoder/runtime/session.py#L624) walks
+  [`aget_state_history`](../../../src/cmcoder/runtime/session.py#L626) for
   the newest checkpoint that doesn't contain that turn's message *and* ended
   a run (`not snapshot.next`), then
-  [writes to it](../../../src/cmcoder/runtime/session.py#L620): the thread
+  [writes to it](../../../src/cmcoder/runtime/session.py#L630): the thread
   forks there. Nothing is deleted. Rewinding the first turn has nothing
   before it, so it starts a fresh thread instead.
 
@@ -292,7 +292,7 @@ file per project, under `~/.cmcoder/projects/<name>-<hash>/sessions.db`
   does that for sessions older than `cleanupPeriodDays`.
 
 Without a store (unit tests), `build_agent` falls back to
-[`InMemorySaver`](../../../src/cmcoder/agents/main.py#L417).
+[`InMemorySaver`](../../../src/cmcoder/agents/main.py#L418).
 
 ### The serializer allow-list: `runtime/serde.py`
 
@@ -316,14 +316,14 @@ On any error the title is the start of the first message.
 
 ### Slash commands: thin wrappers over the thread
 
-[`run_command`](../../../src/cmcoder/runtime/commands.py#L125) is shared by
+[`run_command`](../../../src/cmcoder/runtime/commands.py#L126) is shared by
 every front end; each command works on a `Session` and returns lines to show:
 
 | Command | LangGraph underneath |
 |---|---|
-| [`/clear`](../../../src/cmcoder/runtime/commands.py#L135) | a new `thread_id` |
-| [`/resume`](../../../src/cmcoder/runtime/commands.py#L148) | the index table, then an old `thread_id` |
-| [`/rewind`](../../../src/cmcoder/runtime/commands.py#L160) | `aget_state_history` + a fork, and file snapshots |
+| [`/clear`](../../../src/cmcoder/runtime/commands.py#L136) | a new `thread_id` |
+| [`/resume`](../../../src/cmcoder/runtime/commands.py#L152) | the index table, then an old `thread_id` |
+| [`/rewind`](../../../src/cmcoder/runtime/commands.py#L164) | `aget_state_history` + a fork, and file snapshots |
 | `/compact` | a middleware hook called directly + `aupdate_state` |
 | `/todos` | `aget_state` → `values["todos"]` |
 

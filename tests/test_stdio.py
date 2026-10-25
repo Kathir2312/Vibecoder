@@ -367,3 +367,15 @@ async def test_editor_context_withholds_secret_files(mock_server: Any, project: 
         await agent.close()
     sent = server.requests[0]["messages"][1]["content"]
     assert "abc123" not in sent and "contents are not shared" in sent
+
+
+async def test_stop_subagent_for_one_that_is_not_running(mock_server, project: Path) -> None:
+    server = mock_server([])
+    agent = await Agent.start(project, server)
+    try:
+        await agent.until("system_init")
+        await agent.send(type="stop_subagent", id="call_nope")
+        err = await agent.until("error")
+        assert err["kind"] == "not_running" and "call_nope" in err["message"]
+    finally:
+        await agent.close()

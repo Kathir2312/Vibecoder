@@ -156,66 +156,85 @@ replaced.
 ### 1. Subagents: a graph inside the Task tool
 
 **Where the definitions come from.** An
-[`AgentDefinition`](../../../src/cmcoder/agents/subagents.py#L101) is a name,
+[`AgentDefinition`](../../../src/cmcoder/agents/subagents.py#L109) is a name,
 a description (what the main model reads to choose one), a prompt, an
 optional tool list and an optional model. Two are
-[built in](../../../src/cmcoder/agents/subagents.py#L112): `general-purpose`
+[built in](../../../src/cmcoder/agents/subagents.py#L120): `general-purpose`
 (every tool, the main model) and `explore` (read-only, with
-[`model="subagent"`](../../../src/cmcoder/agents/subagents.py#L127)). Yours
+[`model="subagent"`](../../../src/cmcoder/agents/subagents.py#L135)). Yours
 are Markdown files with front matter, read by
-[`_load_dir`](../../../src/cmcoder/agents/subagents.py#L132);
-[`load_agents`](../../../src/cmcoder/agents/subagents.py#L160) reads a
+[`_load_dir`](../../../src/cmcoder/agents/subagents.py#L140);
+[`load_agents`](../../../src/cmcoder/agents/subagents.py#L168) reads a
 project's `.cmcoder/agents/` only
-[when the project is trusted](../../../src/cmcoder/agents/subagents.py#L163),
+[when the project is trusted](../../../src/cmcoder/agents/subagents.py#L171),
 then yours from `~/.cmcoder/agents/` (yours win on a name clash).
 
 **Per-role models.**
-[`model_for`](../../../src/cmcoder/agents/subagents.py#L267) maps `inherit`
+[`model_for`](../../../src/cmcoder/agents/subagents.py#L339) maps `inherit`
 (or nothing) to the main model, `small` to `smallFastModel`, `subagent` to
 `subagentModel` (else `smallFastModel`), and anything else to a
 `provider:model` reference.
 
 **Building the subagent's graph.**
-[`SubagentRuntime.build`](../../../src/cmcoder/agents/subagents.py#L278) is a
+[`SubagentRuntime.build`](../../../src/cmcoder/agents/subagents.py#L350) is a
 second `create_agent`:
 
 * only the tools the definition allows, and never `Task`, `Team` or
-  `write_todos` ([`NOT_FOR_SUBAGENTS`](../../../src/cmcoder/agents/subagents.py#L76)):
+  `write_todos` ([`NOT_FOR_SUBAGENTS`](../../../src/cmcoder/agents/subagents.py#L84)):
   no nesting;
 * a step limit with LangChain's built-in
-  [`ModelCallLimitMiddleware(run_limit=..., exit_behavior="end")`](../../../src/cmcoder/agents/subagents.py#L299)
+  [`ModelCallLimitMiddleware(run_limit=..., exit_behavior="end")`](../../../src/cmcoder/agents/subagents.py#L376)
   (`subagentMaxTurns`, or the caller's `max_turns`);
 * the same loop middleware as the main agent
-  ([`loop_middleware`](../../../src/cmcoder/agents/subagents.py#L302)), so the
+  ([`loop_middleware`](../../../src/cmcoder/agents/subagents.py#L379)), so the
   same permission rules and hooks apply, with `SubagentStop` instead of `Stop`;
 * and, the key line,
-  [no checkpointer](../../../src/cmcoder/agents/subagents.py#L319): run inside
+  [no checkpointer](../../../src/cmcoder/agents/subagents.py#L396): run inside
   the main graph's tool node, it uses the main graph's.
 
-**The tool.** [`build_task_tool`](../../../src/cmcoder/agents/subagents.py#L361)
+**The tool.** [`build_task_tool`](../../../src/cmcoder/agents/subagents.py#L438)
 wraps an async function with `StructuredTool.from_function`. The function
-[asks for `runtime: ToolRuntime`](../../../src/cmcoder/agents/subagents.py#L364):
+[asks for `runtime: ToolRuntime`](../../../src/cmcoder/agents/subagents.py#L441):
 LangChain injects it (the model never sees that parameter) and it carries the
 tool call's id and a `stream_writer`. The id names the run; the writer sends
 the subagent's own tool calls to the UI on the main graph's `custom` stream
-([`_emit`](../../../src/cmcoder/agents/subagents.py#L392)), each tagged
-[`parent_tool_use_id`](../../../src/cmcoder/agents/subagents.py#L540) so the
+([`_emit`](../../../src/cmcoder/agents/subagents.py#L469)), each tagged
+[`parent_tool_use_id`](../../../src/cmcoder/agents/subagents.py#L634) so the
 panel shows them under the Task card.
 
-**Running it.** [`run_agent`](../../../src/cmcoder/agents/subagents.py#L427)
-[streams the subagent graph](../../../src/cmcoder/agents/subagents.py#L474)
+**Running it.** [`run_agent`](../../../src/cmcoder/agents/subagents.py#L510)
+[streams the subagent graph](../../../src/cmcoder/agents/subagents.py#L562)
 with `stream_mode=["updates"]` and turns each new message into UI events
-([`_follow`](../../../src/cmcoder/agents/subagents.py#L523)); the last text
+([`_follow`](../../../src/cmcoder/agents/subagents.py#L617)); the last text
 reply is the report returned to the main agent. A `structured_response` in an
 update is
-[picked up too](../../../src/cmcoder/agents/subagents.py#L483) (the critic and
+[picked up too](../../../src/cmcoder/agents/subagents.py#L571) (the critic and
 the team use that).
 
 **Parallel subagents.** Several Task calls in one model reply are separate
 tool calls, and `create_agent` runs them concurrently. A semaphore,
-[`slots`](../../../src/cmcoder/agents/subagents.py#L242)
+[`slots`](../../../src/cmcoder/agents/subagents.py#L301)
 (`maxParallelSubagents`, default 4), caps how many run at once:
-[`async with rt.slots`](../../../src/cmcoder/agents/subagents.py#L456).
+[`async with rt.slots`](../../../src/cmcoder/agents/subagents.py#L539).
+
+**Stopping one subagent.** An IDE's agent map has a Stop button per
+subagent (`stop_subagent`). Cancelling the subagent's asyncio task would lose
+everything it found, so cmcoder stops it the way cmcoderagent did: gracefully,
+with a middleware.
+[`SubagentRuntime.stop`](../../../src/cmcoder/agents/subagents.py#L318)
+marks the run
+([`request_stop`](../../../src/cmcoder/agents/subagents.py#L213): "stopping",
+or never started if it was still queued), and
+[`StopRequestMiddleware`](../../../src/cmcoder/agents/subagents.py#L251), the
+outermost middleware of every subagent graph, acts at its next model call:
+`awrap_model_call` sends that call **without tools** and with a "write your
+report now" reminder, and
+[`aafter_model`](../../../src/cmcoder/agents/subagents.py#L277) returns
+`{"jump_to": "end"}`. The Task tool then
+[hands the main agent the report so far](../../../src/cmcoder/agents/subagents.py#L502),
+and the turn, and any other subagents, go on. Compare a *denial* inside a
+subagent (section 2), which ends the whole turn. Test:
+`test_stopping_one_subagent_lets_it_report_and_the_turn_go_on`.
 
 ### 2. Interrupts two graphs deep
 
@@ -250,21 +269,21 @@ sequenceDiagram
 
 Two things in `run_agent` make that work:
 
-* [`except GraphInterrupt: raise`](../../../src/cmcoder/agents/subagents.py#L491):
+* [`except GraphInterrupt: raise`](../../../src/cmcoder/agents/subagents.py#L579):
   the pause must not be caught as an error.
 * Whatever the re-run would *rebuild* has to be kept by you. A subagent's
   `ToolContext` (what it has read, its shell) lives in
-  [`rt.contexts`](../../../src/cmcoder/agents/subagents.py#L239) by call id, and
+  [`rt.contexts`](../../../src/cmcoder/agents/subagents.py#L298) by call id, and
   the re-run
-  [takes it back](../../../src/cmcoder/agents/subagents.py#L459) instead of
+  [takes it back](../../../src/cmcoder/agents/subagents.py#L542) instead of
   starting fresh (else "read before write" would fail on resume). Its
   `SubagentRun` (number, counts) is
-  [reused the same way](../../../src/cmcoder/agents/subagents.py#L446).
+  [reused the same way](../../../src/cmcoder/agents/subagents.py#L529).
 
 **A "Deny" inside a subagent stops the main turn too.** The subagent's
 permission middleware marks the denial with `STOP_KEY` and ends the subagent's
-run. `run_agent` [notices the mark](../../../src/cmcoder/agents/subagents.py#L486),
-and [`run_subagent`](../../../src/cmcoder/agents/subagents.py#L413) returns a
+run. `run_agent` [notices the mark](../../../src/cmcoder/agents/subagents.py#L574),
+and [`run_subagent`](../../../src/cmcoder/agents/subagents.py#L491) returns a
 `ToolMessage` carrying the same mark, so the *main* agent's
 [`abefore_model`](../../../src/cmcoder/middleware/permission.py#L131) ends the
 main run too, instead of asking the model again.
@@ -296,7 +315,7 @@ middleware version of the tool's `stream_writer`.
 ### 4. The team: a `StateGraph` of subagents
 
 The team is enabled with `"team": {"enabled": true}`; the main agent then gets
-the [`Team` tool](../../../src/cmcoder/agents/main.py#L400), and `/team <feature>`
+the [`Team` tool](../../../src/cmcoder/agents/main.py#L401), and `/team <feature>`
 asks it to use it.
 
 **The state.** [`TeamState`](../../../src/cmcoder/agents/team.py#L142) is a

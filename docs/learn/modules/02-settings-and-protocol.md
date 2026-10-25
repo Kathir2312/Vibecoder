@@ -198,9 +198,9 @@ one in Python never needs it, and it's always on the wire. A few to know:
   every turn: `success`, `error`, `max_turns` or `interrupted`.
 
 The stdio server
-[writes each event as one line](../../../src/cmcoder/cli/stdio.py#L110)
+[writes each event as one line](../../../src/cmcoder/cli/stdio.py#L111)
 (`model_dump_json()`) and
-[parses each incoming line](../../../src/cmcoder/cli/stdio.py#L201) with
+[parses each incoming line](../../../src/cmcoder/cli/stdio.py#L202) with
 `parse_message`; a bad line becomes an `error` event, never a crash.
 
 ### TypeScript from the same models
