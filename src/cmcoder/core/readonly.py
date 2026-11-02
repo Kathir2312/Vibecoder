@@ -108,7 +108,11 @@ def parse(command: str) -> list[Segment] | None:
     (an unclosed quote or substitution, a redirection without a target)."""
     try:
         return _parse(command)
-    except _Unbalanced:
+    except (_Unbalanced, ValueError, IndexError, RecursionError):
+        # Anything the parser can't make sense of means "can't tell": the
+        # caller then asks the user. A parser slip must never reach the model
+        # as a tool error ("ValueError: substring not found"): that was the
+        # bug with backticks inside double quotes.
         return None
 
 
@@ -179,15 +183,28 @@ def _parse(s: str) -> list[Segment]:
         if c == '"':
             j = _closing_quote(s, i + 1)
             inside = s[i + 1 : j - 1]
-            for m in re.finditer(r"\$\(|`", inside):
-                w_dynamic = True
-                start = m.end()
-                end = (
-                    _closing(inside, start, "(", ")") - 1
-                    if m.group() == "$("
-                    else inside.index("`", start)
-                )
-                seg.inner.append(inside[start:end])
+            # Walk the string as _closing_quote did: an escaped character is
+            # literal (`\``, `\$(`), and a substitution is taken whole, so the
+            # closing backtick of a pair is never read as an opening one.
+            pos = 0
+            while pos < len(inside):
+                ch = inside[pos]
+                if ch == "\\":
+                    pos += 2
+                elif inside.startswith("$(", pos):
+                    w_dynamic = True
+                    end = _closing(inside, pos + 2, "(", ")")  # just past the ")"
+                    seg.inner.append(inside[pos + 2 : end - 1])
+                    pos = end
+                elif ch == "`":
+                    w_dynamic = True
+                    end = inside.find("`", pos + 1)
+                    if end < 0:
+                        raise _Unbalanced
+                    seg.inner.append(inside[pos + 1 : end])
+                    pos = end + 1
+                else:
+                    pos += 1
             if re.search(r"\$[\w{@*#?$!-]", inside):
                 w_expands = True
             word.append(re.sub(r"\\([\\\"$`])", r"\1", inside))

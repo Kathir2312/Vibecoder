@@ -135,6 +135,82 @@ def test_the_parser_sees_through_quotes(code: Path) -> None:
     assert [(r.op, r.target) for r in segs[1].redirects] == [(">", "f")]
 
 
+# --- backticks inside double quotes (a long `python -c "..."` or a commit message) ------
+
+
+BACKTICKS_IN_QUOTES = [
+    'echo "use `ls` here"',  # a substitution inside double quotes
+    'echo "`a` and `b`"',  # two of them: the closing one is not an opening one
+    'echo "a \\`b\\` c"',  # escaped: plain text
+    'git commit -m "Fix `foo` in bar"',  # markdown quoting in a message
+    'echo "$(date) and `whoami`"',
+    'echo "\\$(rm -rf /)"',  # an escaped $( is text, as in bash
+]
+
+
+@pytest.mark.parametrize("command", BACKTICKS_IN_QUOTES)
+def test_backticks_in_double_quotes_never_crash_the_check(
+    code: Path, ctx: ToolContext, command: str
+) -> None:
+    """These raised `ValueError: substring not found`, which the model saw as the
+    tool's result, again and again, whenever it wrote a script with backticks."""
+    assert parse(command) is not None, command
+    for mode in ("default", "acceptEdits", "auto", "plan"):
+        decide(PermissionPolicy(mode), command, ctx)  # decides, whatever it decides
+
+
+def test_commands_in_backticks_inside_double_quotes_are_still_checked(
+    code: Path, ctx: ToolContext
+) -> None:
+    # An escaped backtick is text, so this is read-only...
+    assert is_read_only('echo "a \\`b\\` c"', code, code)
+    # ...but a substitution is never run unasked, as with $( ): the line asks, and
+    # what runs inside the backticks is inspected like any command.
+    assert not is_read_only('echo "use `ls` here"', code, code)
+    assert not is_read_only('echo "`rm -rf build`"', code, code)
+    assert not is_read_only('echo "$(rm -rf build)"', code, code)
+    assert decide(PermissionPolicy(), 'echo "`rm -rf build`"', ctx) == Decision.ASK
+    # An escaped $( is text (bash prints it), not a command.
+    segs = parse('echo "\\$(rm -rf /)"')
+    assert segs is not None and segs[0].inner == []
+    # A stray backtick means "can't tell": ask, don't fail.
+    assert parse("python -c \"print('a `b')\"") is None
+    assert decide(PermissionPolicy(), "python -c \"print('a `b')\"", ctx) == Decision.ASK
+
+
+def test_the_check_survives_random_shell_text(code: Path, ctx: ToolContext) -> None:
+    """Fixed-seed fuzzing of everything the permission check runs on a command:
+    quotes, backticks, `$(`, escapes and operators in any order must give a
+    decision, never an exception."""
+    import random
+
+    pieces = list("'\"`$(){}\\;&|<>\n *?#!~=-./") + ["a", "rm", "cat", "$(", "`", "\\`", "&&"]
+    rng = random.Random(20261102)
+    policies = [PermissionPolicy(mode) for mode in ("default", "plan", "auto")]
+    for _ in range(4000):
+        command = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 18)))
+        for policy in policies:
+            decide(policy, command, ctx)  # no exception
+        is_read_only(command, code, code)
+
+
+async def test_a_script_with_backticks_runs_instead_of_failing(
+    mock_server: Any, code: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = 'echo "a \\`b\\` c"'
+    server = mock_server(
+        [{"tool_calls": [{"name": "Bash", "arguments": {"command": command}}]}, {"content": "ok"}]
+    )
+    monkeypatch.setenv("CMCODER_API_KEY", API_KEY)
+    session = make_session(server.base_url, code)
+    try:
+        events = await run_turn(session, "run it")
+    finally:
+        await session.agent.close()
+    result = next(e for e in events if isinstance(e, ev.ToolResult))
+    assert not result.is_error and "a `b` c" in result.content, result.content
+
+
 # --- "always allow": the command's family, not its exact text ---------------------------
 
 
