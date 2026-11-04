@@ -79,6 +79,9 @@ PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
     "index", "memory",
 }  # fmt: skip
+# Commands that normally send a prompt to the model; when they only have a message
+# (their usage, "it is off", "no changes"), the panel just shows it.
+PROMPT_COMMANDS = ("team", "init", "review", "webtest")
 _READ = ReadTool()
 
 
@@ -443,11 +446,7 @@ class StdioServer:
                     result = await run_command(session, text)
                     if result.send is not None:
                         text, allow = result.send, result.allow
-                    elif name in (
-                        "team",
-                        "init",
-                        "review",
-                    ):  # its usage or "it is off": no model turn
+                    elif name in PROMPT_COMMANDS:  # its usage or "it is off": no model turn
                         self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
                         self.emit(self._result("success", "", False, started))
                         return

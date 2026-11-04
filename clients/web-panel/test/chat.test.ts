@@ -113,7 +113,7 @@ for (const flavour of FLAVOURS) {
     await ev({ type: "assistant_delta", text: " <img src=x onerror=alert(1)>" });
     await ev({ type: "assistant_message", text: "Done **now** <img src=x onerror=alert(1)>", reasoning: "", tool_calls: [{}], model: null });
     await ev({ type: "tool_use", id: "1", name: "Bash", input: {}, label: "Bash(pytest -q)", parent_tool_use_id: null });
-    await ev({ type: "tool_result", id: "1", name: "Bash", content: "a\nb\nc\nd\ne", is_error: false, summary: "exit 0", parent_tool_use_id: null });
+    await ev({ type: "tool_result", id: "1", name: "Bash", content: "a\nb\nc\nd\ne", is_error: false, summary: "exit 0", parent_tool_use_id: null, images: [] });
     await ev(result);
 
     assert.equal(await page.textContent(".todos"), "Todo list · 0/2 done► Fix☐ Test");
@@ -121,6 +121,25 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator(".msg.assistant img").count(), 0, "raw HTML from the model is not rendered");
     assert.match((await page.textContent(".tool")) ?? "", /Bash\(pytest -q\)└ exit 0a\nb\nc\n… 2 more lines/);
     assert.equal(await page.isVisible(".send"), true);
+    await page.close();
+  });
+
+  test(`${flavour}: a browser screenshot is shown under the tool result, small until clicked`, async () => {
+    const { page, ev } = await panel(flavour);
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    await ev({ type: "tool_use", id: "s1", name: "Browser", input: {}, label: "Browser(screenshot)", parent_tool_use_id: null });
+    await ev({
+      type: "tool_result", id: "s1", name: "Browser", content: "Took a screenshot.", is_error: false,
+      summary: "screenshot", parent_tool_use_id: null,
+      images: [png, "javascript:alert(1)", "data:text/html;base64,PHNjcmlwdD4="],
+    });
+    assert.equal(await page.locator(".tool img.shot").count(), 1, "only image data URLs are shown");
+    assert.equal(await page.getAttribute(".tool img.shot", "src"), png);
+    assert.equal(await page.locator(".tool img.shot.big").count(), 0);
+    await page.click(".tool img.shot");
+    assert.equal(await page.locator(".tool img.shot.big").count(), 1);
+    await page.click(".tool img.shot");
+    assert.equal(await page.locator(".tool img.shot.big").count(), 0);
     await page.close();
   });
 
@@ -243,10 +262,10 @@ for (const flavour of FLAVOURS) {
     await page.press("textarea", "Enter");
     await ev({ type: "tool_use", id: "t", name: "Task", input: {}, label: "Task(explore: find the parser)", parent_tool_use_id: null });
     await ev({ type: "tool_use", id: "c1", name: "Grep", input: {}, label: "Grep(parse)", parent_tool_use_id: "t" });
-    await ev({ type: "tool_result", id: "c1", name: "Grep", content: "3 files", is_error: false, summary: null, parent_tool_use_id: "t" });
+    await ev({ type: "tool_result", id: "c1", name: "Grep", content: "3 files", is_error: false, summary: null, parent_tool_use_id: "t", images: [] });
     await ev({ type: "tool_use", id: "c2", name: "Read", input: {}, label: "Read(x.py)", parent_tool_use_id: "t" });
-    await ev({ type: "tool_result", id: "c2", name: "Read", content: "No such file\nmore", is_error: true, summary: null, parent_tool_use_id: "t" });
-    await ev({ type: "tool_result", id: "t", name: "Task", content: "Found it.", is_error: false, summary: "2 tool uses", parent_tool_use_id: null });
+    await ev({ type: "tool_result", id: "c2", name: "Read", content: "No such file\nmore", is_error: true, summary: null, parent_tool_use_id: "t", images: [] });
+    await ev({ type: "tool_result", id: "t", name: "Task", content: "Found it.", is_error: false, summary: "2 tool uses", parent_tool_use_id: null, images: [] });
     await ev(result);
     assert.equal(await page.locator(".tool").count(), 1, "one card: the subagent's steps are inside it");
     assert.deepEqual(await page.locator(".tool .steps .step").allTextContents(), ["● Grep(parse)", "● Read(x.py) — No such file"]);
@@ -342,7 +361,7 @@ for (const flavour of FLAVOURS) {
     assert.deepEqual((await sent()).filter((m) => m.kind === "stopSubagent"), [{ kind: "stopSubagent", id: "b" }]);
 
     await status("b", 2, "Analyse TW.Api", "stopped");
-    await ev({ type: "tool_result", id: "b", name: "Task", content: "(stopped) partial", is_error: false, summary: "4 tool uses", parent_tool_use_id: null });
+    await ev({ type: "tool_result", id: "b", name: "Task", content: "(stopped) partial", is_error: false, summary: "4 tool uses", parent_tool_use_id: null, images: [] });
     assert.match((await page.locator(".tool").nth(1).textContent()) ?? "", /■ stopped · explore · 3\/100 steps/);
     assert.equal(await page.locator(".agents .agent.stopped .stop-one").count(), 0);
     assert.match((await page.textContent(".agents .title")) ?? "", /2 active · 1 finished/);

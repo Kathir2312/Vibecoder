@@ -725,6 +725,21 @@ def _label(call: ToolCall) -> str:
     return f"{call['name']}({target})" if target else call["name"]
 
 
+def _artifact_images(artifact: object) -> list[str]:
+    """The pictures a tool left for the chat (its message's `artifact`), as data URLs.
+    Only image files are read, shrunk like pictures the user attaches (images.py)."""
+    from ..images import ImageError, prepare
+
+    paths = artifact.get("images") if isinstance(artifact, dict) else None
+    urls: list[str] = []
+    for path in paths if isinstance(paths, list) else []:
+        try:
+            urls.append(prepare(Path(str(path)).read_bytes(), Path(str(path)).name).data_url)
+        except (OSError, ImageError):  # gone (the session's temp folder) or not an image
+            continue
+    return urls
+
+
 def _tool_result_event(msg: ToolMessage) -> ev.Event:
     content = msg.content if isinstance(msg.content, str) else msg.text
     return ev.ToolResult(
@@ -732,4 +747,5 @@ def _tool_result_event(msg: ToolMessage) -> ev.Event:
         name=msg.name or "",
         content=content,
         is_error=msg.status == "error",
+        images=_artifact_images(msg.artifact),
     )

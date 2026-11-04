@@ -109,10 +109,10 @@ for (const flavour of FLAVOURS) {
     await ev({ type: "tool_use", id: "own", name: "Glob", input: {}, label: "Glob(*.sln)", parent_tool_use_id: null });
     for (const [i, label] of ["Glob(a)", "Read(b.cs)", "Read(c.cs)", "Read(d.cs)", "Read(e.cs)"].entries()) await ev(step("a", `a${i}`, label));
     await ev(step("b", "b1", "Read(Db.cs)"));
-    await ev({ type: "tool_result", id: "b1", name: "Read", content: "No such file\nmore", is_error: true, summary: null, parent_tool_use_id: "b" });
+    await ev({ type: "tool_result", id: "b1", name: "Read", content: "No such file\nmore", is_error: true, summary: null, parent_tool_use_id: "b", images: [] });
     await ev(status("a", 1, "Analyse TW.Core", "running", { activity: "Read(e.cs)" }));
     await ev(status("b", 2, "Analyse TW.Data", "done"));
-    await ev({ type: "tool_result", id: "b", name: "Task", content: "Data layer: EF Core.", is_error: false, summary: "1 tool use", parent_tool_use_id: null });
+    await ev({ type: "tool_result", id: "b", name: "Task", content: "Data layer: EF Core.", is_error: false, summary: "1 tool use", parent_tool_use_id: null, images: [] });
 
     assert.equal(await page.locator(".node.agent").count(), 2);
     assert.match((await page.textContent(".node.agent.running")) ?? "", /◐ 1\. Analyse TW\.Core.*explore · 3\/100 steps.*4 tools · 31\.4k tokens · 1m1[23]s/);
