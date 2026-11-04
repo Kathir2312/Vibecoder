@@ -248,3 +248,35 @@ class Memory:
                 "full text with Recall (by its title)."
             )
         return "\n\n".join(out)
+
+
+INIT_PROMPT = """\
+Learn this project so that future sessions start already knowing it, and save what you \
+learn as notes. Explore with read-only tools only (Glob, Grep, Read; CodeSearch if you \
+have it). Start with the README, CMCODER.md or AGENTS.md, the manifest (pyproject.toml, \
+package.json, pom.xml, ...), the CI config and the top-level folders; then open the main \
+entry points. Do not change any project file.
+
+Then save 5 to 8 notes with Remember (scope "project", leave `quote` empty), one subject \
+each, under 900 characters, with exact commands and paths:
+- what the project is for
+- the layout: where things live
+- how to build, run, test and lint (the exact commands)
+- conventions and style
+- the key modules and how they connect
+- gotchas: anything that cost or would cost time
+
+Only save what you verified in the files; never guesses or secrets.{existing}{focus}
+
+Finish with a short list of the notes you saved."""
+
+
+def init_prompt(existing: list[str], focus: str = "") -> str:
+    have = (
+        "\n\nNotes that already exist (reuse a title to update that note instead of adding "
+        "a copy): " + "; ".join(existing) + "."
+        if existing
+        else ""
+    )
+    extra = f"\n\nFocus on: {focus}" if focus else ""
+    return INIT_PROMPT.format(existing=have, focus=extra)
