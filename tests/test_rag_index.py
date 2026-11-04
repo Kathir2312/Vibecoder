@@ -122,6 +122,7 @@ def settings_for(server: Any, store: dict[str, Any] | None = None) -> Settings:
 
 STORES: list[Any] = [
     pytest.param({"type": "local"}, id="local"),
+    pytest.param({"type": "lancedb"}, id="lancedb"),
     pytest.param(
         {"type": "chroma", "url": CHROMA_URL},
         id="chroma-server",

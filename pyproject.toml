@@ -25,6 +25,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.3,<0.4",
     "numpy>=2.1",
     "playwright>=1.56,<2",
+    "lancedb>=0.41.0",
 ]
 
 [project.scripts]

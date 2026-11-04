@@ -29,9 +29,10 @@ from .common import StoreError, chroma_key_name, chroma_needs_url
 if TYPE_CHECKING:
     from .index import CodeIndex
 
-# "chroma-server": Chroma at a URL, on this PC (http://localhost:8000) or a
-# server. (Chroma inside cmcoder isn't offered for now.)
-StoreKind = Literal["local", "chroma-server"]
+# "lancedb": LanceDB inside cmcoder, on disk (big codebases). "chroma-server":
+# Chroma at a URL, on this PC (http://localhost:8000) or a server. (Chroma inside
+# cmcoder isn't offered for now.)
+StoreKind = Literal["local", "lancedb", "chroma-server"]
 Scope = Literal["user", "project"]
 
 # Names that usually mean an embedding model (listed first).
@@ -98,6 +99,12 @@ async def check_store(choice: SetupChoice) -> str:
     """A short description of the store after checking it can be used; raises StoreError."""
     if choice.store == "local":
         return "the built-in index on this machine"
+    if choice.store == "lancedb":
+        from .lance import LANCEDB_MISSING, lancedb_available
+
+        if not lancedb_available():
+            raise StoreError(LANCEDB_MISSING)
+        return "LanceDB inside cmcoder, on this machine (on disk)"
     if not choice.url:
         raise StoreError(chroma_needs_url())
     headers = {"Authorization": f"Bearer {choice.api_key}"} if choice.api_key else {}
@@ -113,7 +120,8 @@ async def check_store(choice: SetupChoice) -> str:
 
 
 def rag_block(choice: SetupChoice) -> dict[str, Any]:
-    store: dict[str, Any] = {"type": "local" if choice.store == "local" else "chroma"}
+    kinds = {"local": "local", "lancedb": "lancedb", "chroma-server": "chroma"}
+    store: dict[str, Any] = {"type": kinds[choice.store]}
     if choice.store == "chroma-server":
         store["url"] = choice.url
         if choice.read_only:

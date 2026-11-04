@@ -175,7 +175,10 @@ def setup_command(
     ] = None,
     store: Annotated[
         str | None,
-        typer.Option(help="local (built in) or chroma-server (Chroma at --url)."),
+        typer.Option(
+            help="local (built in), lancedb (LanceDB on disk, for big codebases) or "
+            "chroma-server (Chroma at --url)."
+        ),
     ] = None,
     url: Annotated[
         str | None,
@@ -247,7 +250,7 @@ async def _setup(
         raise typer.Exit(1) from e
     console.print(f"[green]{sym().ok}[/green] {ref} answers ({dim} dimensions).")
     # 2. Where the index lives.
-    kinds = ["local", "chroma-server"]
+    kinds = ["local", "lancedb", "chroma-server"]
     if store is None:
         if interactive:
             console.print("\n[bold]2. Where the index lives[/bold]")
@@ -256,6 +259,7 @@ async def _setup(
                     "Store",
                     [
                         "On this machine, built in (nothing to install)",
+                        "On this machine, LanceDB on disk (for big codebases)",
                         "Chroma, by its URL (running on this PC, or a server a team shares)",
                     ],
                 )

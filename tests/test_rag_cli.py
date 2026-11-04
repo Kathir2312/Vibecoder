@@ -71,12 +71,39 @@ def test_setup_index_status_off_on(mock_server: Any, code: Path) -> None:
     assert "No index for this project yet" in r.stdout
 
 
+def test_lancedb_setup_index_and_doctor(mock_server: Any, code: Path) -> None:
+    """The whole path with LanceDB inside cmcoder, as a user runs it."""
+    server = mock_server([])
+    r = cli(
+        [
+            "rag",
+            "setup",
+            "-m",
+            "default:text-embedding-3-small",
+            "--store",
+            "lancedb",
+            "--index",
+            "--yes",
+        ],
+        code,
+        server,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "LanceDB inside cmcoder" in r.stdout and "Indexed 1 files" in r.stdout
+    assert user_settings()["rag"]["store"] == {"type": "lancedb"}
+    r = cli(["index"], code, server)
+    assert "Indexed 0 files" in r.stdout and "1 unchanged" in r.stdout
+    r = cli(["doctor", "--no-probe"], code, server)
+    assert "This project's index: 1 files" in r.stdout and "LanceDB index" in r.stdout
+    assert "Deleted" in cli(["index", "--clear"], code, server).stdout
+
+
 def test_chroma_only_by_url(mock_server: Any, code: Path) -> None:
     """Chroma is always used through its URL (on this PC or a server), for now."""
     server = mock_server([])
     args = ["rag", "setup", "-m", "default:text-embedding-3-small", "--no-index", "--yes"]
     r = cli([*args, "--store", "chroma"], code, server)
-    assert r.returncode == 2 and "local, chroma-server" in r.stderr
+    assert r.returncode == 2 and "local, lancedb, chroma-server" in r.stderr
     r = cli([*args, "--store", "chroma-server"], code, server, {"CMCODER_CHROMA_API_KEY": ""})
     assert r.returncode != 0 and "Chroma needs its URL" in r.stderr
 

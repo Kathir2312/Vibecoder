@@ -101,8 +101,10 @@ uv run cmcoder rag status
 In a session the agent gets the `CodeSearch` tool, and each question of a few
 words gets the best-matching code added to it automatically
 (`rag.autoContext`). `/index` builds or updates the index from the chat. The
-index is built in (`~/.cmcoder/index/`, readable by you only) or kept on a
-Chroma server (`"store": {"type": "chroma", "url": "..."}`).
+index is built in (`~/.cmcoder/index/`, readable by you only), kept by
+LanceDB inside cmcoder for big codebases (`"store": {"type": "lancedb"}`, on
+disk, no server), or kept on a Chroma server (`"store": {"type": "chroma",
+"url": "..."}`).
 
 ## Layout
 

@@ -165,6 +165,7 @@ export class CodeSearch implements vscode.Disposable {
     const store = await vscode.window.showQuickPick(
       [
         { label: "On this machine", description: "built in, nothing to install", value: "local" as const },
+        { label: "On this machine, LanceDB", description: "on disk, for big codebases", value: "lancedb" as const },
         { label: "Chroma, by its URL", description: "running on this PC, or a server a team shares", value: "chroma-server" as const },
       ],
       { title: "Code search (2/4): where the index lives" },

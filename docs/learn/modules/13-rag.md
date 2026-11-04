@@ -192,7 +192,7 @@ showing Open WebUI's bare HTTP 500.
   Retrievers call the async path (`asimilarity_search`) from `ainvoke`, so
   `as_retriever()` still works.
 
-The two stores:
+The three stores:
 
 * [`LocalVectorStore`](../../../src/cmcoder/rag/stores.py#L146) (the
   default): a SQLite file under `~/.cmcoder/index/`, the vectors as BLOBs.
@@ -201,6 +201,16 @@ The two stores:
   [ranks with one matrix product](../../../src/cmcoder/rag/stores.py#L230).
   Nothing to install, so it works in the standalone build; fine up to about
   100k pieces.
+* [`LanceVectorStore`](../../../src/cmcoder/rag/lance.py#L78) (`"type":
+  "lancedb"`): LanceDB, a database that runs inside cmcoder and keeps its data
+  on disk, so the index isn't limited by memory like the built-in one. It is
+  our own `VectorStore` over LanceDB's async client, not `langchain-lancedb`:
+  that package is sync-only and has no metadata filter, count or delete by
+  path, which the index needs. The database applies the
+  [path filter](../../../src/cmcoder/rag/lance.py#L67) (`starts_with`, so `_`
+  and `%` in a name mean themselves) and [upserts by id](../../../src/cmcoder/rag/lance.py#L161);
+  scores are `1 - cosine distance`. `lancedb` and `pyarrow` are imported on first
+  use, so cmcoder starts as fast as before. Nothing in it uses the network.
 * [`ChromaVectorStore`](../../../src/cmcoder/rag/stores.py#L266): Chroma at a
   URL (on this PC or a team server) through its REST API v2 with cmcoder's own
   HTTP client: a [cosine collection](../../../src/cmcoder/rag/stores.py#L323),
