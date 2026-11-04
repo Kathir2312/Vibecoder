@@ -147,6 +147,7 @@ class Agent:
     sandbox: Sandbox | None = None  # the Bash sandbox (sandbox/; None: unsandboxed)
     code_index: CodeIndex | None = None  # code search (rag/; None: off or not indexed)
     telemetry: Telemetry | None = None  # OpenTelemetry metrics (off by default)
+    memory: Memory | None = None  # notes between sessions, on a LangGraph store (notes.py)
     frontend: str = "cli"
     # Shown once, with the first turn (e.g. a sandbox asked for that can't run here).
     startup_warnings: list[str] = field(default_factory=list)
@@ -163,6 +164,8 @@ class Agent:
             await self.code_index.close()
         if self.telemetry is not None:
             await self.telemetry.close()  # sends what's left
+        if self.memory is not None:
+            self.memory.close()
 
 
 async def prepare_agent(settings: Settings, opts: AgentOptions) -> None:
@@ -197,10 +200,12 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
         await prepare_agent(settings, opts)
     # The sandbox (its proxy, its temp folder) carries over too.
     spec.setdefault("code_index", old.code_index)
-    new = build_agent(settings, opts, sandbox=old.sandbox, telemetry=old.telemetry, **spec)
+    new = build_agent(
+        settings, opts, sandbox=old.sandbox, telemetry=old.telemetry, memory=old.memory, **spec
+    )
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
-    old.sandbox = old.telemetry = None
+    old.sandbox = old.telemetry = old.memory = None
     if old.code_index is new.code_index:
         old.code_index = None
     await old.close()
@@ -282,9 +287,10 @@ def build_agent(
     sandbox: Sandbox | None = None,
     telemetry: Telemetry | None = None,
     code_index: CodeIndex | None = None,
+    memory: Memory | None = None,
 ) -> Agent:
-    """`sandbox`, `telemetry`, `code_index`: reuse these (a rebuild, or /index
-    turning code search on); else made from settings."""
+    """`sandbox`, `telemetry`, `code_index`, `memory`: reuse these (a rebuild, or
+    /index turning code search on); else made from settings."""
     cwd = opts.cwd.resolve()
     root = find_project_root(cwd)
     bundle = build_chat_model(settings, opts.model)
@@ -326,7 +332,9 @@ def build_agent(
     # 2. System prompt: stable instructions first, then CMCODER.md memory, then
     #    the environment. Keeping the start identical between calls lets the
     #    server reuse its prompt cache (vLLM / llama.cpp prefix caching).
-    notes = Memory.for_project(root, settings.memory.auto) if settings.memory.enabled else None
+    notes = memory
+    if notes is None and settings.memory.enabled:
+        notes = Memory.for_project(root, settings.memory.auto)  # a LangGraph SqliteStore
     system_prompt = build_system_prompt(
         cwd,
         root,
@@ -444,6 +452,7 @@ def build_agent(
         team=settings.team.enabled,
         sandbox=sandbox,
         code_index=code_index,
+        memory=notes,
         telemetry=telemetry
         if telemetry is not None
         else telemetry_from_settings(settings.telemetry),

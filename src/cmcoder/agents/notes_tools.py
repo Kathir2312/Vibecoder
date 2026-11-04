@@ -1,4 +1,4 @@
-"""The `Remember`, `Recall` and `Forget` tools (auto memory, see notes.py).
+"""The `Remember`, `Recall` and `Forget` tools (auto memory on a LangGraph store, see notes.py).
 
 A note the user asked for is saved only if the model quotes words the user
 actually wrote in this conversation. The check reads the conversation state
@@ -84,9 +84,7 @@ def build_notes_tools(memory: Memory) -> list[BaseTool]:
             saved = store.save(title, note, source)
         except NoteError as e:
             raise ToolException(f"Not saved: {e}") from e
-        return (
-            f"Saved {scope} note {saved.filename!r}. It is in the notes list from the next session."
-        )
+        return f"Saved {scope} note {saved.title!r}. It is in the notes list from the next session."
 
     async def recall(note: str) -> str:
         found = memory.get(note.strip())

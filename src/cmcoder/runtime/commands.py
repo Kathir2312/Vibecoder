@@ -125,12 +125,12 @@ def add_memory(project_root: Path, note: str) -> Path:
 
 
 def memory_command(session: Session, arg: str) -> list[str]:
-    from ..notes import Memory
-
     settings = session.agent.spec.get("settings")
     if settings is not None and not settings.memory.enabled:
         return ["Memory is off (memory.enabled in settings)."]
-    memory = Memory.for_project(session.agent.ctx.project_root)
+    memory = session.agent.memory
+    if memory is None:
+        return ["Memory is off."]
     entries = [(s, n) for s in memory.stores() for n in s.notes()]
     verb, _, ref = arg.partition(" ")
     if verb == "forget":
@@ -146,7 +146,7 @@ def memory_command(session: Session, arg: str) -> list[str]:
             "No notes yet. Tell cmcoder to remember something, "
             'e.g. "remember to use pytest -x"; it also saves what it learns about the project.'
         ]
-    lines = [f"{len(entries)} note(s). Project: {memory.project.dir}; yours: {memory.user.dir}"]
+    lines = [f"{len(entries)} note(s):"]
     for i, (_, n) in enumerate(entries, 1):
         tag = "yours" if n.scope == "user" else "project"
         if n.source == "agent":
