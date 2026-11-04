@@ -43,6 +43,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
+    ("memory", "[forget <n>]", "Notes cmcoder saved about this project; delete one"),
     ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
@@ -121,6 +122,28 @@ def add_memory(project_root: Path, note: str) -> Path:
     sep = "" if not existing or existing.endswith("\n") else "\n"
     path.write_text(f"{existing}{sep}- {note.strip()}\n", encoding="utf-8")
     return path
+
+
+def memory_command(session: Session, arg: str) -> list[str]:
+    from ..notes import MemoryStore
+
+    settings = session.agent.spec.get("settings")
+    if settings is not None and not settings.memory.enabled:
+        return ["Memory is off (memory.enabled in settings)."]
+    store = MemoryStore.for_project(session.agent.ctx.project_root)
+    verb, _, ref = arg.partition(" ")
+    if verb == "forget":
+        gone = store.forget(ref.strip())
+        return [f"Forgot: {gone.title}"] if gone else [f"No note matches {ref.strip()!r}."]
+    notes = store.notes()
+    if not notes:
+        return [
+            'No notes yet. Tell cmcoder to remember something, e.g. "remember to use pytest -x".'
+        ]
+    lines = [f"{len(notes)} note(s) in {store.dir}:"]
+    lines += [f"  {i}. {n.title}: {' '.join(n.body.split())[:100]}" for i, n in enumerate(notes, 1)]
+    lines.append("Delete one with /memory forget <n>. New notes apply from the next session.")
+    return lines
 
 
 async def run_command(
@@ -232,6 +255,8 @@ async def run_command(
         return CommandResult(
             [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
         )
+    if name == "memory":
+        return CommandResult(memory_command(session, arg))
     if name == "index":
         from ..rag.session import index_command
 

@@ -145,6 +145,7 @@ def build_system_prompt(
     skills: str | None = None,
     sandbox: str | None = None,
     code_search: bool = False,
+    learned: str | None = None,
 ) -> str:
     """Stable content first (so server-side prefix caches are reused), dynamic last."""
     parts = [COMPACT_PROMPT if tier == "compact" else BASE_PROMPT]
@@ -154,6 +155,8 @@ def build_system_prompt(
             "# Project instructions\nFollow these instructions from the user's memory files. "
             f"They override the defaults above.\n\n{mem}"
         )
+    if learned:
+        parts.append(learned)
     if skills:
         parts.append(skills)
     if append:

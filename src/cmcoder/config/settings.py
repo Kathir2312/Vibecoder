@@ -224,6 +224,13 @@ class CriticConfig(_Model):
     max_rounds: int = Field(2, alias="maxRounds", ge=1, le=5)
 
 
+class MemoryConfig(_Model):
+    """Auto memory (notes.py): cmcoder keeps short notes about the project between
+    sessions, only from what the user says. `/memory` lists and deletes them."""
+
+    enabled: bool = True
+
+
 class TeamConfig(_Model):
     """The team (agents/team.py): the `Team` tool runs PM → developer → tester
     (→ developer on a failure) → DevOps as a LangGraph StateGraph. Off by default."""
@@ -287,6 +294,7 @@ class Settings(_Model):
     telemetry: TelemetryConfig = Field(default_factory=lambda: TelemetryConfig.model_validate({}))
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
     critic: CriticConfig = Field(default_factory=lambda: CriticConfig.model_validate({}))
+    memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")

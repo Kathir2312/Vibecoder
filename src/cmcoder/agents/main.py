@@ -91,6 +91,7 @@ from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
+from ..notes import MemoryStore
 from ..rag.index import CodeIndex
 from ..rag.session import open_code_index
 from ..runtime.serde import checkpoint_serde
@@ -102,6 +103,7 @@ from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.code_search import CodeSearchTool
 from ..tools.registry import default_tools
 from .context import RunContext
+from .notes_tools import build_notes_tools
 from .subagents import SubagentRuntime, build_task_tool
 from .team import build_team_tool
 
@@ -324,9 +326,11 @@ def build_agent(
     # 2. System prompt: stable instructions first, then CMCODER.md memory, then
     #    the environment. Keeping the start identical between calls lets the
     #    server reuse its prompt cache (vLLM / llama.cpp prefix caching).
+    notes = MemoryStore.for_project(root) if settings.memory.enabled else None
     system_prompt = build_system_prompt(
         cwd,
         root,
+        learned=notes.prompt_block() if notes else None,
         tier=profile.prompt_tier,
         model=bundle.name,
         memory=load_memory_files(cwd, root),
@@ -399,6 +403,8 @@ def build_agent(
         code_index=code_index,
     )
     lc_tools.append(build_task_tool(subagents))
+    if notes is not None:
+        lc_tools += build_notes_tools(notes)
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
     if settings.team.enabled:
         lc_tools.append(build_team_tool(subagents, settings.team.max_rounds))
