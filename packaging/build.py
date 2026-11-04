@@ -9,6 +9,13 @@ temp folder on every run (which antivirus software also dislikes).
 Branding (branding/, checked by packaging/brand.py) goes in as
 cmcoder/_brand; on Windows, cmcoder.exe also gets the icon and file details.
 
+Browser tool: Playwright is bundled (`--collect-all=playwright`: its Python package
+and the Node.js driver it starts, so a PC needs no Node, Python or download; the
+browser itself is the PC's Chrome or Edge). `--without-browser` makes a slim build
+without it; the Browser tool is then not offered.
+
+    uv run --with pyinstaller python packaging/build.py --without-browser
+
 LangChain note: LangChain and LangGraph import some modules lazily (by name,
 at run time), which PyInstaller's import scan can't see, and read their own
 versions from package metadata. `--collect-submodules` / `--copy-metadata`
@@ -49,6 +56,7 @@ def build_id() -> str:
 
 
 def main() -> None:
+    with_browser = "--without-browser" not in sys.argv[1:]
     try:
         import PyInstaller.__main__
     except ImportError:
@@ -109,6 +117,7 @@ def main() -> None:
             "--collect-submodules=keyring",
             "--copy-metadata=keyring",
             "--collect-submodules=truststore",
+            *(["--collect-all=playwright"] if with_browser else ["--exclude-module=playwright"]),
             *[
                 f"--copy-metadata={name}"
                 for name in (

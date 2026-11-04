@@ -29,6 +29,7 @@ SAFETY
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import ipaddress
 import os
 import re
@@ -577,10 +578,16 @@ class BrowserTool(Tool):
         return await ctx.browser.run(args, ctx)
 
 
+def playwright_available() -> bool:
+    """False in a slim build (packaging/build.py --without-browser): no Browser tool."""
+    return importlib.util.find_spec("playwright") is not None
+
+
 def browser_session(settings: Settings, project_root: Path) -> BrowserSession | None:
-    """The session's browser (not started until used), or None when it is switched off."""
+    """The session's browser (not started until used), or None when it is switched off
+    or this build doesn't include Playwright."""
     cfg = settings.browser
-    if not cfg.enabled:
+    if not cfg.enabled or not playwright_available():
         return None
     return BrowserSession(
         headless=cfg.headless, executable_path=cfg.executable_path, project_root=project_root

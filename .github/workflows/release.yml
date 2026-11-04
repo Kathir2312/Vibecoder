@@ -90,6 +90,11 @@ jobs:
         run: |
           exe=dist/cmcoder/cmcoder; [ "$RUNNER_OS" = Windows ] && exe=dist/cmcoder/cmcoder.exe
           CMCODER_TEST_BINARY=$exe CMCODER_TEST_NO_PYTHON=1 uv run pytest -q tests/test_standalone.py
+      - name: Test its Browser tool as users run it (the runner's Chrome or Edge, no Python in reach)
+        shell: bash
+        run: |
+          exe=dist/cmcoder/cmcoder; [ "$RUNNER_OS" = Windows ] && exe=dist/cmcoder/cmcoder.exe
+          uv run python packaging/smoke_browser.py $exe
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
