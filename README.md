@@ -21,7 +21,8 @@ framework concepts it uses.
   LangGraph `StateGraph` of PM, developer, tester and DevOps), and the
   memory between sessions on a LangGraph store (`/memory`; `/init` learns a
   project and saves notes about it; `/review` checks your changes for bugs; the `Browser` tool drives a real
-  browser through Playwright to test web apps, see
+  browser through Playwright to test web apps (`/webtest` runs a whole test; screenshots appear
+  in the chat), see
   [docs/guides/browser-testing.md](docs/guides/browser-testing.md)), and the
   hardening: Open WebUI as a gateway, the Bash sandbox, images through a
   `visionModel`, OpenTelemetry (off by default), the full `cmcoder doctor`,

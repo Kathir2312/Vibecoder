@@ -58,6 +58,9 @@ class CmcoderTool(BaseTool):
             ctx=ctx,
             # Errors raised as ToolException go back to the model as error ToolMessages.
             handle_tool_error=True,
+            # `_arun` returns (what the model reads, what only the UI gets): LangChain
+            # keeps the second part on `ToolMessage.artifact`, never sent to the model.
+            response_format="content_and_artifact",
             **kwargs,
         )
 
@@ -66,7 +69,7 @@ class CmcoderTool(BaseTool):
         # sync path. LangGraph calls `_arun` when the graph runs with `astream`.
         raise NotImplementedError("cmcoder tools are async-only; use ainvoke/astream")
 
-    async def _arun(self, *args: Any, **kwargs: Any) -> str:
+    async def _arun(self, *args: Any, **kwargs: Any) -> tuple[str, dict[str, Any] | None]:
         # LangChain has already validated the arguments against `args_schema`;
         # rebuild the pydantic object the cmcoder tool expects.
         kwargs.pop("run_manager", None)
@@ -80,7 +83,8 @@ class CmcoderTool(BaseTool):
         content = truncate_middle(result.content, self.ctx.max_output_chars)
         if result.is_error:
             raise ToolException(content)
-        return content
+        artifact = {"images": [str(p) for p in result.images]} if result.images else None
+        return content, artifact
 
 
 def as_langchain_tools(tools: list[Tool], ctx: ToolContext) -> list[BaseTool]:

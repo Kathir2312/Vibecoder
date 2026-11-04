@@ -108,6 +108,7 @@ export interface ToolResult {
   is_error: boolean;
   summary: string | null;
   parent_tool_use_id: string | null;
+  images: string[];
 }
 
 export interface PermissionDenied {

@@ -28,6 +28,28 @@ report of what worked and what failed (JavaScript errors, failed requests, 404s)
 
 With `"browser": {"headless": false}` you can watch the window.
 
+## `/webtest`: test the app in one command
+
+```
+/webtest                          find how to start the app, start it, test its main flows
+/webtest add a todo and tick it   the same, testing this
+/webtest http://localhost:3000    the app already runs there: just test it
+```
+
+cmcoder looks for the start command (the `dev`, `start`, `serve` and `preview` scripts in
+`package.json`, `manage.py`) and tells the model. The model starts the server in the
+background with Bash (which asks, as usual), waits until it answers, tests it in the browser,
+takes screenshots, stops the server it started, and reports what worked and what failed, with
+where in the code the cause probably is. It doesn't change any file unless you ask afterwards.
+
+## Screenshots in the chat
+
+The `screenshot` action shows the picture in the chat panel (VS Code, Visual Studio, Eclipse,
+NetBeans, IntelliJ), small under the tool's line; click it to enlarge. The model never receives
+the picture (it may not see images): it reads pages with `snapshot`. In the terminal, the
+tool's answer gives the file's path while the session is open. The files are deleted when the
+browser closes.
+
 ## What the agent can do
 
 | Action | Does |
@@ -37,7 +59,7 @@ With `"browser": {"headless": false}` you can watch the window.
 | `click`, `type`, `press` | act on a numbered element, or press a key |
 | `wait_for` | wait until some text appears |
 | `console` | JavaScript errors, warnings and failed requests since the last check |
-| `screenshot` | save a picture (for you; the model reads pages with `snapshot`) |
+| `screenshot` | a picture for you, shown in the chat (the model reads pages with `snapshot`) |
 
 ## Safety
 
@@ -45,8 +67,9 @@ With `"browser": {"headless": false}` you can watch the window.
 - **Any other site asks first**, once per site. "Always allow" saves a rule for that one
   site only, e.g. `Browser(docs.example.com)`. You can also write the rule yourself in
   `permissions.allow` or `permissions.deny`.
-- **A page can't lead the agent somewhere else.** A click that goes to a site you haven't
-  allowed is blocked, and the agent is told. It can ask to `open` that site, which asks you.
+- **A page can't lead the agent somewhere else.** A link to a site you haven't allowed isn't
+  clicked (the page keeps its state), and a navigation the page makes by itself is blocked; either
+  way the agent is told. It can ask to `open` that site, which asks you.
 - **A clean browser every session**: no cookies, no saved logins, no downloads, no camera or
   location prompts. Nothing is kept after the session.
 - **Page text is data, not orders.** Every snapshot says so to the model.

@@ -226,6 +226,7 @@ class BrowserSession:
         self._watched: set[int] = set()
         self._screens: Path | None = None
         self._shots = 0
+        self.images: list[Path] = []  # screenshots taken by the action now running
 
     # -- life cycle ------------------------------------------------------------
 
@@ -320,7 +321,7 @@ class BrowserSession:
             parts = urlparse(request.url)
             if parts.scheme in ("http", "https"):
                 host = (parts.hostname or "").lower()
-                if not (is_local_host(host) or host in self.approved):
+                if not self._approved(host):
                     self._note(f"blocked: the page tried to open {host}, which isn't approved")
                     await route.abort("blockedbyclient")
                     return
@@ -352,7 +353,11 @@ class BrowserSession:
             except Exception as e:  # Playwright's own errors: short, for the model
                 first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
                 return ToolResult(f"The browser action failed: {first[:300]}", is_error=True)
-        return ToolResult(truncate_middle(text, ctx.max_output_chars), summary=summary)
+            finally:
+                shots, self.images = self.images, []
+        return ToolResult(
+            truncate_middle(text, ctx.max_output_chars), summary=summary, images=shots
+        )
 
     def _news(self, limit: int = 10) -> str:
         if not self.messages:
@@ -420,8 +425,21 @@ class BrowserSession:
             raise BrowserError(f"No element {ref} on this page now. Take a snapshot first.")
         return loc.first
 
+    def _approved(self, host: str) -> bool:
+        return is_local_host(host) or host in self.approved
+
     async def _do_click(self, args: BrowserInput) -> tuple[str, str]:
         el = await self._found(args.ref)
+        # A link to an unapproved site isn't clicked at all: the page keeps its state
+        # (a blocked navigation would reload it). Navigations the page makes by itself
+        # (a script, a form) are stopped by the gate in `_gate`.
+        href = await el.evaluate("e => { const a = e.closest('a[href]'); return a ? a.href : '' }")
+        parts = urlparse(href)
+        if parts.scheme in ("http", "https") and not self._approved((parts.hostname or "").lower()):
+            raise BrowserError(
+                f"Not clicked: this link goes to {parts.hostname}, which isn't approved. The "
+                "page is unchanged. To go there, use open with that address (it asks the user)."
+            )
         await el.click(timeout=ACT_TIMEOUT_MS)
         await self._settle()
         return (
@@ -476,10 +494,12 @@ class BrowserSession:
         self._shots += 1
         path = self._screens / f"screenshot-{self._shots}.png"
         await self.page.screenshot(path=str(path))
+        self.images.append(path)
         return (
-            f"Saved a screenshot to {path} for the user. You can't view images through this "
-            "tool: use snapshot to read the page.",
-            "screenshot saved",
+            f"Took a screenshot. The user sees it in the chat (and it is saved at {path} while "
+            "this session is open). You can't view images through this tool: use snapshot to "
+            "read the page.",
+            "screenshot",
         )
 
     async def _do_console(self, args: BrowserInput) -> tuple[str, str]:

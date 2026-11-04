@@ -805,6 +805,17 @@ function toolResult(ev: ToolResult): void {
   if (ev.name === "Bash" && ev.content.trim() && ev.content.trim() !== "(no output)") {
     card.append(el("pre", "output", clip(ev.content, 3)));
   }
+  // A browser screenshot (the Browser tool): shown small, a click enlarges it.
+  for (const url of ev.images ?? []) {
+    if (!url.startsWith("data:image/")) continue;
+    const img = document.createElement("img");
+    img.className = "shot";
+    img.src = url;
+    img.alt = "Screenshot of the page";
+    img.title = "Click to enlarge";
+    img.onclick = () => img.classList.toggle("big");
+    card.append(img);
+  }
 }
 
 function permissionCard(ev: PermissionRequest): void {

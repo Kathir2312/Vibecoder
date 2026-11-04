@@ -44,6 +44,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
+    ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     ("init", "[focus]", "Learn this project and save notes about it for future sessions"),
     ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
     ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
@@ -173,6 +174,21 @@ def init_command(session: Session, focus: str) -> CommandResult:
     return CommandResult(send=init_prompt(titles, focus))
 
 
+def webtest_command(session: Session, arg: str) -> CommandResult:
+    """/webtest: the model starts the app and tests it with the Browser tool."""
+    from ..webtest import webtest_prompt
+
+    a = session.agent
+    if a.ctx.browser is None:
+        return CommandResult(
+            [
+                "The Browser tool is off here: it is switched off in settings (browser.enabled), "
+                "or this is a slim build without Playwright."
+            ]
+        )
+    return CommandResult(send=webtest_prompt(a.ctx.project_root, arg))
+
+
 async def review_command(session: Session, target: str) -> CommandResult:
     """/review: collect the change, then the model reviews it (read-only)."""
     from ..review import ReviewError, collect, review_prompt
@@ -299,6 +315,8 @@ async def run_command(
         return init_command(session, arg)
     if name == "review":
         return await review_command(session, arg)
+    if name == "webtest":
+        return webtest_command(session, arg)
     if name == "index":
         from ..rag.session import index_command
 

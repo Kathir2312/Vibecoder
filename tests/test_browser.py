@@ -36,6 +36,7 @@ PAGE = b"""<!doctype html><html><head><title>Todos</title></head><body>
 <label><input type=checkbox aria-label=Urgent> Urgent</label>
 <input type=password aria-label=Secret value=hunter2>
 <a href="http://example.org/away">Leave</a> <a href="/other">Other page</a>
+<button onclick="location.href='http://example.net/jump'">Jump</button>
 <ul id=list></ul>
 <script>fetch('/missing.json')</script>
 </body></html>"""
@@ -203,11 +204,21 @@ async def test_a_page_cannot_take_the_agent_to_an_unapproved_host(site: str, ctx
     try:
         await act(session, ctx, action="open", url=site)
         snap = (await act(session, ctx, action="snapshot")).content
+        # A link to an unapproved site isn't even clicked, and the page keeps its state.
+        await act(session, ctx, action="type", ref=ref_of(snap, "New todo"), text="Keep me")
+        await act(session, ctx, action="click", ref=ref_of(snap, '"Add"'))
         left = await act(session, ctx, action="click", ref=ref_of(snap, "Leave"))
-        assert "blocked: the page tried to open example.org" in left.content
+        assert left.is_error and "example.org, which isn't approved" in left.content
+        kept = (await act(session, ctx, action="snapshot")).content
+        assert "Keep me" in kept  # the link wasn't clicked: the page kept its state
+        # A navigation the page makes itself is stopped by the gate, and the agent is told.
+        jumped = await act(session, ctx, action="click", ref=ref_of(snap, "Jump"))
+        assert "blocked: the page tried to open example.net" in jumped.content
         after = (await act(session, ctx, action="snapshot")).content
         assert after.startswith("Page: Todos (http://127.0.0.1")  # still on the app
         assert "chrome-error" not in after
+        # Once the user has approved a host, the same link works.
+        session.approved.add("example.org")
     finally:
         await session.close()
 
@@ -271,3 +282,51 @@ async def test_the_model_tests_an_app_through_the_agent(mock_server, site: str, 
     names = {t["function"]["name"] for t in server.requests[0].get("tools", [])}
     assert "Browser" in names
     assert "My todos" in str(server.requests[2]["messages"])  # the snapshot reached the model
+
+
+@needs_browser
+async def test_a_screenshot_goes_to_the_chat_not_to_the_model(
+    mock_server, site: str, tmp_path: Path
+) -> None:
+    import os
+
+    os.environ["CMCODER_API_KEY"] = API_KEY
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / ".git").mkdir()
+    call = lambda **a: {"tool_calls": [{"name": "Browser", "arguments": a}]}  # noqa: E731
+    server = mock_server(
+        [
+            call(action="open", url=site),
+            call(action="screenshot"),
+            call(action="close"),
+            {"content": "Done."},
+        ]
+    )
+    session = make_session(server.base_url, project, ask=None)
+    try:
+        events = await run_turn(session, "take a screenshot of the app")
+    finally:
+        await session.agent.close()
+    shots = [e for e in events if getattr(e, "type", "") == "tool_result" and e.images]
+    assert len(shots) == 1 and shots[0].name == "Browser"
+    assert shots[0].images[0].startswith("data:image/png;base64,")
+    sent = str(server.requests[-1]["messages"])
+    assert "base64" not in sent and "data:image" not in sent  # the model never gets the picture
+    assert "Took a screenshot" in sent
+
+
+@needs_browser
+async def test_screenshot_files_are_removed_when_the_browser_closes(
+    site: str, ctx: ToolContext
+) -> None:
+    session = BrowserSession()
+    try:
+        await act(session, ctx, action="open", url=site)
+        shot = await act(session, ctx, action="screenshot")
+        assert len(shot.images) == 1 and shot.images[0].read_bytes()[:4] == b"\x89PNG"
+        folder = shot.images[0].parent
+        assert (await act(session, ctx, action="snapshot")).images == []
+    finally:
+        await session.close()
+    assert not folder.exists()

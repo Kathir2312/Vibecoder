@@ -35,6 +35,9 @@ class ToolResult:
     is_error: bool = False
     # One-line summary for the UI, e.g. "Read 120 lines".
     summary: str | None = None
+    # Pictures for the user's chat (a browser screenshot), not for the model: they
+    # travel as the LangChain tool message's `artifact` (tools/adapter.py).
+    images: list[Path] = field(default_factory=list)
 
 
 @dataclass

@@ -73,6 +73,8 @@ class ToolResult(_Event):
     summary: str | None = None
     # Set on a subagent's events: the id of the Task call that started it.
     parent_tool_use_id: str | None = None
+    # Pictures to show under the result (a browser screenshot), as data URLs.
+    images: list[str] = []
 
 
 class PermissionDenied(_Event):

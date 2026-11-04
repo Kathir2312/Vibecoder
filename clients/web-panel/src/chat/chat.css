@@ -144,6 +144,11 @@ select { padding: 2px 4px; }
 .tool .result { opacity: 0.7; padding-left: 12px; }
 .tool pre { margin: 2px 0 0 12px; opacity: 0.8; }
 .tool pre.error { color: var(--vscode-errorForeground); opacity: 1; }
+.tool img.shot {
+  display: block; max-width: 340px; margin: 6px 0 2px 12px; border-radius: 6px; cursor: zoom-in;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
+}
+.tool img.shot.big { max-width: calc(100% - 12px); cursor: zoom-out; }
 
 .permission {
   margin: 8px 0;
