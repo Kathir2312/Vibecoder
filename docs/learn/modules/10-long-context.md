@@ -212,7 +212,7 @@ outputs go at 60%, before summarising is needed at 80%.
 
 If a request still overflows (the estimates behind the thresholds can be low,
 especially for code and JSON), the safety net is in
-[`ModelProfileMiddleware._recover`](../../../src/cmcoder/middleware/model.py#L180). It
+[`ModelProfileMiddleware._recover`](../../../src/cmcoder/middleware/model.py#L184). It
 treats any wording of "too long"
 ([`is_context_overflow`](../../../src/cmcoder/models/overflow.py#L49)) the same,
 and reads the real window from the message when there is one

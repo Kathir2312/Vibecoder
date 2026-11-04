@@ -1,7 +1,7 @@
 """The conversation outgrows the model's window: cmcoder recovers by itself.
 
-The gateway's real window is 9,000 tokens (cmcoder's own system prompt and tool
-list take about 4,400 of them) while cmcoder still assumes the
+The gateway's real window is 10,000 tokens (cmcoder's own system prompt and tool
+list take over half of them) while cmcoder still assumes the
 profile's 32K (the gateway doesn't publish it), so the first request that is
 too big is refused. Whatever the server's wording, the turn must still end
 normally: old tool outputs are cleared, older messages summarised, long tool
@@ -35,7 +35,7 @@ def _key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def small_server(mock_server, script: list[dict], message: str | None):
     return mock_server(
-        script, enforce_context=True, context_windows={"qwen3-27b": 9000}, overflow_message=message
+        script, enforce_context=True, context_windows={"qwen3-27b": 10000}, overflow_message=message
     )
 
 
@@ -137,3 +137,26 @@ def test_the_error_code_alone_is_enough() -> None:
 )
 def test_other_errors_are_not_taken_for_too_long(status: int, message: str) -> None:
     assert not is_context_overflow(refused(status, message))
+
+
+def test_langchains_own_overflow_error_is_recognised() -> None:
+    from langchain_core.exceptions import ContextOverflowError
+
+    assert is_context_overflow(ContextOverflowError("too long"))
+
+
+def test_old_tool_outputs_are_cleared_with_langchains_edit() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from cmcoder.middleware.model import CLEARED, clear_old_tool_outputs
+
+    messages = [HumanMessage("go")]
+    for i in range(5):
+        messages += [
+            AIMessage("", tool_calls=[{"name": "Read", "args": {}, "id": f"c{i}"}]),
+            ToolMessage(f"output {i}", tool_call_id=f"c{i}", name="Read"),
+        ]
+    out = clear_old_tool_outputs(messages, keep=2)
+    tool_texts = [m.content for m in out if isinstance(m, ToolMessage)]
+    assert tool_texts == [CLEARED] * 3 + ["output 3", "output 4"]
+    assert [m.content for m in messages if isinstance(m, ToolMessage)][0] == "output 0"  # a copy

@@ -22,9 +22,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import openai
-from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware import AgentMiddleware, AgentState, ClearToolUsesEdit
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, SystemMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 
@@ -57,12 +58,15 @@ def count_chars(messages: Sequence[BaseMessage], tools: Sequence[Any]) -> int:
 
 
 def clear_old_tool_outputs(messages: Sequence[AnyMessage], keep: int) -> list[AnyMessage]:
-    """Copies of `messages` with all but the newest `keep` tool outputs replaced."""
-    tool_idx = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
-    old = set(tool_idx[:-keep] if keep else tool_idx)
-    return [
-        m.model_copy(update={"content": CLEARED}) if i in old else m for i, m in enumerate(messages)
-    ]
+    """Copies of `messages` with all but the newest `keep` tool outputs replaced.
+
+    LangChain's own edit does it (the one `ContextEditingMiddleware` applies at 60%
+    of the window); trigger=0 makes it clear now."""
+    edited = list(messages)
+    ClearToolUsesEdit(trigger=0, keep=keep, placeholder=CLEARED).apply(
+        edited, count_tokens=count_tokens_approximately
+    )
+    return edited
 
 
 def shorten_tool_outputs(messages: Sequence[AnyMessage], limit: int) -> list[AnyMessage]:

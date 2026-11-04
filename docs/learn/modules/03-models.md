@@ -268,7 +268,7 @@ Gateways often don't publish the window. cmcoder learns it three ways:
   [`is_context_overflow`](../../../src/cmcoder/models/overflow.py#L49)
   recognises all of them, and
   [`parse_context_window`](../../../src/cmcoder/models/windows.py#L38)
-  reads N when there is one. [`ModelProfileMiddleware`](../../../src/cmcoder/middleware/model.py#L90)
+  reads N when there is one. [`ModelProfileMiddleware`](../../../src/cmcoder/middleware/model.py#L94)
   then [updates the model everywhere](../../../src/cmcoder/models/chat.py#L169)
   ([`set_context_window`](../../../src/cmcoder/models/chat.py#L169): our
   profile *and* LangChain's), saves it per gateway and model

@@ -39,6 +39,7 @@ import pathspec
 from ..config.settings import config_dir
 from ..sensitive import is_secret
 from ..tools.base import Tool, ToolContext
+from ..tools.browser import is_local_host
 from .readonly import READERS, Segment, Verdict, classify, parse
 from .risk import high_risk_reason, outward_reason
 
@@ -323,6 +324,9 @@ class PermissionPolicy:
                 "Add an allow rule (e.g. Read(path)) if this is intended.",
             )
 
+        if tool.name == "Browser":
+            return self._check_browser(target, ctx)
+
         inside = isinstance(target, Path) and _rel(target, ctx.project_root) is not None
 
         if tool.read_only:
@@ -347,6 +351,29 @@ class PermissionPolicy:
             return PermissionCheck(Decision.ASK)
 
         return PermissionCheck(Decision.ASK)
+
+    def _check_browser(self, target: str | Path | None, ctx: ToolContext) -> PermissionCheck:
+        """Browser: localhost and the project's own files open freely; any other host
+        asks once. Actions on the open page need no question: the page was approved
+        when it was opened, and it can't navigate to an unapproved host."""
+        if isinstance(target, str) and target.startswith("!"):
+            return PermissionCheck(
+                Decision.DENY, "only http, https and file addresses can be opened in the browser"
+            )
+        if self.mode == "bypassPermissions":
+            return PermissionCheck(Decision.ALLOW)
+        if self.mode == "plan":
+            return PermissionCheck(Decision.DENY, "plan mode is read-only; propose a plan instead")
+        if target is None:
+            return PermissionCheck(Decision.ALLOW)
+        if isinstance(target, Path):
+            if _rel(target, ctx.project_root) is not None:
+                return PermissionCheck(Decision.ALLOW)
+            return PermissionCheck(Decision.ASK, "opens a file outside the project in a browser")
+        approved = getattr(ctx.browser, "approved", ())
+        if is_local_host(target) or target in approved:
+            return PermissionCheck(Decision.ALLOW)
+        return PermissionCheck(Decision.ASK, f"opens {target} in a browser")
 
     def _part_allowed(self, seg: Segment) -> bool:
         """One part of a command line, by the allow rules (never a part with $(...))."""
@@ -454,6 +481,8 @@ def suggest_rules(tool: Tool, args: object, ctx: ToolContext) -> list[str]:
         ]
         rules += [_path_rule("Edit", w, ctx) for v in verdicts for w in v.writes]
         return list(dict.fromkeys(rules)) or [f"Bash({target})"]
+    if tool.name == "Browser" and isinstance(target, str):
+        return [f"Browser({target})"]  # this host only, never every site
     if isinstance(target, Path):
         return [_path_rule("Edit" if tool.name in FILE_EDIT_TOOLS else tool.name, target, ctx)]
     return [tool.name]

@@ -55,12 +55,18 @@ class ToolContext:
     todos: list[dict[str, Any]] = field(default_factory=list)
     # The project's code index (Phase 5; None: code search is off).
     code_index: Any = None  # rag.index.CodeIndex, Phase 5 (code search)
+    # The Browser tool's browser (tools/browser.py); started on first use.
+    browser: Any = None
 
     async def close_shells(self) -> None:
+        """Close what this context keeps alive: its shells and its browser."""
         for shell in (self.shell, self.unsandboxed_shell):
             if shell is not None:
                 await shell.close()
         self.shell = self.unsandboxed_shell = None
+        if self.browser is not None:
+            await self.browser.close()
+            self.browser = None
 
     def __post_init__(self) -> None:
         # Compare like with like: tool paths are resolved, so the roots must be

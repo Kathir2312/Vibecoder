@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from langchain_core.prompts import PromptTemplate
+
 from .sensitive import is_secret
 
 MAX_DIFF_CHARS = 60_000
@@ -164,7 +166,8 @@ async def collect(root: Path, target: str = "") -> Change:
     return Change(title, text, left_out, hidden, untracked, log)
 
 
-PROMPT = """\
+PROMPT = PromptTemplate.from_template(
+    """\
 Review {title} for bugs, as a careful senior engineer would before a merge. You may \
 read any file in the project to understand the change; do not modify anything.
 
@@ -183,6 +186,7 @@ findings. End with one line: what you reviewed and how confident you are.
 Here is the change:
 
 {diff}"""
+)
 
 
 def review_prompt(change: Change) -> str:

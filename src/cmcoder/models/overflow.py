@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 
 import openai
+from langchain_core.exceptions import ContextOverflowError
 
 _STATUS = (400, 413, 422)  # a refused request; never a server fault or a rate limit
 
@@ -48,6 +49,8 @@ _PHRASES = [
 
 def is_context_overflow(exc: BaseException) -> bool:
     """True when `exc` is a model server refusing a request as too long."""
+    if isinstance(exc, ContextOverflowError):  # LangChain's own signal (langchain-openai raises it)
+        return True
     if not isinstance(exc, openai.APIStatusError) or exc.status_code not in _STATUS:
         return False
     if getattr(exc, "code", None) == "context_length_exceeded":
