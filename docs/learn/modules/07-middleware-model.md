@@ -122,29 +122,47 @@ Both can change a reply. The difference:
 ### `ModelProfileMiddleware`: a budget for every call
 
 vLLM rejects a request when prompt + `max_tokens` exceeds the window, and
-with 32K that happens quickly. [`ModelProfileMiddleware`](../../../src/cmcoder/middleware/model.py#L64):
+with 32K that happens quickly. [`ModelProfileMiddleware`](../../../src/cmcoder/middleware/model.py#L90):
 
-1. [Turns a system message made of content blocks into one string](../../../src/cmcoder/middleware/model.py#L121)
+1. [Turns a system message made of content blocks into one string](../../../src/cmcoder/middleware/model.py#L158)
    (`TodoListMiddleware`, an outer layer, appends its instructions as a
    block; self-hosted servers want a plain string).
-2. [Estimates the prompt's size](../../../src/cmcoder/middleware/model.py#L83)
+2. [Estimates the prompt's size](../../../src/cmcoder/middleware/model.py#L120)
    from its characters and sets
-   [`max_tokens`](../../../src/cmcoder/middleware/model.py#L92) to the room
+   [`max_tokens`](../../../src/cmcoder/middleware/model.py#L129) to the room
    that is left (at least 512, at most the model's `max_output`), and
-   [`parallel_tool_calls`](../../../src/cmcoder/middleware/model.py#L95)
+   [`parallel_tool_calls`](../../../src/cmcoder/middleware/model.py#L132)
    from the model profile, through `request.override(model_settings=...)`.
-3. After the reply, [calibrates](../../../src/cmcoder/middleware/model.py#L98)
+3. After the reply, [calibrates](../../../src/cmcoder/middleware/model.py#L135)
    its characters-per-token ratio from the server's real token count
    (`AIMessage.usage_metadata`).
-4. If the server still says "maximum context length is N",
-   [learns the window](../../../src/cmcoder/middleware/model.py#L125),
-   saves it, tells compaction, and **retries once** with old tool outputs
-   cleared in *this request only*:
-   [`request.override(messages=clear_old_tool_outputs(...))`](../../../src/cmcoder/middleware/model.py#L139).
-   The state still has the full outputs.
+4. If the server refuses the request as too long, in whatever words
+   ([`is_context_overflow`](../../../src/cmcoder/models/overflow.py#L49):
+   OpenAI, vLLM, Anthropic, Bedrock, Gemini, LiteLLM), the wrapper
+   [recovers](../../../src/cmcoder/middleware/model.py#L180) instead of
+   failing the turn. It [learns the window](../../../src/cmcoder/middleware/model.py#L169)
+   when the message states one, saves it and tells compaction, and then
+   retries with less in the request, step by step, each step on top of the
+   one before ([`RECOVERY`](../../../src/cmcoder/middleware/model.py#L82)):
+   - **old tool outputs cleared**
+     ([`clear_old_tool_outputs`](../../../src/cmcoder/middleware/model.py#L196));
+   - **older messages summarised**
+     ([`self.summarise`](../../../src/cmcoder/middleware/model.py#L200) is the
+     compaction middleware's `emergency`, chapter 10), with a smaller reply
+     allowance;
+   - **long tool outputs shortened**
+     ([`shorten_tool_outputs`](../../../src/cmcoder/middleware/model.py#L68),
+     cut in the middle).
+
+   All of it applies to *this request*; the state still has the full
+   conversation until the compaction middleware writes the summary into it at
+   the next step. The user sees one
+   [notice](../../../src/cmcoder/middleware/model.py#L232) ("too long for the
+   model: older messages summarised, and cmcoder went on"). Only if every step
+   fails is there an error.
 
 That is a `wrap_model_call` doing all three things a wrapper can: change the
-request, call the handler twice, read the response.
+request, call the handler several times, read the response.
 
 ### `TextToolCallsMiddleware`: tool calls without a tool-call parser
 
@@ -197,9 +215,9 @@ one of their own (every `ToolMessage` must name its call's id), and
 
 Qwen3 may write `<think>…</think>` before its answer. The user shouldn't see
 it as the answer, and Qwen's guidance is not to send old reasoning back.
-[`ReasoningMiddleware.aafter_model`](../../../src/cmcoder/middleware/model.py#L156)
+[`ReasoningMiddleware.aafter_model`](../../../src/cmcoder/middleware/model.py#L258)
 splits it off, keeps it in `additional_kwargs["reasoning_content"]`, and
-[replaces the reply by id](../../../src/cmcoder/middleware/model.py#L165)
+[replaces the reply by id](../../../src/cmcoder/middleware/model.py#L267)
 with only the visible text as `content`. (Servers that send reasoning as a
 separate field are handled in the chat model itself, chapter 03.)
 

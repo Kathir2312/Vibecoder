@@ -292,7 +292,7 @@ file per project, under `~/.cmcoder/projects/<name>-<hash>/sessions.db`
   does that for sessions older than `cleanupPeriodDays`.
 
 Without a store (unit tests), `build_agent` falls back to
-[`InMemorySaver`](../../../src/cmcoder/agents/main.py#L418).
+[`InMemorySaver`](../../../src/cmcoder/agents/main.py#L421).
 
 ### The serializer allow-list: `runtime/serde.py`
 

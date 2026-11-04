@@ -15,6 +15,7 @@ import ssl
 import openai
 
 from ..protocol import events as ev
+from .overflow import is_context_overflow
 
 
 def classify(exc: BaseException) -> ev.Error:
@@ -34,11 +35,12 @@ def classify(exc: BaseException) -> ev.Error:
             if budget
             else "The gateway is rate limiting this key; wait a moment and retry.",
         )
-    if isinstance(exc, openai.BadRequestError) and "context length" in msg.lower():
+    if is_context_overflow(exc):
         return ev.Error(
             kind="context_length",
             message=msg,
-            hint="The conversation is too long for the model. Start a new session or /clear.",
+            hint="The conversation is too long for the model, even after cmcoder "
+            "summarised it. Run /compact, or start a new session with /clear.",
         )
     if isinstance(exc, openai.APIConnectionError):
         # The TLS error is somewhere down the chain (httpx, httpcore, ssl), linked

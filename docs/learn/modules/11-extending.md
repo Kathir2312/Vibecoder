@@ -152,7 +152,7 @@ interceptor: [`asyncio.wait_for(handler(request), seconds)`](../../../src/cmcode
 and a timeout or a server error becomes an error result
 (`toolTimeout`, 120 s by default).
 
-**Into the agent.** [`build_agent`](../../../src/cmcoder/agents/main.py#L358-L362)
+**Into the agent.** [`build_agent`](../../../src/cmcoder/agents/main.py#L360-L364)
 adds `mcp.langchain_tools()` to the tool list as they are (they are already
 LangChain tools), and registers small stand-ins,
 [`McpPermissionTool`](../../../src/cmcoder/mcp/manager.py#L128), so the
@@ -212,7 +212,7 @@ the model asks, plus a list of the skill's other files, each readable with
 `file=`. It refuses paths
 [outside the skill's folder](../../../src/cmcoder/core/skills.py#L120-L121)
 and [secrets files](../../../src/cmcoder/core/skills.py#L122-L123), like
-`Read`. [`build_agent`](../../../src/cmcoder/agents/main.py#L313-L317) adds
+`Read`. [`build_agent`](../../../src/cmcoder/agents/main.py#L315-L319) adds
 the tool only when there are skills. A skill is text: it runs nothing and
 grants no permissions, which is why project skills need no trust.
 

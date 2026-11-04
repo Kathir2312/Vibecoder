@@ -29,6 +29,7 @@ What we add on top, by subclassing:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from langchain.agents.middleware import AgentState, SummarizationMiddleware
@@ -58,6 +59,15 @@ def latest_request(messages: list[AnyMessage]) -> HumanMessage | None:
     return None
 
 
+@dataclass
+class _Pending:
+    """A summary made to get one request through (`emergency`), waiting to be
+    written into the conversation at the next step."""
+
+    summarised: set[str | None]  # ids of the messages the summary replaces
+    head: list[AnyMessage]  # the summary, and the latest request word for word
+
+
 class CompactionBlocked(Exception):
     """`/compact` was asked for, and a PreCompact hook said no (the message says why)."""
 
@@ -82,6 +92,7 @@ class CompactionMiddleware(SummarizationMiddleware):
         self.approve_hook = approve_hook
         # Why the last attempt didn't compact, when a PreCompact hook said no.
         self.blocked: str | None = None
+        self.pending: _Pending | None = None
         self.trigger_name = "manual" if always else "auto"
         prompt = f"{COMPACTION_TAG}\n{DEFAULT_SUMMARY_PROMPT}"
         if focus:
@@ -113,9 +124,45 @@ class CompactionMiddleware(SummarizationMiddleware):
         # (middleware/vision.py), never as base64.
         return super()._trim_messages_for_summary(images_as_text(messages))
 
+    async def emergency(self, messages: list[AnyMessage]) -> list[AnyMessage] | None:
+        """`messages` with everything but the last exchange summarised, for a request
+        the server refused as too long (middleware/model.py retries with this).
+
+        The threshold of `abefore_model` is an estimate, and the estimate can be
+        low (code, JSON); this is the safety net behind it. The summary is kept,
+        and `abefore_model` writes it into the conversation at the next step, so
+        the next request doesn't go through the same trouble. None: nothing worth
+        summarising, or a PreCompact hook declined."""
+        self._ensure_message_ids(messages)
+        cutoff = self._find_safe_cutoff(messages, 2)  # keep the last exchange
+        if cutoff <= 0:
+            return None
+        to_summarize, preserved = self._partition_messages(messages, cutoff)
+        request = latest_request(messages)
+        if request is not None and {m.id for m in to_summarize} <= {request.id}:
+            return None  # only the current request would go: nothing to gain
+        if self.hooks is not None and self.hooks.has("PreCompact"):
+            outcome = await self.hooks.run(
+                "PreCompact", {"trigger": "overflow"}, approve_fn=self.approve_hook
+            )
+            if outcome.block:
+                return None
+        head: list[AnyMessage] = list(
+            self._build_new_messages(await self._acreate_summary(to_summarize))
+        )
+        if request is not None and request.id not in {m.id for m in preserved}:
+            head.append(request.model_copy())  # the latest request, word for word
+        self.pending = _Pending({m.id for m in to_summarize}, head)
+        return [*head, *preserved]
+
     async def abefore_model(
         self, state: AgentState[Any], runtime: Runtime[Any]
     ) -> dict[str, Any] | None:
+        pending, self.pending = self.pending, None
+        if pending is not None and pending.summarised <= {m.id for m in state["messages"]}:
+            # An emergency summary got the last request through: make it permanent.
+            rest = [m for m in state["messages"] if m.id not in pending.summarised]
+            return {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES), *pending.head, *rest]}
         # LangChain's own steps (SummarizationMiddleware.abefore_model), taken
         # one by one so that every reason *not* to compact is checked before the
         # summarizer is called: a summary that is then thrown away still costs a

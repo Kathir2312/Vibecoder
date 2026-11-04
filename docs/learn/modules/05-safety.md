@@ -132,7 +132,7 @@ which `--allowedTools` rule would allow it) or pauses the graph with
 Everything else in this chapter is the policy behind `check`.
 
 The policy is built once per session by
-[`build_policy`](../../../src/cmcoder/agents/main.py#L207) from your
+[`build_policy`](../../../src/cmcoder/agents/main.py#L208) from your
 settings, `--permission-mode`, `--allowedTools` / `--disallowedTools`, and
 the managed settings' locks (an organisation can disable
 `bypassPermissions`, the `auto` mode, or allow rules other than its own).
@@ -276,7 +276,7 @@ The sandbox wraps the shell process itself:
 [`PersistentShell._start`](../../../src/cmcoder/tools/shell.py#L93) asks the
 sandbox for the command line to start bash with.
 [`make_sandbox`](../../../src/cmcoder/sandbox/__init__.py#L394) is called
-[once per session](../../../src/cmcoder/agents/main.py#L300). Settings in
+[once per session](../../../src/cmcoder/agents/main.py#L302). Settings in
 [`SandboxConfig`](../../../src/cmcoder/config/settings.py#L112):
 `enabled` (`"auto"` by default), `autoAllow`, `network.allowedHosts`,
 `writablePaths`, `denyReadPaths`, `allowUnsandboxedCommands`.

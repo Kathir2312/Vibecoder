@@ -268,7 +268,7 @@ the code in front: the `add_messages` reducer replaces the message instead of
 appending one. A failing index is a warning once; the turn goes on.
 
 The agent wires it in only when there is an index:
-[`agents/main.py`](../../../src/cmcoder/agents/main.py#L345).
+[`agents/main.py`](../../../src/cmcoder/agents/main.py#L347).
 
 ### 7. Retrieval as a tool: `tools/code_search.py`
 
@@ -291,7 +291,7 @@ the query in its own words and may limit it to a folder;
 [`index.search`](../../../src/cmcoder/tools/code_search.py#L61) and returns
 the pieces numbered like Read's output, so the model can Read or Edit those
 exact lines. It is added to the tools only
-[when there is an index](../../../src/cmcoder/agents/main.py#L309).
+[when there is an index](../../../src/cmcoder/agents/main.py#L311).
 
 ## Lab: build, search, keep current, chain
 

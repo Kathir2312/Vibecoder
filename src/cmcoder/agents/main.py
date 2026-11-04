@@ -48,7 +48,7 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -61,6 +61,7 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     TodoListMiddleware,
 )
+from langchain_core.messages import AnyMessage
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -236,6 +237,7 @@ def loop_middleware(
     hooks: HookRunner | None,
     *,
     on_window: Callable[[int], None] | None = None,
+    summarise: Callable[[list[AnyMessage]], Awaitable[list[AnyMessage] | None]] | None = None,
     stop_event: Literal["Stop", "SubagentStop"] = "Stop",
 ) -> list[AgentMiddleware[Any, Any]]:
     """The middleware every cmcoder agent loop has, the main one and subagents."""
@@ -246,7 +248,7 @@ def loop_middleware(
         ContextEditingMiddleware(
             edits=[ClearToolUsesEdit(trigger=int(profile.context_window * 0.6), keep=3)]
         ),
-        ModelProfileMiddleware(bundle, on_window=on_window),
+        ModelProfileMiddleware(bundle, on_window=on_window, summarise=summarise),
         TextToolCallsMiddleware(prompted=profile.tool_calling == "prompted"),
         ReasoningMiddleware(),
         ToolCallRepairMiddleware(),
@@ -380,6 +382,7 @@ def build_agent(
         opts,
         hooks,
         on_window=compaction.set_window if compaction else None,
+        summarise=compaction.emergency if compaction else None,
     )
     middleware += extra_middleware or []
     # Subagents: the Task tool starts a fresh agent graph for a self-contained job.
