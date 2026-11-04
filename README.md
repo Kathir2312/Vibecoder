@@ -20,7 +20,7 @@ framework concepts it uses.
   subagents (`Task`), the critic (`/critic`) and the team (`/team`: a
   LangGraph `StateGraph` of PM, developer, tester and DevOps), and the
   memory between sessions on a LangGraph store (`/memory`; `/init` learns a
-  project and saves notes about it), and the
+  project and saves notes about it; `/review` checks your changes for bugs), and the
   hardening: Open WebUI as a gateway, the Bash sandbox, images through a
   `visionModel`, OpenTelemetry (off by default), the full `cmcoder doctor`,
   standalone builds and IDE packages, and a [security
