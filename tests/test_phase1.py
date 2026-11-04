@@ -141,9 +141,9 @@ async def test_manual_compact(mock_server, project: Path) -> None:
 
 
 async def test_context_window_is_learned_from_the_server(mock_server, project: Path) -> None:
-    # The profile assumes 32K; the server really has 6K and says so in its error.
+    # The profile assumes 32K; the server really has 8K and says so in its error.
     server = mock_server(
-        [{"content": "fits now"}], enforce_context=True, context_windows={"qwen3-27b": 6000}
+        [{"content": "fits now"}], enforce_context=True, context_windows={"qwen3-27b": 8000}
     )
     session = make_session(server.base_url, project)
     try:
@@ -151,9 +151,9 @@ async def test_context_window_is_learned_from_the_server(mock_server, project: P
     finally:
         await session.agent.close()
     assert events[-1].result == "fits now"
-    assert session.agent.bundle.profile.context_window == 6000
+    assert session.agent.bundle.profile.context_window == 8000
     saved = json.loads((config_dir() / "context-windows.json").read_text())
-    assert [e["tokens"] for e in saved.values()] == [6000]
+    assert [e["tokens"] for e in saved.values()] == [8000]
 
 
 # --- tool calls as text (Qwen without a tool parser) -------------------------------------------

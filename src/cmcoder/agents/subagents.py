@@ -76,6 +76,7 @@ from ..protocol import events as ev
 from ..sensitive import safe_project_file
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
+from ..tools.browser import browser_session
 
 if TYPE_CHECKING:
     from .main import AgentOptions
@@ -545,6 +546,7 @@ async def run_agent(
                 cwd=rt.opts.cwd, project_root=rt.root, sandbox=rt.sandbox, code_index=rt.code_index
             )
             ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
+            ctx.browser = browser_session(rt.settings, rt.root)  # its own, if it has the tool
             rt.contexts[call_id] = ctx
         if run.stop_requested:  # stopped while it waited for a slot: never starts
             await _release(rt, call_id)

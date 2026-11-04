@@ -1,7 +1,7 @@
 """The conversation outgrows the model's window: cmcoder recovers by itself.
 
-The gateway's real window is 9,000 tokens (cmcoder's own system prompt and tool
-list take about 4,400 of them) while cmcoder still assumes the
+The gateway's real window is 10,000 tokens (cmcoder's own system prompt and tool
+list take over half of them) while cmcoder still assumes the
 profile's 32K (the gateway doesn't publish it), so the first request that is
 too big is refused. Whatever the server's wording, the turn must still end
 normally: old tool outputs are cleared, older messages summarised, long tool
@@ -35,7 +35,7 @@ def _key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def small_server(mock_server, script: list[dict], message: str | None):
     return mock_server(
-        script, enforce_context=True, context_windows={"qwen3-27b": 9000}, overflow_message=message
+        script, enforce_context=True, context_windows={"qwen3-27b": 10000}, overflow_message=message
     )
 
 

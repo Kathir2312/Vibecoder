@@ -234,6 +234,16 @@ class MemoryConfig(_Model):
     auto: bool = True
 
 
+class BrowserConfig(_Model):
+    """The Browser tool (tools/browser.py): the agent drives a real browser (Playwright)
+    to test a web app. It uses the Chrome or Edge on this PC."""
+
+    enabled: bool = True
+    headless: bool = True  # false: show the window (demos)
+    # A browser program to use instead of looking for Chrome or Edge.
+    executable_path: str | None = Field(None, alias="executablePath")
+
+
 class TeamConfig(_Model):
     """The team (agents/team.py): the `Team` tool runs PM → developer → tester
     (→ developer on a failure) → DevOps as a LangGraph StateGraph. Off by default."""
@@ -298,6 +308,7 @@ class Settings(_Model):
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
     critic: CriticConfig = Field(default_factory=lambda: CriticConfig.model_validate({}))
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
+    browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")

@@ -19,6 +19,11 @@
     "enabled": false,
     "maxRounds": 2
   },
+  "browser": {
+    "enabled": true,
+    "headless": true,
+    "executablePath": null
+  },
   "memory": {
     "enabled": true,
     "auto": true
