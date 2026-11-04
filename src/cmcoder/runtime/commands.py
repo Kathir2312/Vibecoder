@@ -43,6 +43,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
+    ("init", "[focus]", "Learn this project and save notes about it for future sessions"),
     ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
     ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
     ("cost", "", "Token use in this session"),
@@ -156,6 +157,21 @@ def memory_command(session: Session, arg: str) -> list[str]:
     return lines
 
 
+def init_command(session: Session, focus: str) -> CommandResult:
+    """/init: the model explores the project and saves what it learns as notes."""
+    from ..notes import init_prompt
+
+    a = session.agent
+    if a.memory is None:
+        return CommandResult(['Memory is off: set "memory": {"enabled": true} in your settings.'])
+    if not a.memory.auto:
+        return CommandResult(
+            ['/init saves what cmcoder learns: set "memory": {"auto": true} in your settings.']
+        )
+    titles = [n.title for n in a.memory.project.notes()]
+    return CommandResult(send=init_prompt(titles, focus))
+
+
 async def run_command(
     session: Session, line: str, *, switch_model: SwitchModel | None = None
 ) -> CommandResult:
@@ -267,6 +283,8 @@ async def run_command(
         )
     if name == "memory":
         return CommandResult(memory_command(session, arg))
+    if name == "init":
+        return init_command(session, arg)
     if name == "index":
         from ..rag.session import index_command
 

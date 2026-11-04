@@ -248,3 +248,48 @@ def test_open_store_creates_the_folder(tmp_path: Path) -> None:
     store = open_store(tmp_path / "new" / "m.db")
     store.put(("a",), "k", {"v": 1})
     assert store.get(("a",), "k").value == {"v": 1}  # type: ignore[union-attr]
+
+
+async def test_init_makes_the_model_learn_the_project_and_save_notes(
+    mock_server, project: Path
+) -> None:
+    (project / "README.md").write_text("# Demo\nA tiny app.\n")
+    remember = lambda **a: {"tool_calls": [{"name": "Remember", "arguments": a}]}  # noqa: E731
+    server = mock_server(
+        [
+            {"tool_calls": [{"name": "Read", "arguments": {"file_path": "README.md"}}]},
+            remember(title="Purpose", note="Demo is a tiny app."),
+            remember(title="Test command", note="Run pytest -q."),
+            {"content": "Saved 2 notes."},
+        ]
+    )
+    session = make_session(server.base_url, project)
+    try:
+        result = await run_command(session, "/init the CLI")
+        assert result.send and "Focus on: the CLI" in result.send and "Remember" in result.send
+        await run_turn(session, result.send)
+    finally:
+        await session.agent.close()
+    assert notes_of(project) == [("Purpose", "agent"), ("Test command", "agent")]
+
+
+async def test_init_lists_existing_notes_and_respects_the_switches(
+    mock_server, project: Path
+) -> None:
+    server = mock_server([{"content": "ok"}])
+    seed = Memory.for_project(project)
+    seed.project.save("Purpose", "old text", "agent")
+    seed.close()
+    session = make_session(server.base_url, project)
+    try:
+        result = await run_command(session, "/init")
+        assert result.send and "Purpose" in result.send
+    finally:
+        await session.agent.close()
+    for setting, text in (({"enabled": False}, "Memory is off"), ({"auto": False}, "auto")):
+        s = make_session(server.base_url, project, settings={"memory": setting})
+        try:
+            r = await run_command(s, "/init")
+            assert r.send is None and text in r.lines[0]
+        finally:
+            await s.agent.close()
