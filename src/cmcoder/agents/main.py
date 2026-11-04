@@ -91,7 +91,7 @@ from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
-from ..notes import MemoryStore
+from ..notes import Memory
 from ..rag.index import CodeIndex
 from ..rag.session import open_code_index
 from ..runtime.serde import checkpoint_serde
@@ -326,7 +326,7 @@ def build_agent(
     # 2. System prompt: stable instructions first, then CMCODER.md memory, then
     #    the environment. Keeping the start identical between calls lets the
     #    server reuse its prompt cache (vLLM / llama.cpp prefix caching).
-    notes = MemoryStore.for_project(root) if settings.memory.enabled else None
+    notes = Memory.for_project(root, settings.memory.auto) if settings.memory.enabled else None
     system_prompt = build_system_prompt(
         cwd,
         root,

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cmcoder.notes import MAX_BODY, MemoryStore, NoteError, looks_like_secret
+from cmcoder.notes import MAX_BODY, MAX_NOTES, Memory, MemoryStore, NoteError, looks_like_secret
 from cmcoder.runtime.commands import run_command
 
 from .conftest import API_KEY
@@ -58,8 +58,9 @@ def test_limits_and_privacy(tmp_path: Path) -> None:
         store.save("Long", "x" * (MAX_BODY + 1))
     store.save("Ok", "fine")
     assert (store.dir / "ok.md").stat().st_mode & 0o077 == 0
-    assert store.prompt_block() and "Ok" in store.prompt_block()
-    assert MemoryStore(tmp_path / "empty").prompt_block() is None
+    block = Memory(store, MemoryStore(tmp_path / "u", "user")).prompt_block()
+    assert "Ok" in block and "Remember" in block and "Recall" in block
+    assert "About the user" not in block
 
 
 async def test_remember_needs_a_real_quote_then_shows_next_session(
@@ -105,9 +106,7 @@ async def test_remember_needs_a_real_quote_then_shows_next_session(
         await run_turn(second, "hi")
     finally:
         await second.agent.close()
-    assert "Notes from earlier sessions" in system_text(server) or any(
-        "Run pytest -x -q." in str(r["messages"][0]) for r in server.requests[-1:]
-    )
+    assert "Run pytest -x -q." in str(server.requests[-1]["messages"][0])
 
 
 async def test_memory_off_has_no_tools_and_command_says_so(mock_server, project: Path) -> None:
@@ -132,3 +131,67 @@ async def test_forget_command(mock_server, project: Path) -> None:
         await session.agent.close()
     assert result.lines == ["Forgot: Old"]
     assert MemoryStore.for_project(project).notes() == []
+
+
+def test_agent_notes_are_pruned_first_and_duplicates_merge(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "m")
+    store.save("Mine", "a user fact")
+    for i in range(MAX_NOTES - 1):
+        store.save(f"auto {i}", f"fact {i}", "agent")
+    store.save("Brand new", "one more fact", "agent")  # full: the oldest auto note goes
+    titles = [n.title for n in store.notes()]
+    assert len(titles) == MAX_NOTES and "Mine" in titles and "auto 0" not in titles
+    store.save("Same fact", "a user fact")  # same text as "Mine": one note, not two
+    assert len(store.notes()) == MAX_NOTES
+    full = MemoryStore(tmp_path / "f")
+    for i in range(MAX_NOTES):
+        full.save(f"u{i}", f"fact {i}")
+    with pytest.raises(NoteError):
+        full.save("extra", "more")
+
+
+def test_agent_notes_are_project_only_and_marked(tmp_path: Path) -> None:
+    user = MemoryStore(tmp_path / "u", "user")
+    with pytest.raises(NoteError):
+        user.save("x", "y", "agent")
+    project = MemoryStore(tmp_path / "p")
+    project.save("Lint", "ruff check src", "agent")
+    assert "(learned by cmcoder)" in project.index_text()
+    assert project.notes()[0].source == "agent"
+
+
+async def test_learned_and_user_notes_through_tools(mock_server, project: Path) -> None:
+    call = lambda **a: {"tool_calls": [{"name": "Remember", "arguments": a}]}  # noqa: E731
+    server = mock_server(
+        [
+            call(title="Lint", note="Lint with ruff check src."),  # learned itself
+            call(title="Bad", note="x", scope="user"),  # user scope needs a quote
+            call(title="Style", note="Type hints.", scope="user", quote="i like type hints"),
+            {"tool_calls": [{"name": "Recall", "arguments": {"note": "Lint"}}]},
+            {"content": "Done."},
+        ]
+    )
+    session = make_session(server.base_url, project)
+    try:
+        await run_turn(session, "I like type hints in all my projects.")
+    finally:
+        await session.agent.close()
+    memory = Memory.for_project(project)
+    assert [(n.title, n.source) for n in memory.project.notes()] == [("Lint", "agent")]
+    assert [(n.title, n.source) for n in memory.user.notes()] == [("Style", "user")]
+    assert "Lint with ruff" in str(server.requests[-1]["messages"])  # Recall's answer
+
+
+async def test_auto_off_only_saves_what_the_user_says(mock_server, project: Path) -> None:
+    server = mock_server(
+        [
+            {"tool_calls": [{"name": "Remember", "arguments": {"title": "L", "note": "n"}}]},
+            {"content": "ok"},
+        ]
+    )
+    session = make_session(server.base_url, project, settings={"memory": {"auto": False}})
+    try:
+        await run_turn(session, "hi")
+    finally:
+        await session.agent.close()
+    assert Memory.for_project(project).project.notes() == []

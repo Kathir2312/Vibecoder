@@ -43,7 +43,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
-    ("memory", "[forget <n>]", "Notes cmcoder saved about this project; delete one"),
+    ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
     ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
     ("cost", "", "Token use in this session"),
     ("context", "", "How full the context window is"),
@@ -125,23 +125,33 @@ def add_memory(project_root: Path, note: str) -> Path:
 
 
 def memory_command(session: Session, arg: str) -> list[str]:
-    from ..notes import MemoryStore
+    from ..notes import Memory
 
     settings = session.agent.spec.get("settings")
     if settings is not None and not settings.memory.enabled:
         return ["Memory is off (memory.enabled in settings)."]
-    store = MemoryStore.for_project(session.agent.ctx.project_root)
+    memory = Memory.for_project(session.agent.ctx.project_root)
+    entries = [(s, n) for s in memory.stores() for n in s.notes()]
     verb, _, ref = arg.partition(" ")
     if verb == "forget":
-        gone = store.forget(ref.strip())
-        return [f"Forgot: {gone.title}"] if gone else [f"No note matches {ref.strip()!r}."]
-    notes = store.notes()
-    if not notes:
+        ref = ref.strip()
+        if ref.isdigit() and 1 <= int(ref) <= len(entries):
+            store, note = entries[int(ref) - 1]
+            gone = store.forget(note.slug)
+        else:
+            gone = next((g for s in memory.stores() if (g := s.forget(ref))), None)
+        return [f"Forgot: {gone.title}"] if gone else [f"No note matches {ref!r}."]
+    if not entries:
         return [
-            'No notes yet. Tell cmcoder to remember something, e.g. "remember to use pytest -x".'
+            "No notes yet. Tell cmcoder to remember something, "
+            'e.g. "remember to use pytest -x"; it also saves what it learns about the project.'
         ]
-    lines = [f"{len(notes)} note(s) in {store.dir}:"]
-    lines += [f"  {i}. {n.title}: {' '.join(n.body.split())[:100]}" for i, n in enumerate(notes, 1)]
+    lines = [f"{len(entries)} note(s). Project: {memory.project.dir}; yours: {memory.user.dir}"]
+    for i, (_, n) in enumerate(entries, 1):
+        tag = "yours" if n.scope == "user" else "project"
+        if n.source == "agent":
+            tag += ", learned by cmcoder"
+        lines.append(f"  {i}. [{tag}] {n.title}: {' '.join(n.body.split())[:100]}")
     lines.append("Delete one with /memory forget <n>. New notes apply from the next session.")
     return lines
 

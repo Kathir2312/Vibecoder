@@ -20,7 +20,8 @@
     "maxRounds": 2
   },
   "memory": {
-    "enabled": true
+    "enabled": true,
+    "auto": true
   },
   "team": {
     "enabled": false,

@@ -229,6 +229,9 @@ class MemoryConfig(_Model):
     sessions, only from what the user says. `/memory` lists and deletes them."""
 
     enabled: bool = True
+    # cmcoder may also save what it works out itself (build commands, fixes), as notes
+    # marked "learned by cmcoder". Off: only what the user says is saved.
+    auto: bool = True
 
 
 class TeamConfig(_Model):
