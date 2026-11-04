@@ -43,6 +43,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
+    ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("init", "[focus]", "Learn this project and save notes about it for future sessions"),
     ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
     ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
@@ -172,6 +173,17 @@ def init_command(session: Session, focus: str) -> CommandResult:
     return CommandResult(send=init_prompt(titles, focus))
 
 
+async def review_command(session: Session, target: str) -> CommandResult:
+    """/review: collect the change, then the model reviews it (read-only)."""
+    from ..review import ReviewError, collect, review_prompt
+
+    try:
+        change = await collect(session.agent.ctx.project_root, target)
+    except ReviewError as e:
+        return CommandResult([str(e)])
+    return CommandResult(send=review_prompt(change))
+
+
 async def run_command(
     session: Session, line: str, *, switch_model: SwitchModel | None = None
 ) -> CommandResult:
@@ -285,6 +297,8 @@ async def run_command(
         return CommandResult(memory_command(session, arg))
     if name == "init":
         return init_command(session, arg)
+    if name == "review":
+        return await review_command(session, arg)
     if name == "index":
         from ..rag.session import index_command
 
