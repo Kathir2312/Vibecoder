@@ -254,29 +254,31 @@ Gateways often don't publish the window. cmcoder learns it three ways:
   LiteLLM's `/model/info` (or Open WebUI's model list), and
   [`prepare_models`](../../../src/cmcoder/models/gateway.py#L233) caches it
   for a day *before* the agent is built
-  ([`prepare_agent`](../../../src/cmcoder/agents/main.py#L165)), because
+  ([`prepare_agent`](../../../src/cmcoder/agents/main.py#L166)), because
   building the agent is synchronous and the cache read isn't
   ([`cached_model_info`](../../../src/cmcoder/models/gateway.py#L205)).
 * **By probing.** When nothing better is known,
   [`probe_context_window`](../../../src/cmcoder/models/gateway.py#L149) sends
   a one-word prompt with an impossibly large `max_tokens`; vLLM refuses it
   before generating anything and states its limit.
-* **From an error.** If a real request is too long, the server says "maximum
-  context length is N tokens".
-  [`ModelProfileMiddleware`](../../../src/cmcoder/middleware/model.py#L111)
-  catches the `BadRequestError`,
-  [parses N](../../../src/cmcoder/middleware/model.py#L126)
-  ([`parse_context_window`](../../../src/cmcoder/models/windows.py#L32)),
-  [updates the model everywhere](../../../src/cmcoder/middleware/model.py#L130)
+* **From an error.** If a real request is too long, the server says so, in
+  its own words: "maximum context length is N tokens" (OpenAI, vLLM),
+  "prompt is too long: ... > N maximum" (Anthropic through a gateway), "input
+  token count ... exceeds the maximum number of tokens allowed (N)" (Gemini).
+  [`is_context_overflow`](../../../src/cmcoder/models/overflow.py#L49)
+  recognises all of them, and
+  [`parse_context_window`](../../../src/cmcoder/models/windows.py#L38)
+  reads N when there is one. [`ModelProfileMiddleware`](../../../src/cmcoder/middleware/model.py#L90)
+  then [updates the model everywhere](../../../src/cmcoder/models/chat.py#L169)
   ([`set_context_window`](../../../src/cmcoder/models/chat.py#L169): our
   profile *and* LangChain's), saves it per gateway and model
-  ([`save_window`](../../../src/cmcoder/models/windows.py#L81)), and retries
-  smaller. Chapter 07 covers the middleware side.
+  ([`save_window`](../../../src/cmcoder/models/windows.py#L87)), and retries
+  with less in the request. Chapter 07 covers the middleware side.
 
 ### Errors become events with hints
 
 [`models/errors.py`](../../../src/cmcoder/models/errors.py#L1)
-[`classify`](../../../src/cmcoder/models/errors.py#L20) maps the OpenAI SDK's
+[`classify`](../../../src/cmcoder/models/errors.py#L21) maps the OpenAI SDK's
 exceptions to protocol `error` events with a `kind` and a hint: `auth`,
 `rate_limit` / `budget`, `context_length`, `tls` (it follows the exception
 chain down to the `ssl` error, through `__cause__` *and* `__context__`,

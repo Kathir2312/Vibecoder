@@ -77,7 +77,7 @@ IDE_TOOL_TIMEOUT = 30.0  # seconds
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
-    "index",
+    "index", "memory",
 }  # fmt: skip
 _READ = ReadTool()
 

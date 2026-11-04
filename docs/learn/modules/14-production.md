@@ -213,7 +213,7 @@ flowchart TB
 * **A new graph, the same conversation.** `create_agent` compiles one model
   and a fixed tool list, so switching models or adding IDE tools means a new
   graph: [`_rebuild`](../../../src/cmcoder/cli/stdio.py#L328) calls
-  [`rebuild_agent`](../../../src/cmcoder/agents/main.py#L181), which builds it
+  [`rebuild_agent`](../../../src/cmcoder/agents/main.py#L182), which builds it
   on the *same checkpointer*; the thread id stays, so the conversation goes on.
 * **stdout is the protocol.** [`run_stdio`](../../../src/cmcoder/cli/stdio.py#L663)
   [points `sys.stdout` at stderr](../../../src/cmcoder/cli/stdio.py#L672), so
@@ -246,12 +246,12 @@ send prompts and code to a tracing service.
 
 ### 3. Testing with a scripted server: `testing/mock_server.py`
 
-[`MockState`](../../../src/cmcoder/testing/mock_server.py#L51) holds the
+[`MockState`](../../../src/cmcoder/testing/mock_server.py#L52) holds the
 script: a list of replies (`{"content": ...}` or `{"tool_calls": [...]}`),
 served in order to chat requests. The handler answers
-[chat completions](../../../src/cmcoder/testing/mock_server.py#L240) as an
+[chat completions](../../../src/cmcoder/testing/mock_server.py#L246) as an
 SSE stream with usage, `/v1/models`, LiteLLM's `/v1/model/info`, and
-[`/v1/embeddings`](../../../src/cmcoder/testing/mock_server.py#L306) (fake,
+[`/v1/embeddings`](../../../src/cmcoder/testing/mock_server.py#L312) (fake,
 deterministic vectors), and records every request. It can also behave like a
 real server under pressure: reject prompts over the context window like vLLM,
 act like Open WebUI or an Ollama backend.

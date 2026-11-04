@@ -14,8 +14,9 @@ Every request to the model carries the whole conversation: the system prompt,
 the tool schemas, every message and every tool output. Qwen3 27B on a company
 gateway often has a 32K-token window. One big `Read` of a log file can take a
 third of it, and a long debugging session fills it in minutes. When the
-request no longer fits, the server answers *"maximum context length is N
-tokens"* and the turn fails.
+request no longer fits, the server refuses it ("maximum context length is N
+tokens", "prompt is too long", ...). Without a safety net, the turn would fail
+and the user would have to retry by hand.
 
 cmcoder keeps conversations going with three layers, cheapest first:
 
@@ -23,8 +24,11 @@ cmcoder keeps conversations going with three layers, cheapest first:
    a placeholder.
 2. **Summarization**: past `autoCompactThreshold` (80%), the small/fast model
    summarises the older messages, and the summary replaces them.
-3. **Learning the real window**: if the server still says "too long", cmcoder
-   reads the real limit from the error, remembers it, and retries smaller.
+3. **The safety net**: if the server still says "too long" (in any wording),
+   cmcoder reads the real limit from the error when there is one, remembers
+   it, and retries with less in the request: old tool outputs cleared, older
+   messages summarised, long tool outputs shortened. The summary is then
+   written into the conversation. The user sees a notice, not an error.
 
 And the system prompt, which is in *every* request, is built so it stays
 identical between calls (so the gateway can reuse its prompt cache) and so
@@ -141,53 +145,53 @@ an 80% trigger it decides whether compaction comes in time.
 
 ### The compaction middleware
 
-[`CompactionMiddleware`](../../../src/cmcoder/middleware/compaction.py#L65)
+[`CompactionMiddleware`](../../../src/cmcoder/middleware/compaction.py#L75)
 subclasses `SummarizationMiddleware`. Its
-[`__init__`](../../../src/cmcoder/middleware/compaction.py#L68):
+[`__init__`](../../../src/cmcoder/middleware/compaction.py#L78):
 
 - uses the small/fast model as `summarizer` (it's passed in as `summarizer`;
-  [agents/main.py](../../../src/cmcoder/agents/main.py#L366-L368) gives it
+  [agents/main.py](../../../src/cmcoder/agents/main.py#L368-L370) gives it
   `small.quick()`, the small model with thinking switched off: a summary needs
   no reasoning);
-- triggers at [`("fraction", threshold)`](../../../src/cmcoder/middleware/compaction.py#L95)
+- triggers at [`("fraction", threshold)`](../../../src/cmcoder/middleware/compaction.py#L106)
   (the `autoCompactThreshold` setting, 0.8 by default) and
-  [keeps the newest quarter](../../../src/cmcoder/middleware/compaction.py#L97);
+  [keeps the newest quarter](../../../src/cmcoder/middleware/compaction.py#L108);
 - puts a tag in front of LangChain's default summary prompt
-  ([`COMPACTION_TAG`](../../../src/cmcoder/middleware/compaction.py#L86)) so
+  ([`COMPACTION_TAG`](../../../src/cmcoder/middleware/compaction.py#L97)) so
   the mock server can recognise summary requests in tests, and, for
   `/compact <focus>`, adds
-  ["Pay special attention to: …"](../../../src/cmcoder/middleware/compaction.py#L87-L91)
+  ["Pay special attention to: …"](../../../src/cmcoder/middleware/compaction.py#L98-L102)
   before the messages.
 
 **The window minus the fixed part.**
-[`set_window`](../../../src/cmcoder/middleware/compaction.py#L106) works
+[`set_window`](../../../src/cmcoder/middleware/compaction.py#L117) works
 around the counting trap above: it changes the profile *of its own copy of
-the model* ([`model.model_copy()`](../../../src/cmcoder/middleware/compaction.py#L93))
+the model* ([`model.model_copy()`](../../../src/cmcoder/middleware/compaction.py#L104))
 so that `max_input_tokens` is the window **minus the system prompt and the
 tool schemas**. That overhead is measured once by
-[`fixed_prompt_tokens`](../../../src/cmcoder/agents/main.py#L224):
+[`fixed_prompt_tokens`](../../../src/cmcoder/agents/main.py#L225):
 the system prompt plus `convert_to_openai_tool(t)` for every tool, divided by
 an estimate of characters per token. The profile the fraction reads is
 LangChain's own, filled from cmcoder's model profile in
 [`_langchain_profile`](../../../src/cmcoder/models/chat.py#L178).
 
 **Keeping your latest request.**
-[`abefore_model`](../../../src/cmcoder/middleware/compaction.py#L116) takes
+[`abefore_model`](../../../src/cmcoder/middleware/compaction.py#L158) takes
 LangChain's own steps one by one, using the same helpers as
 `SummarizationMiddleware` (`_should_summarize`, `_determine_cutoff_index`,
 `_partition_messages`), so that every reason *not* to compact is checked
 before the summarizer is called:
 
-- [past the trigger, and something to cut](../../../src/cmcoder/middleware/compaction.py#L126-L130),
+- [past the trigger, and something to cut](../../../src/cmcoder/middleware/compaction.py#L173-L177),
   as LangChain decides;
 - if the only message that would be summarised is your current request,
-  [it changes nothing](../../../src/cmcoder/middleware/compaction.py#L133-L136)
+  [it changes nothing](../../../src/cmcoder/middleware/compaction.py#L180-L183)
   (a summary would add tokens, not save them);
-- a [`PreCompact` hook](../../../src/cmcoder/middleware/compaction.py#L137-L143)
+- a [`PreCompact` hook](../../../src/cmcoder/middleware/compaction.py#L184-L190)
   may decline (chapter 11);
-- only then is [the summary asked for](../../../src/cmcoder/middleware/compaction.py#L144),
+- only then is [the summary asked for](../../../src/cmcoder/middleware/compaction.py#L191),
   and if your latest request fell into the summarised part, it is
-  [put back word for word](../../../src/cmcoder/middleware/compaction.py#L146-L148)
+  [put back word for word](../../../src/cmcoder/middleware/compaction.py#L193-L195)
   right after the summary, so the model never works from a paraphrase of what
   you just asked.
 
@@ -200,22 +204,35 @@ the pinned versions in `uv.lock` make acceptable.
 
 ### Context editing and the window learned from errors
 
-[`loop_middleware`](../../../src/cmcoder/agents/main.py#L246) starts
+[`loop_middleware`](../../../src/cmcoder/agents/main.py#L248) starts
 the middleware every agent loop shares (the main agent's and the
 subagents') with
 `ContextEditingMiddleware(edits=[ClearToolUsesEdit(trigger=int(context_window * 0.6), keep=3)])`: old tool
 outputs go at 60%, before summarising is needed at 80%.
 
-If a request still overflows,
-[`ModelProfileMiddleware.awrap_model_call`](../../../src/cmcoder/middleware/model.py#L125-L133)
-catches the server's error, reads the real window from it
-([`parse_context_window`](../../../src/cmcoder/models/windows.py#L32)),
-stores it per gateway and model
-([`save_window`](../../../src/cmcoder/models/windows.py#L81), in
-`~/.cmcoder/context-windows.json`), tells the compaction middleware through
-`on_window` (wired [here](../../../src/cmcoder/agents/main.py#L382)), and
-[retries once](../../../src/cmcoder/middleware/model.py#L139-L140) with old
-tool outputs cleared. Chapter 07 covers that middleware in full.
+If a request still overflows (the estimates behind the thresholds can be low,
+especially for code and JSON), the safety net is in
+[`ModelProfileMiddleware._recover`](../../../src/cmcoder/middleware/model.py#L180). It
+treats any wording of "too long"
+([`is_context_overflow`](../../../src/cmcoder/models/overflow.py#L49)) the same,
+and reads the real window from the message when there is one
+([`parse_context_window`](../../../src/cmcoder/models/windows.py#L38), saved per
+gateway and model by [`save_window`](../../../src/cmcoder/models/windows.py#L87)
+in `~/.cmcoder/context-windows.json`; compaction is told through `on_window`,
+wired [here](../../../src/cmcoder/agents/main.py#L385)). Then it retries with
+less in the request, step by step: old tool outputs cleared, older messages
+summarised, long tool outputs shortened (chapter 07 lists the steps). The user
+sees a one-line notice, not an error.
+
+The summary step is [`CompactionMiddleware.emergency`](../../../src/cmcoder/middleware/compaction.py#L127): everything
+but the last exchange is summarised (a `PreCompact` hook may decline), and the
+summary is kept in a [`_Pending`](../../../src/cmcoder/middleware/compaction.py#L63) note. At the next step,
+[`abefore_model`](../../../src/cmcoder/middleware/compaction.py#L158) writes it into the conversation
+(`RemoveMessage`, summary, the messages that came after), so the
+conversation itself shrinks and the next request doesn't have the same trouble.
+The tests in `tests/test_overflow.py` run a gateway whose real window is smaller
+than cmcoder assumes and checks that the turn ends normally whatever words the
+server uses.
 
 ### `/compact` by hand
 

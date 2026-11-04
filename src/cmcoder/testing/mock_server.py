@@ -14,7 +14,8 @@ Summary requests from auto-compaction and session-title requests
 (recognised by their system prompts) get canned replies and don't use up the
 script; they are recorded in `state.summary_requests` / `state.title_requests`. With `enforce_context=True`, a request whose
 prompt plus max_tokens exceeds the model's window is rejected with vLLM's
-"maximum context length" error, as a real server would.
+"maximum context length" error, as a real server would (`overflow_message`
+words it another way).
 
 Run standalone:  python -m cmcoder.testing.mock_server --script s.json --port 8765
 
@@ -58,6 +59,7 @@ class MockState:
         think_tags: bool | str = False,
         context_windows: dict[str, int] | None = None,
         enforce_context: bool = False,
+        overflow_message: str | None = None,
         summary: str = "Summary (mock): the user asked for work on the project; files were read.",
         model_info: bool = True,
         title: str = "Fix the login bug",
@@ -72,6 +74,10 @@ class MockState:
         self.context_window = context_window
         self.context_windows = context_windows or {}
         self.enforce_context = enforce_context
+        # How the server words "too long", with {window} and {requested}: gateways
+        # in front of other models say it differently, e.g. Anthropic's
+        # "prompt is too long: {requested} tokens > {window} maximum".
+        self.overflow_message = overflow_message
         self.summary = summary
         self.model_info = model_info  # False: no /model/info, like many gateways
         self.title = title
@@ -397,10 +403,13 @@ def make_handler(state: MockState) -> type[BaseHTTPRequestHandler]:
                 state.enforce_context or max_tokens >= state.window(model)
             ):
                 message = (
-                    f"This model's maximum context length is {state.window(model)} tokens. "
-                    f"However, you requested {requested} tokens. Please reduce the length of "
-                    "the messages."
-                )
+                    state.overflow_message
+                    or (
+                        "This model's maximum context length is {window} tokens. "
+                        "However, you requested {requested} tokens. Please reduce the length of "
+                        "the messages."
+                    )
+                ).format(window=state.window(model), requested=requested)
                 self._json(
                     400,
                     {"detail": message}

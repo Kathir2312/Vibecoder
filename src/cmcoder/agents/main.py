@@ -48,7 +48,7 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -61,6 +61,7 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     TodoListMiddleware,
 )
+from langchain_core.messages import AnyMessage
 from langchain_core.tools import BaseTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -90,6 +91,7 @@ from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
+from ..notes import Memory
 from ..rag.index import CodeIndex
 from ..rag.session import open_code_index
 from ..runtime.serde import checkpoint_serde
@@ -101,6 +103,7 @@ from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.code_search import CodeSearchTool
 from ..tools.registry import default_tools
 from .context import RunContext
+from .notes_tools import build_notes_tools
 from .subagents import SubagentRuntime, build_task_tool
 from .team import build_team_tool
 
@@ -236,6 +239,7 @@ def loop_middleware(
     hooks: HookRunner | None,
     *,
     on_window: Callable[[int], None] | None = None,
+    summarise: Callable[[list[AnyMessage]], Awaitable[list[AnyMessage] | None]] | None = None,
     stop_event: Literal["Stop", "SubagentStop"] = "Stop",
 ) -> list[AgentMiddleware[Any, Any]]:
     """The middleware every cmcoder agent loop has, the main one and subagents."""
@@ -246,7 +250,7 @@ def loop_middleware(
         ContextEditingMiddleware(
             edits=[ClearToolUsesEdit(trigger=int(profile.context_window * 0.6), keep=3)]
         ),
-        ModelProfileMiddleware(bundle, on_window=on_window),
+        ModelProfileMiddleware(bundle, on_window=on_window, summarise=summarise),
         TextToolCallsMiddleware(prompted=profile.tool_calling == "prompted"),
         ReasoningMiddleware(),
         ToolCallRepairMiddleware(),
@@ -322,9 +326,11 @@ def build_agent(
     # 2. System prompt: stable instructions first, then CMCODER.md memory, then
     #    the environment. Keeping the start identical between calls lets the
     #    server reuse its prompt cache (vLLM / llama.cpp prefix caching).
+    notes = Memory.for_project(root, settings.memory.auto) if settings.memory.enabled else None
     system_prompt = build_system_prompt(
         cwd,
         root,
+        learned=notes.prompt_block() if notes else None,
         tier=profile.prompt_tier,
         model=bundle.name,
         memory=load_memory_files(cwd, root),
@@ -380,6 +386,7 @@ def build_agent(
         opts,
         hooks,
         on_window=compaction.set_window if compaction else None,
+        summarise=compaction.emergency if compaction else None,
     )
     middleware += extra_middleware or []
     # Subagents: the Task tool starts a fresh agent graph for a self-contained job.
@@ -396,6 +403,8 @@ def build_agent(
         code_index=code_index,
     )
     lc_tools.append(build_task_tool(subagents))
+    if notes is not None:
+        lc_tools += build_notes_tools(notes)
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
     if settings.team.enabled:
         lc_tools.append(build_team_tool(subagents, settings.team.max_rounds))

@@ -315,7 +315,7 @@ middleware version of the tool's `stream_writer`.
 ### 4. The team: a `StateGraph` of subagents
 
 The team is enabled with `"team": {"enabled": true}`; the main agent then gets
-the [`Team` tool](../../../src/cmcoder/agents/main.py#L401), and `/team <feature>`
+the [`Team` tool](../../../src/cmcoder/agents/main.py#L404), and `/team <feature>`
 asks it to use it.
 
 **The state.** [`TeamState`](../../../src/cmcoder/agents/team.py#L142) is a

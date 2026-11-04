@@ -19,6 +19,10 @@
     "enabled": false,
     "maxRounds": 2
   },
+  "memory": {
+    "enabled": true,
+    "auto": true
+  },
   "team": {
     "enabled": false,
     "maxRounds": 3

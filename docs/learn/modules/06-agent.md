@@ -136,37 +136,37 @@ hooks) or `request.runtime.context` (tool hooks).
 
 ### `build_agent`, step by step
 
-[`build_agent`](../../../src/cmcoder/agents/main.py#L270) has four numbered
+[`build_agent`](../../../src/cmcoder/agents/main.py#L272) has four numbered
 steps, matching the comments in the code:
 
-1. **Tools.** [cmcoder's tools](../../../src/cmcoder/agents/main.py#L308)
+1. **Tools.** [cmcoder's tools](../../../src/cmcoder/agents/main.py#L310)
    (all of them except its own `TodoWrite`: the todo list comes from
    LangChain's `TodoListMiddleware` instead), `CodeSearch` when the project
    has an index, IDE tools passed in as `extra_tools`, and the `Skill` tool
    when there are skills. They are wrapped as LangChain tools
-   [later](../../../src/cmcoder/agents/main.py#L357) (chapter 04), MCP
+   [later](../../../src/cmcoder/agents/main.py#L359) (chapter 04), MCP
    tools are added, and finally the
-   [`Task` tool](../../../src/cmcoder/agents/main.py#L398) and, with
-   `team.enabled`, the [`Team` tool](../../../src/cmcoder/agents/main.py#L401)
+   [`Task` tool](../../../src/cmcoder/agents/main.py#L401) and, with
+   `team.enabled`, the [`Team` tool](../../../src/cmcoder/agents/main.py#L404)
    (chapter 12).
-2. **System prompt.** [`build_system_prompt`](../../../src/cmcoder/agents/main.py#L325):
+2. **System prompt.** [`build_system_prompt`](../../../src/cmcoder/agents/main.py#L327):
    stable instructions first, then the `CMCODER.md` memory, then the
    environment, so the gateway can reuse its prompt cache (chapter 10).
 3. **Middleware.** The list is built in
-   [several places](../../../src/cmcoder/agents/main.py#L338): two built-in
+   [several places](../../../src/cmcoder/agents/main.py#L340): two built-in
    LangChain middlewares first, then the optional ones (code context, vision,
-   compaction), then [`loop_middleware`](../../../src/cmcoder/agents/main.py#L230),
+   compaction), then [`loop_middleware`](../../../src/cmcoder/agents/main.py#L231),
    then your `extra_middleware`, and the critic
-   [last](../../../src/cmcoder/agents/main.py#L409).
-4. **The graph.** [`create_agent(...)`](../../../src/cmcoder/agents/main.py#L412)
+   [last](../../../src/cmcoder/agents/main.py#L412).
+4. **The graph.** [`create_agent(...)`](../../../src/cmcoder/agents/main.py#L415)
    with `context_schema=RunContext` and the checkpointer: the caller's
    (`AsyncSqliteSaver` in the CLI and IDEs) or, in tests,
-   [`InMemorySaver`](../../../src/cmcoder/agents/main.py#L418) with
+   [`InMemorySaver`](../../../src/cmcoder/agents/main.py#L421) with
    cmcoder's serializer (chapter 09).
 
 ### `loop_middleware`: the core every agent shares
 
-[`loop_middleware`](../../../src/cmcoder/agents/main.py#L230) returns the
+[`loop_middleware`](../../../src/cmcoder/agents/main.py#L231) returns the
 middleware that *every* cmcoder agent loop has, the main agent and each
 subagent alike (subagents call it too, with `stop_event="SubagentStop"`).
 Keeping them in one function means a subagent can never skip the permission
@@ -263,22 +263,22 @@ context (chapter 12).
 
 ### The `Agent` object and the live objects
 
-`create_agent` returns only the graph. [`Agent`](../../../src/cmcoder/agents/main.py#L127)
+`create_agent` returns only the graph. [`Agent`](../../../src/cmcoder/agents/main.py#L128)
 keeps it together with everything the session needs around it: the model
 bundles, the tool context (with the shell processes), the permission policy,
 hooks, subagents, the critic, the sandbox, the code index, telemetry. Its
-[`close()`](../../../src/cmcoder/agents/main.py#L153) shuts the live ones
+[`close()`](../../../src/cmcoder/agents/main.py#L154) shuts the live ones
 down. `spec` records how the agent was built, for the next section.
 
 ### A new graph, the same conversation: `rebuild_agent`
 
 A compiled graph has a fixed model and a fixed tool list. Switching the model
 (`/model`), adding IDE tools, or turning on code search therefore needs a
-*new graph*. [`rebuild_agent`](../../../src/cmcoder/agents/main.py#L181)
+*new graph*. [`rebuild_agent`](../../../src/cmcoder/agents/main.py#L182)
 builds one from `spec` with the changes, on the **same checkpointer**: the
 caller keeps its `thread_id`, so the new graph reads the same saved messages
 and the conversation goes on. The permission mode and "always allow"
-answers [carry over](../../../src/cmcoder/agents/main.py#L198); so do the
+answers [carry over](../../../src/cmcoder/agents/main.py#L199); so do the
 sandbox and the code index. It is used by `/model` in the
 [terminal](../../../src/cmcoder/cli/repl.py#L137), by the
 [IDE server](../../../src/cmcoder/cli/stdio.py#L336) and by
@@ -287,7 +287,7 @@ sandbox and the code index. It is used by `/model` in the
 ### `prepare_agent`: the async part
 
 `build_agent` is synchronous, but learning a model's limits needs network
-calls. [`prepare_agent`](../../../src/cmcoder/agents/main.py#L165) asks the
+calls. [`prepare_agent`](../../../src/cmcoder/agents/main.py#L166) asks the
 gateway first (cached, best effort) so `build_agent` can read the answers
 (chapter 03).
 

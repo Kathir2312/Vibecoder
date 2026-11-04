@@ -189,9 +189,9 @@ folder and project root, `read_files` (path → modification time when the
 agent last read it), the persistent `shell`, the sandbox, the output budget,
 the todo list and the code index. The adapter captures it when the agent is
 built; it is never in graph state.
-[`build_agent`](../../../src/cmcoder/agents/main.py#L306) makes one per
+[`build_agent`](../../../src/cmcoder/agents/main.py#L308) makes one per
 session, and
-[wraps the tools with it](../../../src/cmcoder/agents/main.py#L357).
+[wraps the tools with it](../../../src/cmcoder/agents/main.py#L359).
 
 That's also why `read_files` survives only as long as the session: after
 `--resume` the agent has to Read a file again before editing it, which is
@@ -222,7 +222,7 @@ A 27B model with a 32K window can't take a 200 KB test log. Three limits:
 
 * [`output_budget_chars`](../../../src/cmcoder/tools/base.py#L22): about a
   fifth of the context window, between 4,000 and 30,000 characters,
-  [set per session](../../../src/cmcoder/agents/main.py#L307) from the
+  [set per session](../../../src/cmcoder/agents/main.py#L309) from the
   model's profile.
 * The adapter applies it to every result with
   [`truncate_middle`](../../../src/cmcoder/tools/base.py#L154): it keeps the
@@ -240,7 +240,7 @@ A 27B model with a 32K window can't take a 200 KB test log. Three limits:
 | Glob, Grep | [`search.py`](../../../src/cmcoder/tools/search.py#L326) | ripgrep when installed, a Python fallback otherwise; [secret files excluded](../../../src/cmcoder/tools/search.py#L390) from results |
 | Bash | [`bash.py`](../../../src/cmcoder/tools/bash.py#L34) | a [persistent shell](../../../src/cmcoder/tools/shell.py#L67): `cd` and `export` carry over; stdin closed; [hidden pipe failures](../../../src/cmcoder/tools/bash.py#L81) reported |
 | CodeSearch | [`code_search.py`](../../../src/cmcoder/tools/code_search.py#L27) | added only when the project has a code index (chapter 13) |
-| TodoWrite | [`todo.py`](../../../src/cmcoder/tools/todo.py) | kept from cmcoderagent, but [left out](../../../src/cmcoder/agents/main.py#L308): the agent uses LangChain's `TodoListMiddleware` instead (chapter 06) |
+| TodoWrite | [`todo.py`](../../../src/cmcoder/tools/todo.py) | kept from cmcoderagent, but [left out](../../../src/cmcoder/agents/main.py#L310): the agent uses LangChain's `TodoListMiddleware` instead (chapter 06) |
 
 The default set is [`default_tools()`](../../../src/cmcoder/tools/registry.py#L12).
 The Bash tool's description is worth reading: it tells the model *not* to

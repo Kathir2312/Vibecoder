@@ -2,7 +2,8 @@
 
 Gateways often don't publish the window (no LiteLLM `/model/info`), so
 cmcoder starts from the profile's default (32K for Qwen3). When the server
-rejects a request with "maximum context length is N tokens", we now know N:
+rejects a request as too long and says what the limit is ("maximum context
+length is N tokens", "prompt is too long: ... > N maximum"), we now know N:
 it is saved here, per gateway and model, and used from then on.
 """
 
@@ -26,6 +27,11 @@ _WINDOW_PATTERNS = [
     re.compile(r"max_model_len\W{0,4}(\d+)"),
     re.compile(r"context (?:length|window|size) (?:is |of )?(?:only )?\(?(\d+) tokens"),
     re.compile(r"must have less than (\d+) (?:input )?tokens"),
+    re.compile(
+        r"\d+ tokens? > (\d+)"
+    ),  # Anthropic: "prompt is too long: 205482 tokens > 200000 maximum"
+    re.compile(r"maximum number of tokens allowed \((\d+)\)"),  # Gemini
+    re.compile(r"maximum (?:input )?length (?:is|of) (\d+)"),
 ]
 
 
