@@ -137,3 +137,26 @@ def test_the_error_code_alone_is_enough() -> None:
 )
 def test_other_errors_are_not_taken_for_too_long(status: int, message: str) -> None:
     assert not is_context_overflow(refused(status, message))
+
+
+def test_langchains_own_overflow_error_is_recognised() -> None:
+    from langchain_core.exceptions import ContextOverflowError
+
+    assert is_context_overflow(ContextOverflowError("too long"))
+
+
+def test_old_tool_outputs_are_cleared_with_langchains_edit() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from cmcoder.middleware.model import CLEARED, clear_old_tool_outputs
+
+    messages = [HumanMessage("go")]
+    for i in range(5):
+        messages += [
+            AIMessage("", tool_calls=[{"name": "Read", "args": {}, "id": f"c{i}"}]),
+            ToolMessage(f"output {i}", tool_call_id=f"c{i}", name="Read"),
+        ]
+    out = clear_old_tool_outputs(messages, keep=2)
+    tool_texts = [m.content for m in out if isinstance(m, ToolMessage)]
+    assert tool_texts == [CLEARED] * 3 + ["output 3", "output 4"]
+    assert [m.content for m in messages if isinstance(m, ToolMessage)][0] == "output 0"  # a copy

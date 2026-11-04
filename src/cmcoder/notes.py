@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from langchain_core.prompts import PromptTemplate
 from langgraph.store.base import BaseStore
 from langgraph.store.sqlite import SqliteStore
 
@@ -250,7 +251,8 @@ class Memory:
         return "\n\n".join(out)
 
 
-INIT_PROMPT = """\
+INIT_PROMPT = PromptTemplate.from_template(
+    """\
 Learn this project so that future sessions start already knowing it, and save what you \
 learn as notes. Explore with read-only tools only (Glob, Grep, Read; CodeSearch if you \
 have it). Start with the README, CMCODER.md or AGENTS.md, the manifest (pyproject.toml, \
@@ -269,6 +271,7 @@ each, under 900 characters, with exact commands and paths:
 Only save what you verified in the files; never guesses or secrets.{existing}{focus}
 
 Finish with a short list of the notes you saved."""
+)
 
 
 def init_prompt(existing: list[str], focus: str = "") -> str:
