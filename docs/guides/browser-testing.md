@@ -60,3 +60,20 @@ With `"browser": {"headless": false}` you can watch the window.
 | *No browser found* | Install Chrome or Edge, or set `browser.executablePath` |
 | *The browser did not start* | Run `cmcoder doctor`; on Linux in a container the browser needs its usual system libraries |
 | The page works by hand but not here | Ask the agent for a `console` check; it lists errors and failed requests |
+
+## For IT: what the standalone program contains
+
+- **Playwright and its Node.js driver are inside the program** (`packaging/build.py` collects
+  them), so a PC needs no Python, Node.js, npm or download. Playwright starts its own copy of
+  Node to talk to the browser; nothing else is installed.
+- **The browser is not inside.** cmcoder uses the PC's Chrome or Edge, so there is no 150 MB
+  Chromium to ship or update, and the browser gets the company's normal security updates.
+- **Size** (measured on a Linux build): the unpacked folder grows from 160 MB to 299 MB
+  (the Node driver is 122 MB of it) and the release zip from 65 MB to 112 MB (+47 MB).
+  Startup is unchanged (about 0.6 s), because Playwright is loaded only when the browser is
+  first used.
+- **A slim build without it:** `uv run --with pyinstaller python packaging/build.py --without-browser`.
+  The Browser tool is then not offered to the model, and `cmcoder doctor` says so.
+- **Checked in the release build:** `packaging/smoke_browser.py <program>` runs the built
+  program with Python and uv hidden. A scripted model opens a local page, reads it and clicks a
+  button through the bundled Playwright, in the runner's Chrome or Edge.

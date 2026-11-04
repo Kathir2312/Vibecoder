@@ -138,6 +138,13 @@ def test_url_target() -> None:
     assert url_target("javascript:1") == "!javascript"
 
 
+def test_a_slim_build_without_playwright_offers_no_browser_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("cmcoder.tools.browser.playwright_available", lambda: False)
+    assert browser_session(Settings.model_validate({}), tmp_path) is None
+
+
 def test_the_tool_is_offered_unless_switched_off(tmp_path: Path) -> None:
     on = Settings.model_validate({})
     assert browser_session(on, tmp_path) is not None
