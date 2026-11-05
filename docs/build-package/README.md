@@ -122,13 +122,39 @@ bash packaging/package-all.sh --only terminal,vscode,netbeans
 Every package built afterwards carries them. The build stops on a template or
 managed file that isn't valid, or that still has an example address.
 
+## Building without git
+
+The build is named after its git commit (`0.2.0 (aa3dc83 2026-11-05)` in `--version` and
+**Copy Diagnostics**). Where there is no git, no commit (a copied folder), or you don't want
+one, name the build yourself with `CMCODER_BUILD_ID` before running any script:
+
+```
+# Windows (PowerShell)
+$env:CMCODER_BUILD_ID = "nogit"
+powershell -ExecutionPolicy Bypass -File packaging\package-all.ps1 -Only vscode,visualstudio
+
+# macOS, Linux
+export CMCODER_BUILD_ID=nogit
+bash packaging/package-all.sh --only terminal,vscode
+```
+
+The scripts then never start git, and the build says `0.2.0 (nogit 2026-11-05)` (the name, then
+the date). Use letters, digits, `.`, `_` and `-`, at most 24: a release number such as
+`2026-11-r1` is a good name. Everything else stays: the tests still run, and `-SkipTests` is
+not needed. Close the PowerShell window (or `Remove-Item Env:CMCODER_BUILD_ID`) to go back
+to naming by commit.
+
+This is about *building*. cmcoder on a developer's Windows PC still runs shell commands with
+Git Bash: it needs Git for Windows there, or `CMCODER_GIT_BASH_PATH` pointing at another
+`bash.exe`.
+
 ## Common build-machine requirements
 
 Each page lists exactly what its package needs. In short:
 
 | Tool | Version | Needed for |
 |---|---|---|
-| Git | any recent | every package: the build is named after its commit, so build from a `git clone` (not a downloaded zip) |
+| Git | any recent | every package: the build is named after its commit, so build from a `git clone` (not a downloaded zip). **Or no git at all:** [name the build yourself](#building-without-git) |
 | uv | any recent ([docs.astral.sh/uv](https://docs.astral.sh/uv/)) | every package: builds `cmcoder`; it downloads its own Python 3.12, so Python needn't be installed |
 | Node.js | 22 LTS | every IDE package (the shared chat page) |
 | JDK | 21 (e.g. Eclipse Temurin) | Eclipse, NetBeans, JetBrains |

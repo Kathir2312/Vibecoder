@@ -57,15 +57,27 @@ if ($major -lt 22) { throw "Node.js 22 or newer is needed for packaging (this is
 # The build is named after its git commit ("0.1.0 (aa3dc83 2026-10-12)", in
 # --version and Copy Diagnostics). Checked first, not after a long build.
 # Through cmd, so git's message comes back as text whatever the PowerShell.
-Need git "install Git for Windows (the build is named after its commit)"
+if ($env:CMCODER_BUILD_ID) {
+    # A build named by hand needs no git at all (build.py reads the same variable).
+    if ($env:CMCODER_BUILD_ID -notmatch '^[A-Za-z0-9._-]{1,24}$') {
+        throw "CMCODER_BUILD_ID '$($env:CMCODER_BUILD_ID)': letters, digits, '.', '_' and '-' only, at most 24."
+    }
+    Write-Host "Build named by CMCODER_BUILD_ID ($($env:CMCODER_BUILD_ID)): git isn't used."
+} else {
+Need git "install Git for Windows (the build is named after its commit), or set CMCODER_BUILD_ID to name it yourself"
 $commit = (cmd /c "git -C `"$root`" rev-parse --short=7 HEAD 2>&1" | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) {
     $why = "git can't read this folder's commit, which names the build:`n  $commit`n" +
         "- 'dubious ownership': trust the folder, then run this again:`n" +
         "    git config --global --add safe.directory $($root -replace '\\', '/')`n" +
-        "- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip."
+        "- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip.`n" +
+        "- 'Needed a single revision' / 'unknown revision': this folder is a git repository with no commit yet (a copy that had git init run in it). Make one:`n" +
+        "    git add -A; git commit -m `"build`"    (or use a git clone of the repository)`n" +
+        "- no git on this PC, or you don't want a commit in the name: name the build yourself, then run this again:`n" +
+        "    `$env:CMCODER_BUILD_ID = 'nogit'    (letters, digits, . _ - only)"
     if (-not $SkipTests) { throw $why }
     Write-Warning "$why`nGoing on (-SkipTests): the build will say 'unknown' instead of its commit."
+}
 }
 
 $exe = Join-Path $root "dist\cmcoder\cmcoder.exe"
