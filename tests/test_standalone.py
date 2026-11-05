@@ -84,8 +84,11 @@ def run(project: Path, server: Any, *args: str, stdin: str | None = None, **env:
 def test_version_and_doctor(project: Path) -> None:
     r = run(project, None, "--version")
     assert r.returncode == 0 and r.stdout.strip()
-    # The build is named: "0.1.0 (aa3dc83 2026-10-07)", not "(source)".
-    assert re.fullmatch(r"\S+ \([0-9a-f]{7}(\+changes)? \d{4}-\d\d-\d\d\)", r.stdout.strip())
+    # The build is named: "0.1.0 (aa3dc83 2026-10-07)", not "(source)"; or, built without git
+    # with CMCODER_BUILD_ID set, by that name: "0.1.0 (nogit 2026-10-07)".
+    named = re.escape(os.environ.get("CMCODER_BUILD_ID", "").strip())
+    name = named or r"[0-9a-f]{7}(?:\+changes)?"
+    assert re.fullmatch(rf"\S+ \({name} \d{{4}}-\d\d-\d\d\)", r.stdout.strip())
     r = run(project, None, "doctor", "--no-probe")
     assert "Bash sandbox" in r.stdout and "Traceback" not in r.stdout + r.stderr
 

@@ -50,7 +50,8 @@ commit, and the build is then named `unknown`. On Windows, if git says
 `git config --global --add safe.directory …` line it prints. If it says
 "Needed a single revision", the folder is a git repository with no commit
 yet (a copy that was `git init`ed): `git add -A` then `git commit -m build`,
-or use a real clone.
+or use a real clone. With no git at all, set `CMCODER_BUILD_ID` to a name of your
+own ([README.md](README.md#building-without-git)).
 
 Put your company's details in `branding/` first if you have them
 ([README.md](README.md#before-the-first-build-your-companys-details)).

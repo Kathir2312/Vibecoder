@@ -55,7 +55,15 @@ fi
 
 # The build is named after its git commit ("0.1.0 (aa3dc83 2026-10-12)", in
 # --version and Copy Diagnostics). Checked first, not after a long build.
-need git "install git (the build is named after its commit)"
+if [ -n "${CMCODER_BUILD_ID:-}" ]; then
+  # A build named by hand needs no git at all (build.py reads the same variable).
+  printf '%s' "$CMCODER_BUILD_ID" | grep -Eq '^[A-Za-z0-9._-]{1,24}$' || {
+    echo "CMCODER_BUILD_ID '$CMCODER_BUILD_ID': letters, digits, '.', '_' and '-' only, at most 24" >&2
+    exit 1
+  }
+  echo "Build named by CMCODER_BUILD_ID ($CMCODER_BUILD_ID): git isn't used."
+else
+need git "install git (the build is named after its commit), or set CMCODER_BUILD_ID to name it yourself"
 if ! commit="$(git -C "$root" rev-parse --short=7 HEAD 2>&1)"; then
   why="git can't read this folder's commit, which names the build:
   $commit
@@ -64,12 +72,16 @@ if ! commit="$(git -C "$root" rev-parse --short=7 HEAD 2>&1)"; then
 - 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip.
 - 'Needed a single revision' / 'unknown revision': this folder is a git repository with no commit
   yet (a copy that was git-init'ed). Make one:
-    git add -A && git commit -m build    (or use a git clone of the repository)"
+    git add -A && git commit -m build    (or use a git clone of the repository)
+- no git on this machine, or you don't want a commit in the name: name the build yourself, then
+  run this again:
+    export CMCODER_BUILD_ID=nogit    (letters, digits, . _ - only)"
   if [ "$skip_tests" = 0 ]; then
     echo "$why" >&2
     exit 1
   fi
   printf 'WARNING: %s\nGoing on (--skip-tests): the build will say "unknown" instead of its commit.\n' "$why" >&2
+fi
 fi
 
 exe="$root/dist/cmcoder/cmcoder"

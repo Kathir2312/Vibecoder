@@ -20,7 +20,7 @@ Build each platform's file on that platform. Hand out only these files,
 | Needs | Why |
 |---|---|
 | Windows 10/11 x64, macOS on Apple silicon, or Linux x64 | the platform you build for |
-| **Git** (on Windows: Git for Windows) | the build is named after its commit |
+| **Git** (on Windows: Git for Windows) | the build is named after its commit; without git, set `CMCODER_BUILD_ID` ([README.md](README.md#building-without-git)) |
 | **uv** ([docs.astral.sh/uv](https://docs.astral.sh/uv/)) | builds cmcoder; it downloads its own Python 3.12 |
 | **Node.js 22 LTS** (with npm) | builds the chat page and packs the extension |
 | Internet access to PyPI and the npm registry | the build's packages |
@@ -141,7 +141,7 @@ User guide: [../guides/vscode.md](../guides/vscode.md).
 
 | Problem | Fix |
 |---|---|
-| "git can't read this folder's commit" | "dubious ownership": run the `git config --global --add safe.directory …` line it prints. "Not a git repository": use a git clone. "Needed a single revision": the folder is a repository with no commit yet; `git add -A` and `git commit -m build`, or use a clone |
+| "git can't read this folder's commit" | "dubious ownership": run the `git config --global --add safe.directory …` line it prints. "Not a git repository": use a git clone. "Needed a single revision": the folder is a repository with no commit yet; `git add -A` and `git commit -m build`, or use a clone. No git at all: set `CMCODER_BUILD_ID` ([README.md](README.md#building-without-git)) |
 | "Node.js 22 or newer is needed" | install Node.js 22 LTS and open a new terminal |
 | `test_standalone.py` fails | don't hand the file out; send the test output to the maintainers |
 | "cmcoder is missing from the .vsix" | the program build failed earlier in the output: fix that first |
