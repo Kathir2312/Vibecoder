@@ -253,8 +253,18 @@ class StdioServer:
                 self.error("protocol", f"No pending permission request {message.request_id!r}.")
                 return
             future.set_result(
-                {"allow": message.allow, "remember": message.remember, "feedback": message.feedback}
+                {
+                    "allow": message.allow,
+                    "remember": message.remember,
+                    "remember_session": message.remember_session,
+                    "feedback": message.feedback,
+                }
             )
+        elif isinstance(message, msg.StopTool):
+            from ..tools.progress import stop as stop_tool
+
+            if not stop_tool(message.tool_use_id):  # finished already, or not stoppable
+                self.emit(ev.Warning(message="That command is no longer running."))
         elif isinstance(message, msg.SetMode):
             if message.mode not in MODES:
                 modes = ", ".join(self.agent.policy.available_modes())
@@ -605,8 +615,8 @@ class StdioServer:
             answer = await future
         finally:
             self.pending.pop(req.request_id, None)
-        if answer.get("remember") and not req.can_remember:
-            answer["remember"] = False
+        if (answer.get("remember") or answer.get("remember_session")) and not req.can_remember:
+            answer["remember"] = answer["remember_session"] = False
         return answer
 
     async def ide_call(self, name: str, data: dict[str, Any]) -> ToolResult:

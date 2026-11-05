@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 from pydantic import Field
 
 from ..compat import SHELL_HELP, find_shell
 from .base import Tool, ToolContext, ToolInput, ToolResult, truncate_middle
+from .progress import LiveOutput, current_call, register_stop, unregister_stop
 from .shell import PersistentShell
 
 DEFAULT_TIMEOUT = 120
@@ -65,7 +69,37 @@ class BashTool(Tool):
                 assert shell is not None
                 ctx.shell = PersistentShell(ctx.cwd, shell, sandbox=ctx.sandbox)
             runner = ctx.shell
-        res = await runner.run(args.command, float(args.timeout_seconds or DEFAULT_TIMEOUT))
+        # While it runs: its output goes to the chat live, and "Stop this command" can end it.
+        live = LiveOutput.for_current_call()
+        stop = asyncio.Event()
+        call = current_call.get()
+        if call is not None:
+            register_stop(call[0], stop.set)
+        started = time.monotonic()
+        try:
+            res = await runner.run(
+                args.command,
+                float(args.timeout_seconds or DEFAULT_TIMEOUT),
+                on_output=live.feed if live else None,
+                stop=stop,
+            )
+        finally:
+            if call is not None:
+                unregister_stop(call[0])
+            if live is not None:
+                live.flush()
+        meta = {
+            "exit_code": res.exit_code,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "total_lines": len(res.output.rstrip("\n").split("\n")) if res.output.strip() else 0,
+            "stopped": res.stopped,
+        }
+        if res.stopped:
+            note = "(The user stopped this command before it finished. Its output so far follows.)"
+            shown = truncate_middle(res.output.rstrip("\n"), ctx.max_output_chars)
+            return ToolResult(
+                f"{note}\n{shown}" if shown else note, is_error=True, summary="stopped", meta=meta
+            )
         out = truncate_middle(res.output.rstrip("\n"), ctx.max_output_chars)
         if ctx.sandbox is not None and runner is ctx.shell and _sandbox_blocked(res.output):
             out += "\n\n" + (
@@ -94,7 +128,7 @@ class BashTool(Tool):
             summary = "shell exited"
         else:
             summary = f"exit {res.exit_code}" + (f" · pipe {hidden}" if hidden else "")
-        return ToolResult(out, is_error=failed, summary=summary)
+        return ToolResult(out, is_error=failed, summary=summary, meta=meta)
 
 
 def outside_sandbox(args: BashInput, ctx: ToolContext) -> bool:

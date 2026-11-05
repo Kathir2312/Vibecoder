@@ -54,7 +54,13 @@ from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
 from ..core.hooks import ApproveHookFn, HookRunner
-from ..core.permissions import Decision, PermissionCheck, PermissionPolicy, suggest_rules
+from ..core.permissions import (
+    Decision,
+    PermissionCheck,
+    PermissionPolicy,
+    shell_cwd,
+    suggest_rules,
+)
 from ..tools.base import Tool, ToolContext
 from .hooks import warn
 
@@ -112,8 +118,10 @@ class PermissionMiddleware(AgentMiddleware):
         on_rule_saved: Callable[[str], None] | None = None,
         hooks: HookRunner | None = None,
         approve_hook: ApproveHookFn | None = None,
+        agent: str | None = None,
     ) -> None:
         super().__init__()
+        self.agent = agent  # a subagent's name, shown in the request; None: the main agent
         self.hooks = hooks
         self.approve_hook = approve_hook
         # PreToolUse answers per tool call (`call_key`). When LangGraph resumes after a
@@ -208,6 +216,7 @@ class PermissionMiddleware(AgentMiddleware):
 
         change = tool.proposed_change(args, self.ctx)
         can_remember = not check.high_risk and not self.policy.allow_rules_locked and not hook_asks
+        cwd = str(shell_cwd(args, self.ctx)) if tool.name == "Bash" else None
         # ---- the graph pauses here until the user answers ----
         answer: dict[str, Any] = interrupt(
             {
@@ -219,6 +228,10 @@ class PermissionMiddleware(AgentMiddleware):
                 "suggested_rule": rule,
                 "reason": check.reason,
                 "can_remember": can_remember,
+                "cwd": cwd,
+                "reasons": why_asked(tool.name, check, self.policy.mode, hook_asks),
+                "high_risk": check.high_risk,
+                "agent": self.agent,
                 "change": None
                 if change is None
                 else {"path": str(change.path), "before": change.before, "after": change.after},
@@ -242,4 +255,25 @@ class PermissionMiddleware(AgentMiddleware):
                 self.policy.add_allow(r)
                 if self.on_rule_saved:
                     self.on_rule_saved(r)
+        elif answer.get("remember_session") and can_remember:
+            for r in rules:  # until cmcoder exits: in the policy, never written to settings
+                self.policy.add_allow(r)
         return await handler(request)
+
+
+def why_asked(tool: str, check: PermissionCheck, mode: str, hook_asks: bool) -> list[str]:
+    """Why a person is asked, as a few short phrases for the consent card."""
+    reasons: list[str] = []
+    text = (check.reason or "").strip()
+    if text:
+        reasons.append(text[:1].upper() + text[1:] if text.startswith("high-risk") else text)
+    if hook_asks and not text:
+        reasons.append("a hook asks to confirm")
+    if not reasons:
+        if tool in ("Edit", "Write"):
+            reasons.append(f"edits ask first in {mode} mode")
+        elif tool == "Bash":
+            reasons.append("not on your allow list")
+        else:
+            reasons.append("not on your allow list")
+    return reasons

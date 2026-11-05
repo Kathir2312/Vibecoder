@@ -109,6 +109,23 @@ export interface ToolResult {
   summary: string | null;
   parent_tool_use_id: string | null;
   images: string[];
+  exit_code: number | null;
+  duration_ms: number | null;
+  total_lines: number | null;
+  stopped: boolean;
+}
+
+/**
+ * Output a tool has produced so far (Bash): `text` is the new part, appended to
+ * what came before. Sent while the tool runs, so the chat can show it live.
+ */
+export interface ToolProgress {
+  type: "tool_progress";
+  id: string;
+  name: string;
+  text: string;
+  elapsed_ms: number;
+  parent_tool_use_id: string | null;
 }
 
 export interface PermissionDenied {
@@ -166,6 +183,10 @@ export interface PermissionRequest {
   reason: string;
   can_remember: boolean;
   change: FileChange | null;
+  cwd: string | null;
+  reasons: string[];
+  high_risk: boolean;
+  agent: string | null;
 }
 
 /** The todo list changed (stdio protocol). */
@@ -359,6 +380,7 @@ export type AgentEvent =
   | AssistantMessage
   | ToolUse
   | ToolResult
+  | ToolProgress
   | PermissionDenied
   | UsageUpdate
   | Warning
@@ -439,7 +461,17 @@ export interface PermissionResponse {
   request_id: string;
   allow: boolean;
   remember?: boolean;
+  remember_session?: boolean;
   feedback?: string | null;
+}
+
+/**
+ * Stop one running tool call (Bash) and let the turn go on: the model is told the
+ * user stopped it. `interrupt` stops the whole turn instead.
+ */
+export interface StopTool {
+  type: "stop_tool";
+  tool_use_id: string;
 }
 
 export interface SetMode {
@@ -552,6 +584,7 @@ export type ClientMessage =
   | UserMessage
   | Interrupt
   | PermissionResponse
+  | StopTool
   | SetMode
   | SetModel
   | IdeCapabilities

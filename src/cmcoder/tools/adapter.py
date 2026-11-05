@@ -37,6 +37,7 @@ from langchain_core.tools import BaseTool, ToolException
 from pydantic import ConfigDict
 
 from .base import Tool, ToolContext, ToolResult, truncate_middle
+from .progress import call_artifact
 
 
 class CmcoderTool(BaseTool):
@@ -81,10 +82,19 @@ class CmcoderTool(BaseTool):
         except Exception as e:  # a tool bug must not end the session
             result = ToolResult(f"{self.name} failed: {type(e).__name__}: {e}", is_error=True)
         content = truncate_middle(result.content, self.ctx.max_output_chars)
+        artifact: dict[str, Any] = {}
+        if result.images:
+            artifact["images"] = [str(p) for p in result.images]
+        if result.meta:
+            artifact["meta"] = result.meta
         if result.is_error:
+            # LangChain's error handling makes a message without an artifact: the middleware
+            # (middleware/toolcall.py) puts this on it.
+            holder = call_artifact.get()
+            if holder is not None:
+                holder.update(artifact)
             raise ToolException(content)
-        artifact = {"images": [str(p) for p in result.images]} if result.images else None
-        return content, artifact
+        return content, artifact or None
 
 
 def as_langchain_tools(tools: list[Tool], ctx: ToolContext) -> list[BaseTool]:

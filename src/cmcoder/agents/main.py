@@ -88,6 +88,7 @@ from ..middleware.hooks import HooksMiddleware
 from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, ReasoningMiddleware
 from ..middleware.permission import PermissionMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
+from ..middleware.toolcall import ToolCallContextMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
@@ -247,6 +248,7 @@ def loop_middleware(
     on_window: Callable[[int], None] | None = None,
     summarise: Callable[[list[AnyMessage]], Awaitable[list[AnyMessage] | None]] | None = None,
     stop_event: Literal["Stop", "SubagentStop"] = "Stop",
+    agent: str | None = None,
 ) -> list[AgentMiddleware[Any, Any]]:
     """The middleware every cmcoder agent loop has, the main one and subagents."""
     profile = bundle.profile
@@ -271,7 +273,9 @@ def loop_middleware(
             on_rule_saved=opts.on_rule_saved,
             hooks=hooks,
             approve_hook=opts.approve_hook,
+            agent=agent,
         ),
+        ToolCallContextMiddleware(),  # lets a tool find out which call it is (progress, stop)
         *([HooksMiddleware(hooks, opts.approve_hook, stop_event=stop_event)] if hooks else []),
         FileCheckpointMiddleware(ctx, tools),
     ]

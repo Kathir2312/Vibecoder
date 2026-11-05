@@ -75,6 +75,25 @@ class ToolResult(_Event):
     parent_tool_use_id: str | None = None
     # Pictures to show under the result (a browser screenshot), as data URLs.
     images: list[str] = []
+    # Bash: how it ended. exit_code is None when the shell died, the command timed out or
+    # the user stopped it; total_lines is the output's length before any shortening.
+    exit_code: int | None = None
+    duration_ms: int | None = None
+    total_lines: int | None = None
+    stopped: bool = False
+
+
+class ToolProgress(_Event):
+    """Output a tool has produced so far (Bash): `text` is the new part, appended to
+    what came before. Sent while the tool runs, so the chat can show it live."""
+
+    type: Literal["tool_progress"] = "tool_progress"
+    id: str  # the tool call's id (`tool_use.id`)
+    name: str
+    text: str
+    elapsed_ms: int
+    # Set on a subagent's events: the id of the Task call that started it.
+    parent_tool_use_id: str | None = None
 
 
 class PermissionDenied(_Event):
@@ -143,6 +162,14 @@ class PermissionRequest(_Event):
     can_remember: bool = True
     # Write/Edit: the whole file before and after (absent for big files).
     change: FileChange | None = None
+    # Bash: the folder the command runs in.
+    cwd: str | None = None
+    # Why it is asked, in a few words each ("outside the project", "recursive delete").
+    reasons: list[str] = []
+    # A command that needs a person's approval every time (no "always allow").
+    high_risk: bool = False
+    # A subagent's name; None for the main agent.
+    agent: str | None = None
 
 
 class TodoUpdate(_Event):
@@ -409,6 +436,7 @@ Event = Annotated[
     | AssistantMessage
     | ToolUse
     | ToolResult
+    | ToolProgress
     | PermissionDenied
     | UsageUpdate
     | Warning
