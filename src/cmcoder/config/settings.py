@@ -143,10 +143,12 @@ class TelemetryConfig(_Model):
 class RagStoreConfig(_Model):
     """Where the code index lives (cmcoder/rag/stores.py)."""
 
-    # "local": built in, under ~/.cmcoder/index/. "chroma": a Chroma server at
+    # "local": built in, under ~/.cmcoder/index/ (vectors searched in memory: fine to
+    # about 100k pieces). "lancedb": LanceDB inside cmcoder, on disk under
+    # ~/.cmcoder/index/ (big codebases, no server). "chroma": a Chroma server at
     # `url`, running on this PC (http://localhost:8000) or elsewhere. (Chroma
     # inside cmcoder, without a url, isn't offered for now.)
-    type: Literal["local", "chroma"] = "local"
+    type: Literal["local", "lancedb", "chroma"] = "local"
     url: str | None = None  # e.g. http://localhost:8000 or https://chroma.example.com:8000
     # Values may use ${VAR}; the API key saved by `cmcoder rag setup` is sent
     # as `Authorization: Bearer` unless headers set one.

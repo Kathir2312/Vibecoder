@@ -406,6 +406,7 @@ class CodeIndex:
 def open_store(
     cfg: RagConfig, root: Path, model: str, folder: Path, embedding: GatewayEmbeddings
 ) -> _CodeStore:
+    from .lance import LANCEDB_MISSING
     from .stores import ChromaVectorStore, LocalVectorStore
 
     store = cfg.store
@@ -413,6 +414,12 @@ def open_store(
     if store.type == "local":
         private_folder(folder)
         return LocalVectorStore(folder / "local", embedding)
+    if store.type == "lancedb":
+        from .lance import LanceVectorStore, lancedb_available
+
+        if not lancedb_available():
+            raise StoreError(LANCEDB_MISSING)
+        return LanceVectorStore(folder / "lancedb", embedding)
     if not store.url:
         raise StoreError(chroma_needs_url())
     name = store.collection or collection_name(root, model)

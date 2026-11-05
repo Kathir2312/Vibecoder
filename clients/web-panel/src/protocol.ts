@@ -515,7 +515,7 @@ export interface RagCandidates {
 export interface RagSetup {
   type: "rag_setup";
   embedding_model: string;
-  store?: "local" | "chroma-server";
+  store?: "local" | "lancedb" | "chroma-server";
   url?: string | null;
   api_key?: string | null;
   scope?: "user" | "project";

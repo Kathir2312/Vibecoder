@@ -154,8 +154,9 @@ class RagSetup(_Message):
 
     type: Literal["rag_setup"] = "rag_setup"
     embedding_model: str
-    # "chroma-server": Chroma at `url` (on this PC or a server).
-    store: Literal["local", "chroma-server"] = "local"
+    # "lancedb": LanceDB inside cmcoder, on disk. "chroma-server": Chroma at `url`
+    # (on this PC or a server).
+    store: Literal["local", "lancedb", "chroma-server"] = "local"
     url: str | None = None
     api_key: str | None = None  # a Chroma server's; goes to the keychain
     scope: Literal["user", "project"] = "user"
