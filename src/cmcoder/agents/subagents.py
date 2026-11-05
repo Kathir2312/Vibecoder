@@ -387,6 +387,8 @@ class SubagentRuntime:
                 self.hooks,
                 stop_event="SubagentStop",
                 agent=definition.name,
+                rethink=self.settings.rethink,
+                max_turns=max_turns or self.settings.subagent_max_turns,
             ),
         ]
         prompt = build_subagent_prompt(

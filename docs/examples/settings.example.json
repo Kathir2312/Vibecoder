@@ -32,6 +32,12 @@
     "enabled": false,
     "maxRounds": 3
   },
+  "rethink": {
+    "enabled": true,
+    "afterFailures": 3,
+    "maxRethinks": 1,
+    "budgetWarning": 0.8
+  },
   "autoCompact": true,
   "autoCompactThreshold": 0.8,
   "persistSessions": true,

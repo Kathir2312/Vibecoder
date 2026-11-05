@@ -25,7 +25,7 @@ LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
   wrappers, outer to inner (Compaction runs before them, as a before_model
   node; Vision only when the main model can't see images):
 
-        TodoList -> Vision -> ContextEditing -> ModelProfile -> TextToolCalls -> model
+        TodoList -> Vision -> ContextEditing -> Rethink -> ModelProfile -> TextToolCalls -> model
 
   Tool-call wrappers, outer to inner (Hooks only when hooks are configured):
 
@@ -68,7 +68,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
-from ..config.settings import Settings, SettingsError, find_project_root
+from ..config.settings import RethinkConfig, Settings, SettingsError, find_project_root
 from ..core.hooks import ApproveHookFn, HookRunner
 from ..core.permissions import ModeNotAllowed, PermissionPolicy
 from ..core.prompt import build_system_prompt, load_memory_files
@@ -87,6 +87,7 @@ from ..middleware.guards import (
 from ..middleware.hooks import HooksMiddleware
 from ..middleware.model import CHARS_PER_TOKEN, ModelProfileMiddleware, ReasoningMiddleware
 from ..middleware.permission import PermissionMiddleware
+from ..middleware.rethink import RethinkMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.toolcall import ToolCallContextMiddleware
 from ..middleware.vision import VisionMiddleware
@@ -252,10 +253,27 @@ def loop_middleware(
     summarise: Callable[[list[AnyMessage]], Awaitable[list[AnyMessage] | None]] | None = None,
     stop_event: Literal["Stop", "SubagentStop"] = "Stop",
     agent: str | None = None,
+    rethink: RethinkConfig | None = None,
+    max_turns: int | None = None,
 ) -> list[AgentMiddleware[Any, Any]]:
     """The middleware every cmcoder agent loop has, the main one and subagents."""
     profile = bundle.profile
+    rethink = rethink or RethinkConfig.model_validate({})
     return [
+        # Stuck? Three failed calls in a row: step back and try something else; still
+        # failing: report to the user (before the model-call wrappers: it can take the tools).
+        *(
+            [
+                RethinkMiddleware(
+                    after_failures=rethink.after_failures,
+                    max_rethinks=rethink.max_rethinks,
+                    budget_fraction=rethink.budget_warning,
+                    max_turns=max_turns,
+                )
+            ]
+            if rethink.enabled
+            else []
+        ),
         # Built-in: when the prompt passes ~60% of the window, replace old tool
         # outputs with a placeholder (cheap, before summarising is needed).
         ContextEditingMiddleware(
@@ -407,6 +425,8 @@ def build_agent(
         hooks,
         on_window=compaction.set_window if compaction else None,
         summarise=compaction.emergency if compaction else None,
+        rethink=settings.rethink,
+        max_turns=max_turns,
     )
     middleware += extra_middleware or []
     # Subagents: the Task tool starts a fresh agent graph for a self-contained job.
