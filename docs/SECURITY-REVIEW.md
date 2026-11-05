@@ -133,9 +133,76 @@ it bypasses the permission rules, the high-risk checks or the sandbox.
   read.
 - `arbitrary-sleep` (1): a retry back-off.
 
+## Re-scan after the later work (November 2026)
+
+The Phase 4 review predates the Browser tool, code search with LanceDB, notes, `/review`,
+`/webtest` and the IDE chat's new consent and Bash cards. Everything below was run on `main`
+at `7ac3ddb`.
+
+| Kind | Tool | Scope | Result |
+|---|---|---|---|
+| SAST | Bandit 1.x | `src/`, `packaging/`: 116 files | 61 results, all *low*, none medium or high: no finding (below) |
+| SAST | Semgrep 1.183.0, `semgrep-rules` `16b9e6d` (python, generic/secrets, javascript, typescript, github-actions) | `src/`, `packaging/`, the chat panel, `vscode/src`, `.github/`: 170 files | 83 results: **1 real (fixed)**, the rest false positives (below). The secrets rules matched nothing |
+| SCA | pip-audit 2.10.1 (OSV / PyPI advisories) against `uv.lock`, platform markers removed so Windows and macOS packages count too | 116 pins (114 names) | **Found 2 packages, fixed**: Pillow 12.3.0 (39 advisories, fixed in 13.0.0) and certifi 2026.7.22 (ships the `emSign ECC Root CA - G3` root certificate, which 2026.10.18 removes). Now none |
+| SCA | `npm audit` | `clients/web-panel` | none |
+| SCA | `npm audit` | `vscode` | 5 (2 high, 3 moderate), all in the build tool `@vscode/vsce`, none in the `.vsix`: `npm audit --omit=dev` reports none. 3 fixed by `npm audit fix`; 2 *moderate* `minimatch` DoS advisories remain (below) |
+| SCA | `packaging/osv_check.py` (OSV for the NuGet and OpenJFX packages in the IDE plugins) | Visual Studio extension, NetBeans plugin | **Not run**: this session cannot reach `api.osv.dev`. Newtonsoft.Json 13.0.3, WebView2 1.0.2903.40 and OpenJFX 21.0.12 look current; run it where the network allows |
+| Tests | pytest, panel tests, VS Code tests | | 739 passed; 112; 7 |
+
+### Fixed
+
+1. **Pillow and certifi** (`pyproject.toml`: `pillow>=13.0.0`, `uv.lock`). Pillow decodes the
+   images users attach and the browser's screenshots, so its decoder bugs (out-of-bounds reads,
+   a use-after-free in TIFF handling) matter here. Image tests pass on 13.0.0.
+2. **`ci.yml` pinned two actions by tag** (`actions/checkout@v4`, `astral-sh/setup-uv@v6`) while
+   every other workflow pins by commit SHA; a moved tag could change what runs in CI. Both now
+   use the same SHAs as the other workflows.
+3. `middleware/permission.py`: two identical branches in `why_asked` merged (no behaviour change).
+
+### Checked, no change needed
+
+- **Bandit (61, all low).** `B101` (27): `assert` for type narrowing, never for a check that
+  matters. `B603`/`B404`/`B607` (21): programs started with argument lists, never `shell=True`;
+  the Bash tool, ripgrep, git, the sandbox and the packaging gate do it by design, behind the
+  permission rules. `B110`/`B112` (13): `except … pass` in clean-up and "try the next one" code
+  (closing a browser, keyring lookups). No `eval`, `exec`, `pickle`, `yaml.load`,
+  `verify=False` or `os.system` anywhere in `src/` or `packaging/`.
+- **Semgrep, the panel and extensions.** `insufficient-postmessage-origin-validation` (2):
+  both pages call `fromHost(e)` first (`bridge.ts`), which checks the sender's window and origin.
+  `jquery-insecure-method` and `prohibit-jquery-html` (10): no jQuery; they are DOM `append`
+  calls with text set through `textContent`, and Markdown goes through the allow-list sanitiser.
+  `html-in-template-string` (2): the pages' HTML only interpolates a random nonce, the webview's
+  `cspSource`, webview URIs and `escapeHtml`'d names. `unsafe-dynamic-method` is the test driver,
+  never shipped.
+- **Semgrep, the rest.** `sha1` (5): used for cache keys and file fingerprints, all with
+  `usedforsecurity=False` (it also keeps them working where OpenSSL is in FIPS mode).
+  `regex_dos` (1): the chunker's definition pattern, tried on 300 000-character
+  lines of repeated keywords: linear, no backtracking. `dynamic-urllib-use-detected`: a
+  fixed https address. The remaining kinds are as in Phase 4 (lambdas, `is_error` fields,
+  intended string continuations, a retry back-off) plus `useless-if-body` (fixed, above).
+- **`@vscode/vsce`'s `minimatch` (2 moderate).** A denial of service through crafted glob
+  patterns. `vsce` only runs on the build machine over this repository's own `.vscodeignore`;
+  the fix needs `npm audit fix --force`, which replaces `vsce` with an older major version.
+  Left as it is.
+
+### Run it again
+
+```
+uvx bandit -r src packaging
+git clone --depth 1 https://github.com/semgrep/semgrep-rules.git /tmp/semgrep-rules
+uvx semgrep scan --metrics off --config /tmp/semgrep-rules/python --config /tmp/semgrep-rules/generic/secrets \
+    --config /tmp/semgrep-rules/javascript --config /tmp/semgrep-rules/typescript \
+    --config /tmp/semgrep-rules/yaml/github-actions src packaging clients/web-panel/src vscode/src .github
+uv export --frozen --no-hashes --no-emit-project --all-groups > req.txt && uvx pip-audit -r req.txt --no-deps --disable-pip
+(cd clients/web-panel && npm audit) ; (cd vscode && npm audit --omit=dev)
+python packaging/osv_check.py
+```
+
+(`req.txt` may name one package twice with different versions, for different Python versions: split it in two.)
+
 ## Not covered here
 
 - The IDE plugins didn't change (cmcoderagent's Phase 6 review).
 - Code search (RAG) is Phase 5.
-- The standalone build's own scan (OSV over the bundled packages) runs in
-  the release workflow.
+- The standalone build's own scan: no workflow runs one. `packaging/osv_check.py` (NuGet and
+  OpenJFX) and the commands above are run by hand, as in the re-scan.

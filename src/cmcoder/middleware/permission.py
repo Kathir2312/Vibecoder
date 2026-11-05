@@ -272,8 +272,6 @@ def why_asked(tool: str, check: PermissionCheck, mode: str, hook_asks: bool) -> 
     if not reasons:
         if tool in ("Edit", "Write"):
             reasons.append(f"edits ask first in {mode} mode")
-        elif tool == "Bash":
-            reasons.append("not on your allow list")
         else:
             reasons.append("not on your allow list")
     return reasons
