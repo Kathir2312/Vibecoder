@@ -77,6 +77,7 @@ from ..sensitive import safe_project_file
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.browser import browser_session
+from .limits import recursion_limit_for
 
 if TYPE_CHECKING:
     from .main import AgentOptions
@@ -564,6 +565,7 @@ async def run_agent(
             extra = {"context": context} if context is not None else {}
             async for part in graph.astream(
                 {"messages": [HumanMessage(prompt)]},
+                {"recursion_limit": recursion_limit_for(graph, run.max_steps)},
                 stream_mode=["updates"],
                 version="v2",
                 **extra,

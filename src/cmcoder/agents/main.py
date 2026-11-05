@@ -105,6 +105,7 @@ from ..tools.browser import BrowserTool, browser_session
 from ..tools.code_search import CodeSearchTool
 from ..tools.registry import default_tools
 from .context import RunContext
+from .limits import recursion_limit_for
 from .notes_tools import build_notes_tools
 from .subagents import SubagentRuntime, build_task_tool
 from .team import build_team_tool
@@ -139,6 +140,8 @@ class Agent:
     policy: PermissionPolicy
     tools: dict[str, Tool]
     max_turns: int
+    # LangGraph's step budget for one turn, sized from the graph (`recursion_limit_for`).
+    recursion_limit: int = 0
     auto_compact_threshold: float = 0.8
     has_small_model: bool = False  # smallFastModel is configured
     vision: ModelBundle | None = None  # visionModel: describes images for a main model that can't
@@ -452,6 +455,7 @@ def build_agent(
         policy=policy,
         tools=tools,
         max_turns=max_turns,
+        recursion_limit=recursion_limit_for(graph, max_turns),
         auto_compact_threshold=settings.auto_compact_threshold,
         has_small_model=small is not bundle,
         vision=vision,

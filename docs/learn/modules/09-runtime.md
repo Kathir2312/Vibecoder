@@ -164,7 +164,11 @@ conversation. [`_use_thread`](../../../src/cmcoder/runtime/session.py#L125)
 sets its config: the
 [`thread_id`](../../../src/cmcoder/runtime/session.py#L128) and LangGraph's
 own [`recursion_limit`](../../../src/cmcoder/runtime/session.py#L131) (a cap
-on graph steps; the turn limit itself is `ModelCallLimitMiddleware`). Then:
+on graph steps; the turn limit itself is `ModelCallLimitMiddleware`). The cap is
+sized from the compiled graph (`recursion_limit_for` in `agents/limits.py`),
+because `create_agent` makes every middleware hook a node: one model call is about
+nine steps here, not two. If it is ever reached, the turn ends as a `max_turns`
+result with a warning, not a crash. Then:
 
 * [`resume`](../../../src/cmcoder/runtime/session.py#L138) (`--continue`,
   `/resume`) just points at an old thread;

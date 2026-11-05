@@ -58,6 +58,7 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.runnables import RunnableConfig
+from langgraph.errors import GraphRecursionError
 from langgraph.graph.message import add_messages
 from langgraph.types import Command
 
@@ -129,9 +130,10 @@ class Session:
         self.session_id = thread_id
         self.config: RunnableConfig = {
             "configurable": {"thread_id": thread_id},
-            # LangGraph's own safety limit on graph steps (each model call and
-            # each tool call is a step); the turn limit is ModelCallLimitMiddleware.
-            "recursion_limit": self.agent.max_turns * 4 + 20,
+            # LangGraph's own safety limit on graph steps, sized from the graph (every
+            # middleware hook is a step: agents/main.py `recursion_limit_for`); what ends a
+            # turn that goes on is `maxTurns`, ModelCallLimitMiddleware.
+            "recursion_limit": self.agent.recursion_limit or self.agent.max_turns * 12 + 25,
         }
         folder = None
         if self.store is not None and self.store.persistent:
@@ -288,6 +290,7 @@ class Session:
         state.apply([message])
         graph_input: Any = {"messages": [message]}
         error: ev.Error | None = None
+        step_limit = False  # the graph's safety limit ended the turn
         try:
             while True:
                 async for event in self._stream(graph_input, context, state, usage):
@@ -335,6 +338,16 @@ class Session:
         except asyncio.CancelledError:
             await self.repair_after_interrupt()
             raise
+        except GraphRecursionError:
+            # Not a crash: the graph ran on past its step budget (a safety net above
+            # `maxTurns`). The conversation is intact; saying "continue" starts a new budget.
+            step_limit = True
+            yield ev.Warning(
+                message=f"Stopped: the agent used its whole step budget "
+                f"({self.config.get('recursion_limit')} graph steps) without finishing. "
+                'Say "continue" to go on, or raise maxTurns in your settings.'
+            )
+            await self.repair_after_interrupt()
         except Exception as e:
             error = classify(e)
             yield error
@@ -348,9 +361,21 @@ class Session:
         denied = error is None and stopped(await self.messages())
         await self._after_turn(prompt)
         yield ev.Result(
-            subtype="error" if error else "interrupted" if denied else "success",
-            is_error=error is not None,
-            result=error.message if error else STOPPED if denied else state.final_text,
+            subtype="error"
+            if error
+            else "max_turns"
+            if step_limit
+            else "interrupted"
+            if denied
+            else "success",
+            is_error=error is not None or step_limit,
+            result=error.message
+            if error
+            else "Stopped at the step limit."
+            if step_limit
+            else STOPPED
+            if denied
+            else state.final_text,
             review=state.review,
             num_turns=state.model_calls,
             duration_ms=int((time.monotonic() - started) * 1000),
