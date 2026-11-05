@@ -18,23 +18,16 @@ name: Release build
 # job passed. On a version tag (v0.6.0, ...) it's also a GitHub release.
 on:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which systems to build and test (the Visual Studio gate is in the Windows build)"
+        type: choice
+        options: [windows, all]
+        default: windows
+  # A version tag builds everything; a push to a branch builds nothing (for now: start
+  # it by hand, Actions > Release build > Run workflow).
   push:
-    # Both, or GitHub runs it for only one kind of push; path filters apply to branches only.
-    branches: ["**"]
     tags: ["v*"]
-    paths:
-      - "src/**"
-      - "packaging/**"
-      - "branding/**"
-      - "vscode/**"
-      - "clients/**"
-      - "eclipse/**"
-      - "visualstudio/**"
-      - "netbeans/**"
-      - "jetbrains/**"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/release.yml"
 
 # A newer push to the same branch replaces a run still going (tags each have their own).
 concurrency:
@@ -53,10 +46,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, target: linux-x64 }
-          - { os: windows-latest, target: win32-x64 }
-          - { os: macos-latest, target: darwin-arm64 }
+        # By hand the default is Windows only; a tag, or "all", builds the three systems.
+        include: ${{ fromJSON(inputs.platforms == 'windows' && '[{"os":"windows-latest","target":"win32-x64"}]' || '[{"os":"ubuntu-latest","target":"linux-x64"},{"os":"windows-latest","target":"win32-x64"},{"os":"macos-latest","target":"darwin-arm64"}]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -300,6 +291,7 @@ jobs:
           path: vscode/cmcoder-${{ matrix.target }}.vsix
 
   eclipse-site:
+    if: ${{ success() && inputs.platforms != 'windows' }}  # needs every system's build
     # The update site developers install from: the plugin and one fragment per
     # platform, each with that platform's cmcoder (from the builds above).
     name: Eclipse update site
@@ -351,6 +343,7 @@ jobs:
           path: eclipse/site/target/cmcoder-eclipse-*.zip
 
   bundle:
+    if: ${{ success() && inputs.platforms != 'windows' }}  # needs every system's build
     # Every file in one folder, only when every build and gate passed.
     needs: [build, eclipse-site]
     name: Release bundle

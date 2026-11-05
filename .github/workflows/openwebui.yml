@@ -5,16 +5,9 @@ name: Open WebUI
 # this runs on its own: by hand, weekly (new Open WebUI releases), and when the
 # provider code changes.
 on:
+  # By hand only for now (Actions > Open WebUI > Run workflow): it runs on Linux, and the
+  # weekly schedule is off.
   workflow_dispatch:
-  schedule:
-    - cron: "17 4 * * 1"
-  push:
-    paths:
-      - "src/cmcoder/models/**"
-      - "src/cmcoder/providers/**"
-      - "tests/test_openwebui*.py"
-      - "tests/fake_ollama.py"
-      - ".github/workflows/openwebui.yml"
 
 # Read-only token for every job.
 permissions:

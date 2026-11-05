@@ -1,5 +1,8 @@
 name: CI
 
+# For now a push or pull request tests only the Visual Studio and VS Code extensions, on
+# Windows. Everything else (the Python tests on three systems, the Eclipse, NetBeans and
+# IntelliJ plugins) runs only when started by hand: Actions > CI > Run workflow.
 on:
   workflow_dispatch:
   push:
@@ -9,6 +12,7 @@ on:
 
 jobs:
   test:
+    if: github.event_name == 'workflow_dispatch'  # Linux/macOS: only when started by hand
     strategy:
       fail-fast: false
       matrix:
@@ -35,9 +39,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04, not ubuntu-latest (now 26.04): Playwright 1.56 has no browser
-        # for 26.04 ("does not support chromium on ubuntu26.04-x64").
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        # Windows only for now. (When Linux comes back: ubuntu-24.04, not ubuntu-latest, now
+        # 26.04: Playwright 1.56 has no browser for it, "does not support chromium on ubuntu26.04-x64".)
+        os: [windows-latest]
     defaults:
       run:
         working-directory: vscode
@@ -90,6 +94,7 @@ jobs:
           path: vscode/cmcoder.vsix
 
   jvm-core:
+    if: github.event_name == 'workflow_dispatch'  # Linux/macOS: only when started by hand
     # The IDE core shared by the Eclipse and NetBeans plugins (clients/jvm-core),
     # on the oldest Java it supports. Its tests start cmcoder from source here
     # (macOS, Linux); on Windows that needs the standalone cmcoder.exe, so the
@@ -128,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]  # Windows only for now
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -169,6 +174,7 @@ jobs:
           ./visualstudio/build-vsix.ps1 -Gate
 
   eclipse:
+    if: github.event_name == 'workflow_dispatch'  # Linux/macOS: only when started by hand
     # The Eclipse plugin (eclipse/) in a real Eclipse, oldest and newest supported,
     # with its real chat page, cmcoder from source and the mock model server. The
     # Release build runs it again on every platform with the bundled cmcoder.
@@ -212,6 +218,7 @@ jobs:
           $run mvn -B -Dtarget=${{ matrix.target }} verify
 
   jetbrains:
+    if: github.event_name == 'workflow_dispatch'  # Linux/macOS: only when started by hand
     # The plugin for IntelliJ-based IDEs (jetbrains/, Phase 7): built against
     # the oldest supported release (2024.2) and checked by JetBrains' Plugin
     # Verifier against it, the newest IntelliJ IDEA and the newest Rider (which
@@ -291,6 +298,7 @@ jobs:
           if-no-files-found: ignore
 
   jetbrains-gate:
+    if: github.event_name == 'workflow_dispatch'  # Linux/macOS: only when started by hand
     # The release gate for the IntelliJ plugin (Phase 7 item 5): the gate build
     # (the self-test inside, never shipped) with the standalone cmcoder inside,
     # unpacked into a fresh IDE profile as "Install Plugin from Disk" does, in a
@@ -365,6 +373,7 @@ jobs:
           if-no-files-found: ignore
 
   netbeans:
+    if: github.event_name == 'workflow_dispatch'  # Linux/macOS: only when started by hand
     # The NetBeans plugin (netbeans/) in a real NetBeans, oldest and newest
     # supported, with its real chat page in JavaFX, the standalone cmcoder
     # inside the .nbm, the mock model server and no Python in reach. The Release
