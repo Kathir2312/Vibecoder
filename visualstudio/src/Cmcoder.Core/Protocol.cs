@@ -184,12 +184,17 @@ namespace Cmcoder.Core
 
         public static string Shutdown() => Text(Message("shutdown"));
 
-        public static string PermissionResponse(string requestId, bool allow, bool remember, string? feedback)
+        /// <summary>
+        /// The answer to a permission request. <paramref name="remember"/> saves the rule in the
+        /// project's settings; <paramref name="rememberSession"/> allows it for this conversation only.
+        /// </summary>
+        public static string PermissionResponse(string requestId, bool allow, bool remember, string? feedback, bool rememberSession = false)
         {
             var m = Message("permission_response");
             m["request_id"] = requestId;
             m["allow"] = allow;
             m["remember"] = remember;
+            m["remember_session"] = allow && rememberSession;
             m["feedback"] = string.IsNullOrEmpty(feedback) ? JValue.CreateNull() : (JToken)feedback!;
             return Text(m);
         }
@@ -229,6 +234,14 @@ namespace Cmcoder.Core
         {
             var m = Message("stop_subagent");
             m["id"] = id;
+            return Text(m);
+        }
+
+        /// <summary>Stop one running command (Bash), not the turn: the model carries on with its output so far.</summary>
+        public static string StopTool(string toolUseId)
+        {
+            var m = Message("stop_tool");
+            m["tool_use_id"] = toolUseId;
             return Text(m);
         }
 
@@ -288,11 +301,13 @@ namespace Cmcoder.Core
                 Shutdown(),
                 PermissionResponse("r1", true, false, null),
                 PermissionResponse("r1", false, false, "use b.py"),
+                PermissionResponse("r1", true, false, null, true),
                 IdeCapabilities(new[] { "getDiagnostics", "openFile" }),
                 IdeToolResult("t1", "No problems.", false),
                 SetMode("acceptEdits"),
                 SetCritique(true),
                 StopSubagent("s1"),
+                StopTool("t1"),
                 ListSessions(),
                 ListCommands(),
                 Rewind(2, true, true, false),

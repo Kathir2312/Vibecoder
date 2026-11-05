@@ -256,7 +256,7 @@ trusted       : ['Bash(npm test:*)', 'Bash(rm:*)'] / mode: bypassPermissions
 {'permissions': {'allow': ['Read', 'Edit'], 'highRiskCommands': 'deny'}}
 
 == 3. The protocol: one JSON object per line, checked by pydantic
-parsed        : PermissionResponse {'type': 'permission_response', 'request_id': 'r1', 'allow': False, 'remember': False, 'feedback': 'no'}
+parsed        : PermissionResponse {'type': 'permission_response', 'request_id': 'r1', 'allow': False, 'remember': False, 'remember_session': False, 'feedback': 'no'}
 rejected      : 2 errors, first: ('permission_response', 'request_id')
 event on wire : {"type":"tool_use","id":"c1","name":"Read","input":{"file_path":"app.py"},"label":"Read(app.py)","parent_tool_use_id":null}
 parsed back   : ToolUse
@@ -266,6 +266,7 @@ export interface PermissionResponse {
   request_id: string;
   allow: boolean;
   remember?: boolean;
+  remember_session?: boolean;
   feedback?: string | null;
 }
 

@@ -6,10 +6,11 @@ import asyncio
 import os
 import sys
 import uuid
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..compat import kill_process_tree, new_process_group_kwargs
 
@@ -31,6 +32,8 @@ class ShellResult:
     # Exit codes of each command in the last pipeline, e.g. [1, 0] for a failed
     # `pip install x | tail -5` (whose own exit code is tail's 0).
     pipe_status: list[int] | None = None
+    # The user stopped the command ("Stop this command"); the shell restarts.
+    stopped: bool = False
 
 
 def child_env(cwd: Path) -> dict[str, str]:
@@ -136,7 +139,15 @@ class PersistentShell:
             for _ in range(3):
                 await asyncio.sleep(0)
 
-    async def run(self, command: str, timeout: float) -> ShellResult:
+    async def run(
+        self,
+        command: str,
+        timeout: float,
+        on_output: Callable[[str], None] | None = None,
+        stop: asyncio.Event | None = None,
+    ) -> ShellResult:
+        """Run `command`. `on_output` gets each line as it arrives (live output in the chat);
+        setting `stop` kills the command and returns with `stopped=True`."""
         async with self._lock:
             proc = (
                 self._proc if self._proc and self._proc.returncode is None else await self._start()
@@ -171,12 +182,30 @@ class PersistentShell:
             size = 0
             loop = asyncio.get_running_loop()
             deadline = loop.time() + timeout
+            stop_wait = asyncio.ensure_future(stop.wait()) if stop is not None else None
+            blank = (
+                ""  # a bare newline is held back: it may be the one printf adds before the marker
+            )
             try:
                 while True:
                     remaining = deadline - loop.time()
                     if remaining <= 0:
                         raise TimeoutError
-                    line = await asyncio.wait_for(proc.stdout.readline(), remaining)
+                    read = asyncio.ensure_future(proc.stdout.readline())
+                    waiting: set[asyncio.Future[Any]] = {read}
+                    if stop_wait is not None:
+                        waiting.add(stop_wait)
+                    done, _ = await asyncio.wait(
+                        waiting, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if stop_wait is not None and stop_wait in done:
+                        read.cancel()
+                        self._kill()
+                        return ShellResult(_decode(chunks), None, restarted=True, stopped=True)
+                    if read not in done:
+                        read.cancel()
+                        raise TimeoutError
+                    line = read.result()
                     if not line:  # EOF: the command exited the shell
                         self._kill()
                         return ShellResult(
@@ -189,6 +218,8 @@ class PersistentShell:
                         before, _, after = line.partition(marker.encode())
                         if before.strip():
                             chunks.append(before)
+                            if on_output is not None:
+                                on_output(blank + before.decode("utf-8", "replace"))
                         code: int | None
                         status, _, where = after.partition(b"\t")
                         try:
@@ -204,6 +235,15 @@ class PersistentShell:
                         return ShellResult(
                             output, code, pipe_status=pipe if len(pipe) > 1 else None
                         )
+                    if on_output is not None:
+                        text = line.decode("utf-8", "replace").replace("\r\n", "\n")
+                        if blank:
+                            on_output(blank)
+                            blank = ""
+                        if text == "\n":
+                            blank = text
+                        else:
+                            on_output(text)
                     if size < MAX_CAPTURE_BYTES:
                         chunks.append(line)
                         size += len(line)
@@ -219,6 +259,9 @@ class PersistentShell:
             except asyncio.CancelledError:
                 self._kill()
                 raise
+            finally:
+                if stop_wait is not None:
+                    stop_wait.cancel()
 
 
 def _decode(chunks: list[bytes]) -> str:

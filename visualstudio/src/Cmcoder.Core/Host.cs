@@ -223,6 +223,9 @@ namespace Cmcoder.Core
                     {
                         var change = Protocol.FileChange.Of(e.Obj("change"));
                         var id = e.Str("request_id");
+                        var what = e.Str("name") == "Bash" ? "run a command" : (e.Str("label") ?? e.Str("name") ?? "a tool call");
+                        var who = e.Str("agent");
+                        ide.RequestWaiting(who == null ? what : what + " (" + who + ")");
                         if (change != null && id != null)
                         {
                             changes[id] = change;
@@ -305,13 +308,20 @@ namespace Cmcoder.Core
                         if (id != null) Send(Protocol.StopSubagent(id));
                         break;
                     }
+                    case "stopTool":
+                    {
+                        var id = Json.Str(m, "toolUseId");
+                        if (id != null) Send(Protocol.StopTool(id));
+                        break;
+                    }
                     case "openNavigator":
                         ide.OpenNavigator();
                         break;
                     case "permission":
                     {
                         var id = Json.Str(m, "requestId");
-                        if (id != null) Answer(id, Json.Bool(m, "allow"), Json.Bool(m, "remember"), Json.Str(m, "feedback"));
+                        if (id != null)
+                            Answer(id, Json.Bool(m, "allow"), Json.Bool(m, "remember"), Json.Str(m, "feedback"), Json.Bool(m, "rememberSession"));
                         break;
                     }
                     case "showDiff":
@@ -383,19 +393,25 @@ namespace Cmcoder.Core
             }
         }
 
-        /// <summary>Answers a permission request, from the panel or the IDE's diff viewer (H10).</summary>
-        public void Answer(string requestId, bool allow, bool remember, string? feedback)
+        /// <summary>
+        /// Answers a permission request, from the panel or the IDE's diff viewer (H10).
+        /// <paramref name="rememberSession"/>: allow the rule for this conversation only.
+        /// </summary>
+        public void Answer(string requestId, bool allow, bool remember, string? feedback, bool rememberSession = false)
         {
             lock (gate)
             {
-                Send(Protocol.PermissionResponse(requestId, allow, remember, feedback));
+                Send(Protocol.PermissionResponse(requestId, allow, remember, feedback, rememberSession));
                 changes.Remove(requestId);
                 if (openDiffs.Remove(requestId)) ide.CloseDiff(requestId);
                 ide.ToPanel(Json.Write(new Dictionary<string, object?>
                 {
                     ["kind"] = "permissionAnswered",
                     ["requestId"] = requestId,
-                    ["text"] = allow ? (remember ? "Allowed (always)" : "Allowed") : "Denied",
+                    ["text"] = !allow ? "Denied"
+                        : rememberSession ? "Allowed for this session"
+                        : remember ? "Allowed · rule saved for this project"
+                        : "Allowed",
                 }));
             }
         }

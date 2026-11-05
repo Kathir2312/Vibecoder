@@ -375,13 +375,34 @@ class BrowserSession:
         except Exception:
             pass
         await self.page.wait_for_timeout(300)
+        await self._leave_error_page()  # a blocked navigation: the news says what was blocked
+
+    async def _wait_settled(self) -> None:
+        try:
+            await self.page.wait_for_load_state("load", timeout=5_000)
+        except Exception:
+            pass
+        await self.page.wait_for_timeout(300)
+
+    async def _leave_error_page(self) -> None:
+        """After a navigation that failed or was blocked: wait until the page has settled
+        (or the next action races the navigation: "Execution context was destroyed"); if the
+        browser then shows its own error page, which can't be read or photographed, go back to
+        where the agent was, or to a blank page if there is nowhere to go back to."""
+        await self._wait_settled()
+        if not self.page.url.startswith("chrome-error://"):
+            return
+        try:
+            await self.page.go_back(timeout=3_000)
+        except Exception:
+            pass
+        await self._wait_settled()
         if self.page.url.startswith("chrome-error://"):
-            # A blocked navigation leaves the browser on its error page: go back to
-            # where the agent was (the news says what was blocked).
             try:
-                await self.page.go_back(timeout=3_000)
+                await self.page.goto("about:blank")
             except Exception:
                 pass
+            await self._wait_settled()
 
     async def _do_open(self, args: BrowserInput) -> tuple[str, str]:
         if not args.url:
@@ -396,6 +417,7 @@ class BrowserSession:
             await self.page.goto(url, wait_until="load", timeout=NAV_TIMEOUT_MS)
         except Exception as e:
             first = str(e).strip().splitlines()[0] if str(e).strip() else "failed"
+            await self._leave_error_page()
             raise BrowserError(f"Could not open {url}: {first[:250]}") from e
         return (
             f"{await self._where()}\nTake a snapshot to see the page.{self._news()}",

@@ -12,6 +12,12 @@ removes them (build.py does it after the build). It is safe because every one of
 imports in pyarrow is optional (`try: ... except ImportError`), and
 `packaging/smoke_rag.py` runs the pruned program to prove it.
 
+The second copy is a Linux thing: there the extension modules find their libraries
+next to themselves (`$ORIGIN`). On macOS they look one folder up (`@rpath/..`), so the
+copies there are the ones that count, and removing them stops pyarrow from loading
+("Library not loaded: @rpath/libarrow_python.2600.dylib", found by CI on a Mac): only
+Linux gets the second copy removed.
+
 Two libraries stay although the index doesn't use them: pyarrow's own modules are
 linked against Parquet's and Substrait's libraries, so the program wouldn't start
 without them (found by trying: "libarrow_substrait.so: cannot open shared object file").
@@ -45,9 +51,12 @@ def _unused_native(path: Path) -> bool:
     return bool(_words(path.name) & UNUSED)
 
 
-def prune(folder: Path) -> tuple[list[Path], int]:
+def prune(folder: Path, dedupe: bool | None = None) -> tuple[list[Path], int]:
     """Remove the unused parts from a built program's folder (the one with `_internal`);
-    returns what was removed and the bytes freed. A folder without pyarrow: nothing."""
+    returns what was removed and the bytes freed. A folder without pyarrow: nothing.
+    `dedupe`: also remove the second copy of the libraries (default: on Linux only)."""
+    if dedupe is None:
+        dedupe = sys.platform.startswith("linux")
     internal = folder / "_internal"
     root = internal if internal.is_dir() else folder
     arrow = root / "pyarrow"
@@ -79,14 +88,11 @@ def prune(folder: Path) -> tuple[list[Path], int]:
     for path in sorted(root.iterdir()):
         if not path.is_file() or not any(s in path.name for s in NATIVE):
             continue
+        if not re.match(r"^(lib)?(arrow|parquet)", path.name):
+            continue
         twin = arrow / path.name
         same = twin.exists() and twin.stat().st_size == path.stat().st_size
-        if (
-            _unused_native(path)
-            and re.match(r"^(lib)?(arrow|parquet)", path.name)
-            or same
-            and re.match(r"^(lib)?(arrow|parquet)", path.name)
-        ):
+        if _unused_native(path) or (dedupe and same):
             remove(path)
     return removed, freed
 

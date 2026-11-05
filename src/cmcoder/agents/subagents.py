@@ -385,6 +385,7 @@ class SubagentRuntime:
                 self.opts,
                 self.hooks,
                 stop_event="SubagentStop",
+                agent=definition.name,
             ),
         ]
         prompt = build_subagent_prompt(

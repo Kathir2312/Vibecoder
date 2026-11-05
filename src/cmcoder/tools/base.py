@@ -38,6 +38,9 @@ class ToolResult:
     # Pictures for the user's chat (a browser screenshot), not for the model: they
     # travel as the LangChain tool message's `artifact` (tools/adapter.py).
     images: list[Path] = field(default_factory=list)
+    # What the chat shows besides the text (Bash: exit_code, duration_ms, total_lines,
+    # stopped); it also travels in the tool message's artifact, never to the model.
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -114,7 +114,7 @@ def test_unsafe_addresses_and_modes(ctx: ToolContext) -> None:
     assert check("chrome://settings", ctx).decision is Decision.DENY
     assert check("http://localhost:3000", ctx, mode="plan").decision is Decision.DENY
     assert check("https://example.com", ctx, mode="bypassPermissions").decision is Decision.ALLOW
-    assert check("file://" + str(ctx.project_root / ".env"), ctx).decision is Decision.DENY
+    assert check((ctx.project_root / ".env").as_uri(), ctx).decision is Decision.DENY
 
 
 def test_approved_hosts_and_always_allow_are_per_host(ctx: ToolContext) -> None:
@@ -235,6 +235,9 @@ async def test_stale_numbers_bad_input_and_unsafe_schemes(site: str, ctx: ToolCo
         assert (await act(session, ctx, action="click")).is_error
         unreachable = await act(session, ctx, action="open", url="http://127.0.0.1:1/")
         assert unreachable.is_error and "Could not open" in unreachable.content
+        # The browser is not left on its error page: the next action still works.
+        after = await act(session, ctx, action="snapshot")
+        assert not after.is_error and "chrome-error" not in after.content
         shot = await act(session, ctx, action="screenshot")
         assert ".png" in shot.content and "can't view images" in shot.content
     finally:

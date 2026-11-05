@@ -25,6 +25,12 @@ namespace Cmcoder.Core
         /// <summary>Bring the chat to the front.</summary>
         void FocusChat();
 
+        /// <summary>
+        /// A permission request waits for the user's answer ("run a command"): say so if the
+        /// chat isn't in view, so the turn doesn't just sit there.
+        /// </summary>
+        void RequestWaiting(string what);
+
         /// <summary>The editor context now (H7; see <see cref="Core.EditorContext"/>), or null when no file is open.</summary>
         JObject? EditorContext();
 

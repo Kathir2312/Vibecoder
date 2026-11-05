@@ -35,7 +35,18 @@ export type FromWebview =
   | { kind: "interrupt" }
   | { kind: "stopSubagent"; id: string }
   | { kind: "openNavigator" }
-  | { kind: "permission"; requestId: string; allow: boolean; remember: boolean; feedback?: string }
+  | {
+      kind: "permission";
+      requestId: string;
+      allow: boolean;
+      /** Save the rule in the project's settings. */
+      remember: boolean;
+      /** Allow the rule for this session only (the host says it can: data-features "sessionRules"). */
+      rememberSession?: boolean;
+      feedback?: string;
+    }
+  /** Stop one running command, not the turn (data-features "stopTool"). */
+  | { kind: "stopTool"; toolUseId: string }
   | { kind: "showDiff"; requestId: string }
   | { kind: "setMode"; mode: string }
   /** The Critique checkbox: on or off, saved for every cmcoder. */

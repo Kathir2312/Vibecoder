@@ -9,7 +9,7 @@ import { DiffReview } from "./diffReview";
 import { AgentNavigator } from "./navigator";
 import { cmcoderCommand } from "./executable";
 import { contextLabel, currentEditor, editorContext, IDE_TOOLS, runIdeTool } from "./editorContext";
-import type { AgentEvent, ClientMessage, FileChange, RewindPoint } from "./protocol";
+import type { AgentEvent, ClientMessage, FileChange, PermissionRequest, RewindPoint } from "./protocol";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "./webviewMessages";
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
@@ -86,15 +86,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.agent?.send({ type: "interrupt" });
   }
 
-  /** Answers a permission request (from the panel or the diff editor). */
-  answer(requestId: string, allow: boolean, remember = false, feedback?: string): void {
-    this.agent?.send({ type: "permission_response", request_id: requestId, allow, remember, feedback: feedback || null });
+  /**
+   * Answers a permission request (from the panel or the diff editor). `remember` saves
+   * the rule in the project's settings; `rememberSession` allows it for this
+   * conversation only (nothing is saved).
+   */
+  answer(requestId: string, allow: boolean, remember = false, feedback?: string, rememberSession = false): void {
+    this.agent?.send({
+      type: "permission_response",
+      request_id: requestId,
+      allow,
+      remember,
+      remember_session: allow && rememberSession,
+      feedback: feedback || null,
+    });
     this.changes.delete(requestId);
     void this.diffs.close(requestId);
     this.post({
       kind: "permissionAnswered",
       requestId,
-      text: allow ? (remember ? "Allowed (always)" : "Allowed") : "Denied",
+      text: !allow
+        ? "Denied"
+        : rememberSession
+          ? "Allowed for this session"
+          : remember
+            ? "Allowed · rule saved for this project"
+            : "Allowed",
     });
   }
 
@@ -175,6 +192,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await agent?.stop();
   }
 
+  /**
+   * A request waits for the user while the chat is out of view (another side-bar view,
+   * the side bar closed): without a notice the turn would just sit there. The message
+   * names what is asked; its button opens the chat.
+   */
+  private notifyIfHidden(event: PermissionRequest): void {
+    if (this.view?.visible) return;
+    if (!vscode.workspace.getConfiguration("cmcoder").get<boolean>("notifyWhenHidden", true)) return;
+    const what = event.name === "Bash" ? "run a command" : event.label;
+    const who = event.agent ? ` (${event.agent})` : "";
+    const open = "Open chat";
+    void vscode.window
+      .showInformationMessage(`${productName()} needs your answer${who}: allow it to ${what}?`, open)
+      .then((choice) => {
+        if (choice === open) void vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`);
+      });
+  }
+
   private async clearReviews(): Promise<void> {
     this.changes.clear();
     await this.diffs.closeAll();
@@ -193,6 +228,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.updateContext();
         break;
       case "permission_request":
+        this.notifyIfHidden(event);
         if (event.change) {
           this.changes.set(event.request_id, event.change);
           if (vscode.workspace.getConfiguration("cmcoder").get<boolean>("diffReview", true)) {
@@ -289,11 +325,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "stopSubagent":
         this.agent?.send({ type: "stop_subagent", id: m.id });
         break;
+      case "stopTool":
+        this.agent?.send({ type: "stop_tool", tool_use_id: m.toolUseId });
+        break;
       case "openNavigator":
         this.navigator.open();
         break;
       case "permission":
-        this.answer(m.requestId, m.allow, m.remember, m.feedback);
+        this.answer(m.requestId, m.allow, m.remember, m.feedback, m.rememberSession ?? false);
         break;
       case "showDiff": {
         const change = this.changes.get(m.requestId);
@@ -367,7 +406,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <link href="${style}" rel="stylesheet">
   <title>${escapeHtml(productName())}</title>
 </head>
-<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}">
+<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules">
   <div id="app"></div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

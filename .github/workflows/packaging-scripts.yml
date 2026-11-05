@@ -7,17 +7,8 @@ name: Packaging scripts
 # checks the program is in the file. The files handed out come from the
 # Release build; these aren't uploaded.
 on:
+  # By hand only for now (Actions > Packaging scripts > Run workflow): it runs on three systems.
   workflow_dispatch:
-  push:
-    branches: ["**"]
-    paths:
-      - "packaging/**"
-      - "visualstudio/build-vsix.ps1"
-      - "netbeans/pom.xml"
-      - "eclipse/pom.xml"
-      - "jetbrains/build.gradle.kts"
-      - "tests/test_packaging_scripts.py"
-      - ".github/workflows/packaging-scripts.yml"
 
 # A newer push to the same branch replaces a run still going.
 concurrency:

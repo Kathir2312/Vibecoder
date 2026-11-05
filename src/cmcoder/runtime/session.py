@@ -93,8 +93,11 @@ def _text(message: AnyMessage) -> str:
     return message.content if isinstance(message.content, str) else message.text
 
 
-# What this cmcoder can do beyond the base protocol (system_init.features).
-FEATURES = ("images",)
+# What this cmcoder can do beyond the base protocol (system_init.features): "images" in
+# a message; "stopTool" ends one running command (`stop_tool`); "sessionRules" takes an
+# "always allow" for the session only (`remember_session`). An IDE panel shows a control
+# only when this list and the IDE's own (data-features) both have it.
+FEATURES = ("images", "stopTool", "sessionRules")
 
 
 class Session:
@@ -310,6 +313,10 @@ class Session:
                         reason=value.get("reason") or "",
                         can_remember=value.get("can_remember", True),
                         change=ev.FileChange(**value["change"]) if value.get("change") else None,
+                        cwd=value.get("cwd"),
+                        reasons=list(value.get("reasons") or []),
+                        high_risk=bool(value.get("high_risk")),
+                        agent=value.get("agent"),
                     )
                     yield request
                     if hooks is not None and hooks.has("Notification"):
@@ -742,10 +749,16 @@ def _artifact_images(artifact: object) -> list[str]:
 
 def _tool_result_event(msg: ToolMessage) -> ev.Event:
     content = msg.content if isinstance(msg.content, str) else msg.text
+    meta = msg.artifact.get("meta") if isinstance(msg.artifact, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
     return ev.ToolResult(
         id=msg.tool_call_id,
         name=msg.name or "",
         content=content,
         is_error=msg.status == "error",
         images=_artifact_images(msg.artifact),
+        exit_code=meta.get("exit_code"),
+        duration_ms=meta.get("duration_ms"),
+        total_lines=meta.get("total_lines"),
+        stopped=bool(meta.get("stopped")),
     )

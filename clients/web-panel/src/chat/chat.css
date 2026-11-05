@@ -150,20 +150,181 @@ select { padding: 2px 4px; }
 }
 .tool img.shot.big { max-width: calc(100% - 12px); cursor: zoom-out; }
 
+/* The consent card: what is asked, why, where, and the ways to answer. A declaration
+   with color-mix() has a plain one before it: older embedded browsers (JavaFX) skip it. */
 .permission {
   margin: 8px 0;
-  padding: 8px;
-  border: 1px solid var(--vscode-editorWarning-foreground, var(--vscode-focusBorder));
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-left: 4px solid var(--vscode-editorWarning-foreground, var(--vscode-focusBorder));
   border-radius: 4px;
+  background: var(--vscode-editorWidget-background);
+}
+.permission.risk { border-left-color: var(--vscode-errorForeground); }
+.permission.answered { opacity: 0.85; border-left-color: var(--vscode-panel-border, transparent); }
+.permission input { padding: 3px 6px; }
+.permission .answer { margin-top: 6px; opacity: 0.85; }
+
+.ask-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.ask-icon { width: 1.3em; text-align: center; font-weight: 700; color: var(--vscode-editorWarning-foreground); }
+.risk .ask-icon { color: var(--vscode-errorForeground); }
+.ask-title { font-weight: 600; overflow-wrap: anywhere; }
+.ask-agent { opacity: 0.7; font-size: 0.9em; }
+.ask-count { margin-left: auto; opacity: 0.7; font-size: 0.9em; }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip {
+  padding: 0 8px;
+  border: 1px solid var(--vscode-panel-border, currentColor);
+  border-radius: 10px;
+  font-size: 0.85em;
+}
+.risk .chip { border-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
+
+.ask-cmd, .ask-diff, .permission pre.preview {
+  margin: 6px 0;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+.ask-cmd { padding: 6px 8px; }
+.cmd-line { display: flex; gap: 6px; }
+.prompt { flex: none; opacity: 0.6; user-select: none; }
+.cmd-line .bash-cmd { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmd-cwd { margin-top: 4px; opacity: 0.65; font-size: 0.9em; overflow-wrap: anywhere; }
+.permission pre.preview { max-height: 240px; overflow-y: auto; padding: 6px 8px; }
+
+/* A shell command: flags, strings, variables; what can do harm stands out. */
+.sh-flag { color: var(--vscode-textLink-foreground); }
+.sh-string { color: var(--vscode-testing-iconPassed); }
+.sh-var { color: var(--vscode-editorWarning-foreground); }
+.sh-op { opacity: 0.65; }
+.sh-comment { opacity: 0.55; font-style: italic; }
+.sh-danger {
+  color: var(--vscode-errorForeground);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--vscode-errorForeground);
+  opacity: 1;
 }
 
-.permission .title { font-weight: 600; overflow-wrap: anywhere; }
-.permission .reason { opacity: 0.8; margin-top: 2px; }
-.permission pre { max-height: 240px; overflow-y: auto; }
-.permission .buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.permission input { width: 100%; padding: 3px 6px; }
-.permission.answered { border-color: var(--vscode-panel-border, transparent); opacity: 0.8; }
-.permission .answer { opacity: 0.8; margin-top: 4px; }
+/* A file change as a diff: numbers, the changed lines, a little around them. */
+.ask-diff { overflow: hidden; }
+.diff-head {
+  display: flex;
+  gap: 8px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+  font-size: 0.9em;
+}
+.diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-new { opacity: 0.7; }
+.diff-add { color: var(--vscode-testing-iconPassed); }
+.diff-del { color: var(--vscode-errorForeground); }
+.diff-rows { max-height: 280px; overflow: auto; }
+.permission.answered .diff-rows { max-height: 8em; }
+.drow { display: flex; min-height: 1.35em; white-space: pre-wrap; }
+.drow .no {
+  flex: none;
+  width: 3.2em;
+  padding-right: 6px;
+  text-align: right;
+  opacity: 0.45;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.ask-diff.plain .drow .no { display: none; }
+.drow .sign { flex: none; width: 1.4em; text-align: center; opacity: 0.8; }
+.drow .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.drow.add { box-shadow: inset 3px 0 var(--vscode-testing-iconPassed); }
+.drow.add { background: color-mix(in srgb, var(--vscode-testing-iconPassed) 16%, transparent); }
+.drow.add .sign { color: var(--vscode-testing-iconPassed); opacity: 1; }
+.drow.del { box-shadow: inset 3px 0 var(--vscode-errorForeground); }
+.drow.del { background: color-mix(in srgb, var(--vscode-errorForeground) 16%, transparent); }
+.drow.del .sign { color: var(--vscode-errorForeground); opacity: 1; }
+.drow.gap { padding-left: 8px; opacity: 0.55; font-size: 0.9em; }
+
+.ask-note { margin-top: 6px; font-size: 0.9em; color: var(--vscode-errorForeground); }
+.danger-parts { margin-top: 2px; font-family: var(--vscode-editor-font-family); }
+.ask-actions, .permission .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.ask-actions .link { margin: 0 0 0 4px; }
+button.danger {
+  background: transparent;
+  color: var(--vscode-errorForeground);
+  border: 1px solid var(--vscode-errorForeground);
+}
+button.danger:hover { background: transparent; text-decoration: underline; }
+.ask-rule { margin-top: 6px; overflow-wrap: anywhere; }
+.ask-rule code {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background);
+  font-family: var(--vscode-editor-font-family);
+}
+.ask-deny { display: flex; gap: 6px; margin-top: 6px; }
+.ask-deny input { flex: 1; width: auto; min-width: 0; }
+
+/* The Bash card: the command, its output as it comes, how it ended. */
+.tool.bash {
+  margin: 6px 0;
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.tool.bash[data-state="fail"] { border-left: 3px solid var(--vscode-errorForeground); }
+.tool.bash[data-state="stopped"], .tool.bash[data-state="interrupted"], .tool.bash[data-state="waiting"] {
+  border-left: 3px solid var(--vscode-editorWarning-foreground);
+}
+.bash-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--vscode-textCodeBlock-background);
+}
+.bash-head .bash-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bash-cmd { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
+.bash-badge { flex: none; font-size: 0.9em; }
+.bash-badge.ok { color: var(--vscode-testing-iconPassed); }
+.bash-badge.fail, .bash-badge.fail-other { color: var(--vscode-errorForeground); }
+.bash-badge.stopped, .bash-badge.waiting { color: var(--vscode-editorWarning-foreground); }
+.bash-badge.interrupted { opacity: 0.7; }
+.bash-badge.running, .bash-badge.stopping { color: var(--vscode-textLink-foreground); }
+.bash-badge.running::before {
+  content: "";
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 5px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: cmcoder-spin 0.9s linear infinite;
+}
+@keyframes cmcoder-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bash-badge.running::before { animation: none; } }
+.tool.bash pre.bash-out {
+  margin: 0;
+  max-height: 14em;
+  overflow: auto;
+  border-top: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 0;
+  background: transparent;
+  opacity: 1;
+}
+.tool.bash pre.bash-out.expanded { max-height: 360px; }
+.tool.bash pre.bash-out.empty { opacity: 0.55; font-style: italic; }
+.bash-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 8px 4px;
+  font-family: var(--vscode-font-family);
+}
+.bash-foot .link { margin: 0; }
+.bash-foot .stop-cmd { padding: 1px 10px; }
 
 .note { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note.warn { color: var(--vscode-editorWarning-foreground); }

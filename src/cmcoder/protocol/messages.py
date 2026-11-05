@@ -77,8 +77,18 @@ class PermissionResponse(_Message):
     allow: bool
     # "Always": save an allow rule (ignored when the request can't be remembered).
     remember: bool = False
+    # "For this session": allow the same rule until cmcoder exits, without saving it.
+    remember_session: bool = False
     # When denying: what the model should do instead.
     feedback: str | None = None
+
+
+class StopTool(_Message):
+    """Stop one running tool call (Bash) and let the turn go on: the model is told the
+    user stopped it. `interrupt` stops the whole turn instead."""
+
+    type: Literal["stop_tool"] = "stop_tool"
+    tool_use_id: str
 
 
 class SetMode(_Message):
@@ -192,6 +202,7 @@ ClientMessage = Annotated[
     UserMessage
     | Interrupt
     | PermissionResponse
+    | StopTool
     | SetMode
     | SetModel
     | IdeCapabilities
