@@ -5,6 +5,7 @@
 import { marked } from "marked";
 import type {
   AgentEvent,
+  AgentInfo,
   CommandInfo,
   PermissionDenied,
   PermissionRequest,
@@ -139,6 +140,7 @@ app.innerHTML = `
     <div class="actions">
       <button class="attach secondary" title="Attach a file (@)">@</button>
       <button class="image secondary" title="Attach an image (or paste one with Ctrl+V, or drop it here)">Image</button>
+      <select class="agent" title="Who you are talking to: the default agent, or one of your agents (its instructions, tools and model)" aria-label="Agent" hidden></select>
       <input class="image-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <span class="usage"></span>
       <button class="stop secondary" hidden title="Stop (Esc)">Stop</button>
@@ -150,7 +152,7 @@ const $ = <T extends HTMLElement>(sel: string) => app.querySelector(sel) as T;
 const log = $<HTMLElement>(".log");
 log.dataset.product = PRODUCT; // the empty screen shows the logo and this name
 const input = $<HTMLTextAreaElement>("textarea");
-input.placeholder = `Ask ${PRODUCT}… (Enter to send, Shift+Enter for a new line)`;
+input.placeholder = idlePlaceholder();
 const sendButton = $<HTMLButtonElement>(".send");
 const stopButton = $<HTMLButtonElement>(".stop");
 const modeSelect = $<HTMLSelectElement>(".mode");
@@ -166,6 +168,7 @@ const sessionsPanel = $<HTMLElement>(".sessions");
 const historyButton = $<HTMLButtonElement>(".history");
 const attachButton = $<HTMLButtonElement>(".attach");
 const imageButton = $<HTMLButtonElement>(".image");
+const agentSelect = $<HTMLSelectElement>(".agent");
 const imageFile = $<HTMLInputElement>(".image-file");
 const imagesStrip = $<HTMLElement>(".images");
 const contextChip = $<HTMLLabelElement>(".context");
@@ -197,14 +200,59 @@ const permissionCards = new Map<string, HTMLElement>();
 // Tool calls the user denied here: their card already says so.
 const deniedHere = new Set<string>();
 
+// --- the agent in use: the dropdown above the input ----------------------------------------------
+//
+// Choosing one makes the whole conversation that agent: its instructions, its tools and its model
+// replace the default's (the IDE tells cmcoder with `set_agent`). A project's own agents are listed
+// greyed out until the project is trusted, so they are never just missing.
+
+let agents: AgentInfo[] = [];
+let currentAgent: string | null = null;
+
+function idlePlaceholder(): string {
+  return `Ask ${currentAgent ?? PRODUCT}… (Enter to send, Shift+Enter for a new line)`;
+}
+
+const AGENT_GROUPS: [AgentInfo["origin"], string][] = [
+  ["project", "This project"],
+  ["user", "Yours"],
+  ["built-in", "Built in"],
+];
+
+function renderAgentSelect(): void {
+  const show = can("agents") && agents.length > 0;
+  agentSelect.hidden = !show;
+  if (!show) return;
+  agentSelect.replaceChildren(new Option(`${PRODUCT} (default)`, ""));
+  for (const [origin, label] of AGENT_GROUPS) {
+    const group = agents.filter((a) => a.origin === origin);
+    if (!group.length) continue;
+    const box = document.createElement("optgroup");
+    box.label = label;
+    for (const a of group) {
+      const option = new Option(a.usable ? a.name : `${a.name} (trust this project)`, a.name);
+      option.disabled = !a.usable;
+      option.title = a.usable ? a.description : a.hint;
+      box.append(option);
+    }
+    agentSelect.append(box);
+  }
+  agentSelect.value = currentAgent ?? "";
+  const now = agents.find((a) => a.name === currentAgent);
+  agentSelect.title = now?.description || "Who you are talking to: the default agent, or one of your agents";
+  agentSelect.disabled = busy;
+  if (!busy) input.placeholder = idlePlaceholder();
+}
+
+agentSelect.onchange = () => post({ kind: "setAgent", agent: agentSelect.value || null });
+
 function setBusy(value: boolean): void {
   const was = busy;
   busy = value;
   sendButton.hidden = value;
   stopButton.hidden = !value;
-  input.placeholder = value
-    ? "Queue another message… (Esc to stop)"
-    : `Ask ${PRODUCT}… (Enter to send, Shift+Enter for a new line)`;
+  input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
+  agentSelect.disabled = value; // an agent can't be changed in the middle of a turn
   if (!value) showStatus();
   if (value && !was) startProgress();
   if (!value) stopProgress();
@@ -678,6 +726,7 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "error":
       note(`✗ ${ev.message}${ev.hint ? `\n${ev.hint}` : ""}`, "error");
+      renderAgentSelect(); // a refused choice: the list shows the agent really in use
       break;
     case "review_result":
       reviewNote(ev);
@@ -705,6 +754,21 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "mode_changed":
       modeSelect.value = ev.mode;
+      break;
+    case "agent_list":
+      agents = ev.agents;
+      currentAgent = ev.current;
+      renderAgentSelect();
+      break;
+    case "agent_changed":
+      currentAgent = ev.agent;
+      renderAgentSelect();
+      note(
+        ev.agent
+          ? `◦ Now talking to the ${ev.agent} agent: its instructions, tools and model, for this conversation.`
+          : `◦ Back to ${PRODUCT}'s default agent.`,
+        "info",
+      );
       break;
     case "history":
       for (const item of ev.messages) {
@@ -1577,6 +1641,9 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       renderQueue();
       reply = undefined;
       usageLabel.textContent = "";
+      agents = [];
+      currentAgent = null; // a new conversation starts with the default agent
+      renderAgentSelect();
       setBusy(false);
       break;
     case "image":

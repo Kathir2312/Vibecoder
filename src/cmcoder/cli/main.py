@@ -98,6 +98,14 @@ def main(
         typer.Option("--disallowedTools", "--disallowed-tools", help="Deny rules."),
     ] = None,
     max_turns: Annotated[int | None, typer.Option("--max-turns", help="Max model calls.")] = None,
+    agent: Annotated[
+        str | None,
+        typer.Option(
+            "--agent",
+            help="Talk to this agent for the whole conversation: a definition from "
+            ".cmcoder/agents (a trusted project's) or ~/.cmcoder/agents. /agents lists them.",
+        ),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", help="With -p: show tool calls.")] = False,
     continue_session: Annotated[
         bool, typer.Option("--continue", "-c", help="Continue the latest conversation here.")
@@ -169,6 +177,7 @@ def main(
         allowed_tools=_split(allowed_tools),
         disallowed_tools=_split(disallowed_tools),
         max_turns=max_turns,
+        agent=agent,
         critic=True if critic else None,
         frontend=client or ("vscode" if protocol else "print" if print_mode else "cli"),
     )

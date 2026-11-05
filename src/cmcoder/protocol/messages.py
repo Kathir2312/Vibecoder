@@ -101,6 +101,15 @@ class SetModel(_Message):
     model: str = Field(min_length=1)
 
 
+class SetAgent(_Message):
+    """Talk to one of the agents in `agent_list` for the rest of the conversation (its
+    instructions, tools and model replace the default's), or `agent: null` for the default.
+    Refused during a turn. Answered with `agent_changed`."""
+
+    type: Literal["set_agent"] = "set_agent"
+    agent: str | None = None
+
+
 class IdeToolDef(_Message):
     """A tool the IDE itself defines, for the model to call (VS Code's built-in browser
     tools, found at run time): its name, what it does, and its inputs as a JSON schema.
@@ -220,6 +229,7 @@ ClientMessage = Annotated[
     | StopTool
     | SetMode
     | SetModel
+    | SetAgent
     | IdeCapabilities
     | IdeToolResult
     | ListSessions

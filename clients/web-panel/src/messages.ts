@@ -37,6 +37,9 @@ export type FromWebview =
   | { kind: "openNavigator" }
   /** Open the Tasks tab with the whole todo list (data-features "tasksTab"). */
   | { kind: "openTasks" }
+  /** Talk to this agent for the rest of the conversation, or null for the default one
+   *  (data-features "agents"; the IDE sends cmcoder a `set_agent`). */
+  | { kind: "setAgent"; agent: string | null }
   | {
       kind: "permission";
       requestId: string;

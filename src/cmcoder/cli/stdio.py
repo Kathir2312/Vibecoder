@@ -61,6 +61,7 @@ from typing import Any, BinaryIO
 from pydantic import ValidationError
 
 from ..agents.main import Agent, AgentOptions, build_agent, prepare_agent, rebuild_agent
+from ..agents.subagents import agent_infos
 from ..config.settings import Settings, SettingsError, add_local_allow_rule, find_project_root
 from ..core.hooks import Hook
 from ..core.ide import IDE_TOOLS, format_ide_context
@@ -208,6 +209,7 @@ class StdioServer:
                 self.emit(ev.History(messages=await self.session.history()))
                 if todos := await self.session.todos():
                     self.emit(ev.TodoUpdate(todos=todos))
+            self.emit(self._agent_list())  # (after those: clients read init, history, todos in order)
             try:
                 while True:
                     line = await self.inbox.get()
@@ -294,6 +296,8 @@ class StdioServer:
                 self.error("invalid_mode", str(e))
                 return
             self.emit(ev.ModeChanged(mode=self.agent.policy.mode))
+        elif isinstance(message, msg.SetAgent):
+            await self._set_agent(message.agent)
         elif isinstance(message, msg.SetModel):
             if self.busy:
                 self.error("busy", "Can't switch models during a turn.")
@@ -362,6 +366,41 @@ class StdioServer:
             else:
                 self.emit(run.status())  # "stopping" (or "queued" until it's dropped)
 
+    def _agent_list(self) -> ev.AgentList:
+        """The agents the UI can offer, and the one in use."""
+        return ev.AgentList(
+            agents=agent_infos(self.agent.ctx.project_root, self.settings.project_trusted),
+            current=self.agent.persona,
+        )
+
+    async def _set_agent(self, name: str | None) -> None:
+        """Talk to this agent from now on (None: the default one): a new graph with its
+        instructions, tools and model, on the same conversation."""
+        if self.busy:
+            self.error("busy", "Can't switch agents during a turn.")
+            return
+        if name is not None:
+            infos = {i.name: i for i in self._agent_list().agents}
+            info = infos.get(name)
+            if info is None:
+                self.error(
+                    "invalid_agent",
+                    f"No agent named {name!r}. Choose one of: {', '.join(infos) or 'none'}.",
+                )
+                return
+            if not info.usable:
+                self.error("invalid_agent", f"{name}: {info.hint}")
+                return
+        try:
+            await self._rebuild(agent=name)
+        except (SettingsError, ValueError) as e:
+            self.error("invalid_agent", str(e))
+            return
+        b = self.agent.bundle
+        self.emit(ev.AgentChanged(agent=self.agent.persona))
+        self.emit(ev.ModelChanged(model=b.name, context_window=b.profile.context_window))
+        self.emit(self._agent_list())
+
     async def _rebuild(self, model: str | None = None, **more: Any) -> None:
         """A new graph (another model, IDE tools, MCP tools, a code index) on the
         same checkpointer and thread."""
@@ -375,6 +414,8 @@ class StdioServer:
         if model:
             changes["model"] = model
             self.opts.model = model
+        if "agent" in more:
+            self.opts.agent = more["agent"]
         self.session.agent = await rebuild_agent(self.agent, **changes)
 
     async def _start_mcp(self) -> None:

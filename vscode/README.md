@@ -36,6 +36,7 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 | Feature | How |
 |---|---|
 | Permission prompts | In the chat: why it is asked, the command or a diff of the change; **Allow**, **Always allow…** (shows the rule; for this session or saved for this project), **Deny** (with an optional note for cmcoder); a notification when the chat is out of view |
+| Agents | The **Agent** dropdown above the input: the default agent, or one of your agents (`.cmcoder/agents/*.md` of a trusted project, `~/.cmcoder/agents`, or a built-in one). Choosing one makes the whole conversation that agent: its instructions, tools and model; a project's agents are greyed out until you run `cmcoder trust` |
 | Todo list | One compact bar in the chat (done/total, a meter, the task in progress); click it, or use **cmcoder: Open Tasks**, for an editor tab with the whole list, numbered and grouped, so a long list never takes the chat's room |
 | Commands | A card per command: exit code, time, live output, **Stop this command**, **Show all**, **Copy output** |
 | Review edits | A proposed Write/Edit opens in the diff editor; **✓ Accept** / **✕ Reject** in its title bar (or on the chat card) |

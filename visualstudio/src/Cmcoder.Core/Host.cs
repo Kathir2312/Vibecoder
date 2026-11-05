@@ -336,6 +336,9 @@ namespace Cmcoder.Core
                         if (mode != null && Modes.Contains(mode)) Send(Protocol.SetMode(mode));
                         break;
                     }
+                    case "setAgent":
+                        Send(Protocol.SetAgent(Json.Str(m, "agent"))); // null: the default agent
+                        break;
                     case "setCritique":
                         Send(Protocol.SetCritique(Json.Bool(m, "enabled")));
                         break;

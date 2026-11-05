@@ -53,6 +53,7 @@ spaces; an IDE that leaves it out gets the base panel:
 |---|---|---|
 | `stopTool` | `{"kind": "stopTool", "toolUseId"}` as a `stop_tool` message | **Stop this command** on a running Bash card |
 | `sessionRules` | `rememberSession: true` of a `permission` message as `remember_session` | **For this session** under **Always allow…** |
+| `agents` | `{"kind": "setAgent", "agent": name \| null}` as a `set_agent` message | the **Agent** dropdown above the input: the agents in `agent_list`, a project's untrusted ones greyed out; choosing one makes the whole conversation that agent |
 | `tasksTab` | `{"kind": "openTasks"}`: open an editor tab with the page `tasks.js`/`tasks.css`, send it `{"kind": "todos", "todos": [...]}` on every `todo_update` event (and again when it says `ready`), `{"kind": "reset"}` for a new conversation; `{"kind": "openChat"}` from it means "show the chat" | the compact todo bar opens the tab (↗); without the feature the bar opens the list inside the chat, in a box of limited height |
 
 A control also needs cmcoder to have the feature (`system_init.features`), so an

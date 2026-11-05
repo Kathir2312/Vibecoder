@@ -209,6 +209,16 @@ After you allow it, cmcoder finishes and tells you what it did:
 
 ![The change is made and cmcoder reports](img/08-done.png)
 
+### Talk to one of your agents
+
+The **Agent** dropdown above the message box lists the default agent and your own: the files in
+`.cmcoder/agents/` of a trusted project, in `~/.cmcoder/agents/`, and the built-in `explore`
+(read-only search) and `general-purpose`. Pick one and the **whole conversation is that agent**: its
+instructions, the tools its file lists and its model replace the default's, until you pick
+**cmcoder (default)** again. A project's agents are greyed out as "(trust this project)" until you
+run `cmcoder trust`; the dropdown is disabled while a turn runs. Playwright's planner, generator and
+healer work this way: see [playwright-agents.md](playwright-agents.md).
+
 ### A long task list
 
 When cmcoder plans a job with many steps, the chat shows **one line**: how many are done

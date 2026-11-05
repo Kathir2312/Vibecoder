@@ -181,15 +181,71 @@ def untrusted_project_agents(project_root: Path) -> list[str]:
     return sorted(_load_dir(project_root / ".cmcoder" / "agents", "project", project_root))
 
 
-def allowed(name: str, wanted: list[str] | None) -> bool:
-    """Is tool `name` in an agent's `tools` list? `mcp__server` means all its tools."""
-    if name in NOT_FOR_SUBAGENTS:
-        return False
+def model_ref(settings: Settings, definition: AgentDefinition) -> str | None:
+    """The model an agent definition asks for ("provider:model"), or None: the main model
+    (`model:` absent or `inherit`; `small` and `subagent` are the settings' own picks)."""
+    ref = definition.model
+    if ref in (None, "", "inherit"):
+        return None
+    if ref == "small":
+        return settings.small_fast_model
+    if ref == "subagent":
+        return settings.subagent_model or settings.small_fast_model
+    return ref
+
+
+def listed(name: str, wanted: list[str] | None) -> bool:
+    """Is tool `name` in an agent's `tools` list (None: every tool)? `mcp__server` means all
+    the tools of that MCP server."""
     if wanted is None:
         return True
     return name in wanted or any(
         w.startswith("mcp__") and name.startswith(w + "__") for w in wanted
     )
+
+
+def allowed(name: str, wanted: list[str] | None) -> bool:
+    """`listed`, for a subagent: which never has the tools that start agents or the todo list."""
+    return name not in NOT_FOR_SUBAGENTS and listed(name, wanted)
+
+
+_EXAMPLES = re.compile(r"<example>.*?</example>", re.DOTALL | re.IGNORECASE)
+_TAGS = re.compile(r"<[^>]{1,40}>")
+
+
+def short_description(text: str, width: int = 140) -> str:
+    """One line for a menu: the first sentence of an agent's description, without the
+    `<example>` blocks that agent files (Playwright's, Claude Code's) put in it."""
+    text = " ".join(_TAGS.sub(" ", _EXAMPLES.sub(" ", text)).split())
+    first = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0]
+    return first if len(first) <= width else first[: width - 1].rstrip() + "…"
+
+
+def agent_infos(root: Path, project_trusted: bool) -> list[ev.AgentInfo]:
+    """The agents a conversation can be switched to, for the UI's list: the project's first (a
+    project's own are listed greyed out until the project is trusted), then yours, then the
+    built-in ones. The critic is an agent of its own and is left out."""
+    found = load_agents(root, project_trusted)
+    found.pop(CRITIC_NAME, None)
+    infos = [
+        ev.AgentInfo(name=d.name, description=short_description(d.description), origin=d.origin)
+        for d in found.values()
+    ]
+    if not project_trusted:
+        infos += [
+            ev.AgentInfo(
+                name=name,
+                description="",
+                origin="project",
+                usable=False,
+                hint="This project's agents are used only once the project is trusted: "
+                "run `cmcoder trust` in the project folder.",
+            )
+            for name in untrusted_project_agents(root)
+            if name not in found
+        ]
+    order = {"project": 0, "user": 1, "built-in": 2}
+    return sorted(infos, key=lambda i: (order[i.origin], i.name))
 
 
 @dataclass
@@ -339,15 +395,8 @@ class SubagentRuntime:
         return found
 
     def model_for(self, definition: AgentDefinition) -> ModelBundle:
-        ref = definition.model
-        s = self.settings
-        if ref in (None, "", "inherit"):
-            return self.main
-        if ref == "small":
-            ref = s.small_fast_model
-        elif ref == "subagent":
-            ref = s.subagent_model or s.small_fast_model
-        return build_chat_model(s, ref) if ref else self.main
+        ref = model_ref(self.settings, definition)
+        return build_chat_model(self.settings, ref) if ref else self.main
 
     def build(
         self,

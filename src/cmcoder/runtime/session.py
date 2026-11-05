@@ -96,9 +96,10 @@ def _text(message: AnyMessage) -> str:
 
 # What this cmcoder can do beyond the base protocol (system_init.features): "images" in
 # a message; "stopTool" ends one running command (`stop_tool`); "sessionRules" takes an
-# "always allow" for the session only (`remember_session`). An IDE panel shows a control
+# "always allow" for the session only (`remember_session`); "agents" lists the agents and
+# switches the conversation to one (`agent_list`, `set_agent`). An IDE panel shows a control
 # only when this list and the IDE's own (data-features) both have it.
-FEATURES = ("images", "stopTool", "sessionRules")
+FEATURES = ("images", "stopTool", "sessionRules", "agents")
 
 
 class Session:
@@ -175,7 +176,12 @@ class Session:
             cwd=str(a.ctx.cwd),
             model=a.bundle.name,
             provider=a.bundle.provider,
-            tools=[*a.tools, "write_todos", "Task", *(["Team"] if a.team else [])],
+            tools=[
+                *a.tools,
+                # (an agent has the todo list and the Task tool only if its tools list names them)
+                *(["write_todos", "Task"] if a.persona is None else []),
+                *(["Team"] if a.team and a.persona is None else []),
+            ],
             permission_mode=a.policy.mode,
             version=__version__,
             features=list(FEATURES),

@@ -83,7 +83,7 @@ async function panel(flavour: Flavour, product?: string, started = true, hostFea
     permission_mode: "default",
     critique: false,
     version: "0.1.0 (abc1234 2026-10-08)",
-    features: ["images", "stopTool", "sessionRules"],
+    features: ["images", "stopTool", "sessionRules", "agents"],
   });
   return { page, send, ev, sent };
 }
@@ -452,6 +452,81 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator(".todo").count(), 4, "an open list stays open as the agent works");
     await page.click(".todo-toggle");
     assert.equal(await page.locator(".todo-list").count(), 0);
+    await page.close();
+  });
+
+  const AGENTS = [
+    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "" },
+    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`." },
+    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "" },
+  ];
+  const HOST = "stopTool sessionRules agents";
+
+  test(`${flavour}: the agent dropdown needs the IDE and cmcoder to support it`, async () => {
+    // The IDE says nothing: no dropdown, even though cmcoder lists agents.
+    const plain = await panel(flavour);
+    await plain.ev({ type: "agent_list", agents: AGENTS, current: null });
+    assert.equal(await plain.page.isVisible(".agent"), false);
+    await plain.page.close();
+    // The IDE supports it but this cmcoder is older: nothing to show either.
+    const old = await panel(flavour, undefined, false, HOST);
+    await old.send({ kind: "state", state: "ready" });
+    await old.ev({ type: "system_init", protocol_version: 1, session_id: "s", cwd: "/p", model: "m", provider: "corp", tools: [], permission_mode: "default", critique: false, version: "0.1.0", features: ["images"] });
+    await old.ev({ type: "agent_list", agents: AGENTS, current: null });
+    assert.equal(await old.page.isVisible(".agent"), false);
+    await old.page.close();
+  });
+
+  test(`${flavour}: the agent dropdown lists them by group, greys out untrusted ones and sends the choice`, async () => {
+    const { page, ev, sent } = await panel(flavour, undefined, true, HOST);
+    assert.equal(await page.isVisible(".agent"), false, "nothing to choose before the list arrives");
+    await ev({ type: "agent_list", agents: AGENTS, current: null });
+    assert.equal(await page.isVisible(".agent"), true);
+    assert.deepEqual(await page.locator(".agent optgroup").evaluateAll((g) => g.map((x) => (x as HTMLOptGroupElement).label)), ["This project", "Built in"]);
+    assert.deepEqual(await page.locator(".agent option").allTextContents(), ["cmcoder (default)", "planner", "healer (trust this project)", "explore"]);
+    assert.equal(await page.locator('.agent option[value="healer"]').isDisabled(), true);
+    assert.match((await page.locator('.agent option[value="healer"]').getAttribute("title")) ?? "", /cmcoder trust/);
+    assert.equal(await page.locator('.agent option[value="planner"]').getAttribute("title"), "Plans tests for a web app.");
+    await page.selectOption(".agent", "planner");
+    assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: "planner" });
+    await ev({ type: "agent_changed", agent: "planner" });
+    await ev({ type: "agent_list", agents: AGENTS, current: "planner" });
+    assert.equal(await page.locator(".agent").inputValue(), "planner");
+    assert.match((await page.textContent(".note.info")) ?? "", /Now talking to the planner agent/);
+    assert.equal(await page.getAttribute("textarea", "placeholder"), "Ask planner… (Enter to send, Shift+Enter for a new line)");
+    assert.equal(await page.getAttribute(".agent", "title"), "Plans tests for a web app.");
+    await page.selectOption(".agent", "");
+    assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: null });
+    await ev({ type: "agent_changed", agent: null });
+    assert.equal(await page.locator(".agent").inputValue(), "");
+    assert.match((await page.locator(".note.info").last().textContent()) ?? "", /Back to cmcoder's default agent/);
+    assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask cmcoder…/);
+    await page.close();
+  });
+
+  test(`${flavour}: the agent can't be changed during a turn, and a refused choice snaps back`, async () => {
+    const { page, ev } = await panel(flavour, undefined, true, HOST);
+    await ev({ type: "agent_list", agents: AGENTS, current: "planner" });
+    await page.fill("textarea", "go");
+    await page.press("textarea", "Enter");
+    assert.equal(await page.locator(".agent").isDisabled(), true);
+    await ev(result);
+    assert.equal(await page.locator(".agent").isDisabled(), false);
+    // The user picks one, cmcoder refuses (an error event): the list shows what is really in use.
+    await page.evaluate(() => ((document.querySelector(".agent") as HTMLSelectElement).value = "explore"));
+    await ev({ type: "error", kind: "invalid_agent", message: "No agent named 'explore'.", hint: null });
+    assert.equal(await page.locator(".agent").inputValue(), "planner");
+    await page.close();
+  });
+
+  test(`${flavour}: a new conversation starts with the default agent and no list`, async () => {
+    const { page, send, ev } = await panel(flavour, undefined, true, HOST);
+    await ev({ type: "agent_list", agents: AGENTS, current: "planner" });
+    await send({ kind: "reset" });
+    assert.equal(await page.isVisible(".agent"), false);
+    assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask cmcoder…/);
+    await ev({ type: "agent_list", agents: AGENTS, current: null });
+    assert.equal(await page.locator(".agent").inputValue(), "");
     await page.close();
   });
 

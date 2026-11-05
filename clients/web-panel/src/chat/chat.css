@@ -398,6 +398,8 @@ footer .actions {
 }
 
 footer .usage { margin-right: auto; opacity: 0.6; }
+footer .actions { flex-wrap: wrap; }
+footer .actions select.agent { min-width: 0; max-width: 12em; text-overflow: ellipsis; }
 
 button {
   color: var(--vscode-button-foreground);

@@ -6,6 +6,15 @@ export const PROTOCOL_VERSION = 1;
 
 // ---- Agent -> client (stdout) ----
 
+/** An agent a conversation can be switched to (`set_agent`): a subagent definition. */
+export interface AgentInfo {
+  name: string;
+  description: string;
+  origin: "built-in" | "user" | "project";
+  usable: boolean;
+  hint: string;
+}
+
 export interface CodeContextItem {
   path: string;
   start_line: number;
@@ -214,6 +223,22 @@ export interface IdeToolRequest {
   input: Record<string, unknown>;
 }
 
+/**
+ * The agents to choose from, and the one in use (None: the default). Sent at start and after
+ * each switch.
+ */
+export interface AgentList {
+  type: "agent_list";
+  agents: AgentInfo[];
+  current: string | null;
+}
+
+/** The conversation now talks to this agent (None: the default). */
+export interface AgentChanged {
+  type: "agent_changed";
+  agent: string | null;
+}
+
 export interface SessionList {
   type: "session_list";
   sessions: SessionSummary[];
@@ -391,6 +416,8 @@ export type AgentEvent =
   | ModeChanged
   | ModelChanged
   | IdeToolRequest
+  | AgentList
+  | AgentChanged
   | SessionList
   | CommandList
   | RewindPoints
@@ -493,6 +520,16 @@ export interface SetMode {
 export interface SetModel {
   type: "set_model";
   model: string;
+}
+
+/**
+ * Talk to one of the agents in `agent_list` for the rest of the conversation (its
+ * instructions, tools and model replace the default's), or `agent: null` for the default.
+ * Refused during a turn. Answered with `agent_changed`.
+ */
+export interface SetAgent {
+  type: "set_agent";
+  agent?: string | null;
 }
 
 /**
@@ -602,6 +639,7 @@ export type ClientMessage =
   | StopTool
   | SetMode
   | SetModel
+  | SetAgent
   | IdeCapabilities
   | IdeToolResult
   | ListSessions

@@ -397,6 +397,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "setMode":
         this.agent?.send({ type: "set_mode", mode: m.mode });
         break;
+      case "setAgent":
+        this.agent?.send({ type: "set_agent", agent: m.agent });
+        break;
       case "setCritique":
         this.agent?.send({ type: "set_critique", enabled: m.enabled, save: true });
         break;
@@ -461,7 +464,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <link href="${style}" rel="stylesheet">
   <title>${escapeHtml(productName())}</title>
 </head>
-<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab">
+<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab agents">
   <div id="app"></div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>
