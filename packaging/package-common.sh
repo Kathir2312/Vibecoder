@@ -76,7 +76,10 @@ check_git() {
   $commit
 - 'dubious ownership': trust the folder, then run this again:
     git config --global --add safe.directory '$root'
-- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip."
+- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip.
+- 'Needed a single revision' / 'unknown revision': this folder is a git repository with no commit
+  yet (a copy that was git-init'ed). Make one:
+    git add -A && git commit -m build    (or use a git clone of the repository)"
     [ "$skip_tests" = 1 ] || die "$why"
     printf 'WARNING: %s\nGoing on (--skip-tests): the build will say "unknown" instead of its commit.\n' "$why" >&2
   fi

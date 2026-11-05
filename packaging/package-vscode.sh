@@ -61,7 +61,10 @@ if ! commit="$(git -C "$root" rev-parse --short=7 HEAD 2>&1)"; then
   $commit
 - 'dubious ownership': trust the folder, then run this again:
     git config --global --add safe.directory '$root'
-- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip."
+- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip.
+- 'Needed a single revision' / 'unknown revision': this folder is a git repository with no commit
+  yet (a copy that was git-init'ed). Make one:
+    git add -A && git commit -m build    (or use a git clone of the repository)"
   if [ "$skip_tests" = 0 ]; then
     echo "$why" >&2
     exit 1

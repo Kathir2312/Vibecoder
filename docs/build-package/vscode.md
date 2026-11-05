@@ -141,7 +141,7 @@ User guide: [../guides/vscode.md](../guides/vscode.md).
 
 | Problem | Fix |
 |---|---|
-| "git can't read this folder's commit" | "dubious ownership": run the `git config --global --add safe.directory …` line it prints. "Not a git repository": use a git clone |
+| "git can't read this folder's commit" | "dubious ownership": run the `git config --global --add safe.directory …` line it prints. "Not a git repository": use a git clone. "Needed a single revision": the folder is a repository with no commit yet; `git add -A` and `git commit -m build`, or use a clone |
 | "Node.js 22 or newer is needed" | install Node.js 22 LTS and open a new terminal |
 | `test_standalone.py` fails | don't hand the file out; send the test output to the maintainers |
 | "cmcoder is missing from the .vsix" | the program build failed earlier in the output: fix that first |

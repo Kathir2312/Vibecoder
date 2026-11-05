@@ -74,7 +74,9 @@ function Assert-GitCommit {
         $why = "git can't read this folder's commit, which names the build:`n  $commit`n" +
             "- 'dubious ownership': trust the folder, then run this again:`n" +
             "    git config --global --add safe.directory $($root -replace '\\', '/')`n" +
-            "- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip."
+            "- 'not a git repository': use a git clone of the repository, not a copy or a downloaded zip.`n" +
+        "- 'Needed a single revision' / 'unknown revision': this folder is a git repository with no commit yet (a copy that had git init run in it). Make one:`n" +
+        "    git add -A; git commit -m `"build`"    (or use a git clone of the repository)"
         if (-not $SkipTests) { throw $why }
         Write-Warning "$why`nGoing on (-SkipTests): the build will say 'unknown' instead of its commit."
     }
