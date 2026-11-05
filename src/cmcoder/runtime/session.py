@@ -93,8 +93,11 @@ def _text(message: AnyMessage) -> str:
     return message.content if isinstance(message.content, str) else message.text
 
 
-# What this cmcoder can do beyond the base protocol (system_init.features).
-FEATURES = ("images",)
+# What this cmcoder can do beyond the base protocol (system_init.features): "images" in
+# a message; "stopTool" ends one running command (`stop_tool`); "sessionRules" takes an
+# "always allow" for the session only (`remember_session`). An IDE panel shows a control
+# only when this list and the IDE's own (data-features) both have it.
+FEATURES = ("images", "stopTool", "sessionRules")
 
 
 class Session:

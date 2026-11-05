@@ -87,8 +87,13 @@ export function fromHost(e: MessageEvent): boolean {
   return origin !== "null" && e.origin === origin;
 }
 
-/** Values the IDE puts on <body> for the panel: data-product, data-icon. */
-export function hostSettings(): { product: string; icon: string | null } {
+/**
+ * Values the IDE puts on <body> for the panel: data-product, data-icon, and
+ * data-features: what the IDE side can do beyond the base messages, separated by
+ * spaces ("stopTool" forwards a Stop on one command, "sessionRules" an "always allow"
+ * that lasts for the session). An IDE that says nothing gets the base panel.
+ */
+export function hostSettings(): { product: string; icon: string | null; features: string[] } {
   const data = document.body.dataset;
   const icon = data.icon || null;
   // The icon is a picture the IDE serves (no inline styles under the panel's CSP:
@@ -96,5 +101,5 @@ export function hostSettings(): { product: string; icon: string | null } {
   if (icon && /^(https?|vscode-webview|vscode-resource|file|data):|^[\w./-]+$/i.test(icon)) {
     document.documentElement.style.setProperty("--cmcoder-icon", `url("${icon.replace(/["\\\n]/g, "")}")`);
   }
-  return { product: data.product || "cmcoder", icon };
+  return { product: data.product || "cmcoder", icon, features: (data.features ?? "").split(/\s+/).filter(Boolean) };
 }

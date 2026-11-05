@@ -46,6 +46,17 @@ per page. `data-product` is the brand name (`branding/brand.json`),
 `data-icon` the brand icon's address; `data-host="function"` only where the
 IDE adds `cmcoderHostPost` (Eclipse, NetBeans).
 
+`data-features` lists what the IDE side does beyond the base messages, separated by
+spaces; an IDE that leaves it out gets the base panel:
+
+| Feature | The IDE forwards | The panel then shows |
+|---|---|---|
+| `stopTool` | `{"kind": "stopTool", "toolUseId"}` as a `stop_tool` message | **Stop this command** on a running Bash card |
+| `sessionRules` | `rememberSession: true` of a `permission` message as `remember_session` | **For this session** under **Always allow…** |
+
+A control also needs cmcoder to have the feature (`system_init.features`), so an
+older cmcoder with a newer IDE, or the other way round, just shows less.
+
 ## Messages
 
 The types are in `src/messages.ts` (`ToWebview`/`FromWebview` for the chat,

@@ -159,17 +159,51 @@ The panel is ready: it shows the model's name at the top and the box to type in.
 Type a request and press **Enter** (**Shift+Enter** for a new line). For example:
 *Fix the bug in add() in app.py*.
 
-cmcoder reads files and, **before it changes anything, asks you**. For an edit it shows
-what would change:
+cmcoder reads files and, **before it changes anything, asks you**. For an edit the card
+shows what would change as a diff, with line numbers and the lines around the change; the
+small tag says **why** you are asked:
 
-![cmcoder asks before editing a file](img/07-permission.png)
+![cmcoder asks before editing a file](img/09-consent-edit.png)
 
 | Button | Does |
 |---|---|
-| **Show diff** | opens VS Code's diff editor for the proposed change |
-| **Allow** | makes this change |
-| **Always allow** | allows this kind of change in this project from now on |
-| **Deny** | refuses; the turn stops. The box lets you tell cmcoder what to do instead |
+| **Allow** | makes this change, this once |
+| **Always allow…** | shows the rule it would add, then asks where it should hold (below) |
+| **Deny** | refuses; the turn stops |
+| **Deny with a note…** | refuses and tells cmcoder what to do instead |
+| **Open in diff editor** | opens VS Code's diff editor for the proposed change |
+
+**Always allow…** never saves anything by surprise. It shows the rule
+(for example `Bash(pytest:*)`) and offers **For this session** (until you close the
+conversation, nothing is written), **In this project** (saved in the project's settings, as
+the CLI's "Always" does) or **Cancel**:
+
+![Always allow shows the rule and where it holds](img/11-always-allow.png)
+
+For a command the card shows the command with its folder; flags, strings and variables are
+coloured:
+
+![cmcoder asks before running a command](img/10-consent-command.png)
+
+A command that can do real harm (recursive delete, `sudo`, a download piped into a shell,
+a force-push…) is shown in red, with the dangerous part underlined. It can be allowed
+**once** only: the rule is never offered, whatever you answered before:
+
+![A high-risk command](img/12-consent-high-risk.png)
+
+If the chat is not in view when cmcoder needs your answer (another side-bar view is open),
+VS Code shows a notification with a button that opens it. `cmcoder.notifyWhenHidden` turns
+that off.
+
+### Commands that run
+
+Each command cmcoder runs gets its own card: the command, how it ended (exit code and
+time) and the end of its output. Output appears **while the command runs**, with
+**Stop this command** under it: it ends that command only, and cmcoder carries on with
+what the command printed. Long output is folded to its last lines: **Show all** opens it,
+**Copy output** copies it.
+
+![A failed, a passed and a stopped command](img/13-bash-card.png)
 
 After you allow it, cmcoder finishes and tells you what it did:
 

@@ -184,7 +184,7 @@ namespace Cmcoder.VisualStudio
                 + "  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src " + source
                 + "; img-src " + source + " data:; script-src 'nonce-" + nonce + "'\">\n"
                 + "  <link href=\"" + source + "/" + page + ".css\" rel=\"stylesheet\">\n"
-                + "</head>\n<body data-product=\"" + Attr(Brand.Product) + "\" data-icon=\"" + source + "/icon.png\">\n"
+                + "</head>\n<body data-product=\"" + Attr(Brand.Product) + "\" data-icon=\"" + source + "/icon.png\" data-features=\"stopTool sessionRules\">\n"
                 + "  <div id=\"app\"></div>\n"
                 + "  <script nonce=\"" + nonce + "\" src=\"" + source + "/" + page + ".js\"></script>" + testScript + "\n"
                 + "</body></html>\n";

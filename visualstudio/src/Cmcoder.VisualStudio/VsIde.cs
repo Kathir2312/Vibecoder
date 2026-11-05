@@ -67,6 +67,19 @@ namespace Cmcoder.VisualStudio
 
         public void FocusChat() => Later(() => CmcoderPackage.Instance?.ShowChat(true));
 
+        /// <summary>
+        /// A request waits for an answer: when the chat isn't on screen (another tool window
+        /// on top, the window closed) the status bar says so; the chat itself is left alone.
+        /// </summary>
+        public void RequestWaiting(string what) => Later(() =>
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var window = CmcoderPackage.Instance?.FindToolWindow(typeof(ChatWindow), 0, false);
+            if (window?.Frame is IVsWindowFrame frame && frame.IsOnScreen(out int onScreen) == 0 && onScreen != 0) return;
+            if (Package.GetGlobalService(typeof(SVsStatusbar)) is IVsStatusbar bar)
+                bar.SetText(Brand.Product + " needs your answer: allow it to " + what + "? Open the chat to answer.");
+        });
+
         public bool AutoContext => OnUi(() => CmcoderPackage.Instance?.Options.AutoContext ?? true);
 
         public bool DiffReview => OnUi(() => CmcoderPackage.Instance?.Options.DiffReview ?? true);

@@ -248,6 +248,11 @@
           "default": true,
           "description": "Open proposed edits in VS Code's diff editor for review (Accept / Reject in its title bar)."
         },
+        "cmcoder.notifyWhenHidden": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a notification when cmcoder needs your answer (a permission request) while its chat isn't in view, with a button that opens it."
+        },
         "cmcoder.autoContext": {
           "type": "boolean",
           "default": true,

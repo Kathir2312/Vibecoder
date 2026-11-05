@@ -35,7 +35,8 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 
 | Feature | How |
 |---|---|
-| Permission prompts | In the chat: **Allow**, **Always allow** (saved for this project, like the CLI's "Always"), **Deny** with an optional message for cmcoder |
+| Permission prompts | In the chat: why it is asked, the command or a diff of the change; **Allow**, **Always allow…** (shows the rule; for this session or saved for this project), **Deny** (with an optional note for cmcoder); a notification when the chat is out of view |
+| Commands | A card per command: exit code, time, live output, **Stop this command**, **Show all**, **Copy output** |
 | Review edits | A proposed Write/Edit opens in the diff editor; **✓ Accept** / **✕ Reject** in its title bar (or on the chat card) |
 | Editor context | The active file, selection and its problems go with each message; the 📎 line shows what, and its checkbox leaves it out once |
 | Ask about code | Select code, then **Ctrl+Alt+L** or right-click → **Ask cmcoder About Selection** |
@@ -54,6 +55,7 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 | `cmcoder.executableArgs` | Development only: arguments before cmcoder's own, e.g. `["run", "--project", "C:\\path\\to\\cmcoder", "cmcoder"]` with `uv` as the executable (needs Python) |
 | `cmcoder.permissionMode` | Permission mode for new conversations (user settings only) |
 | `cmcoder.diffReview` | Open proposed edits in the diff editor (default on) |
+| `cmcoder.notifyWhenHidden` | A notification, with a button to open the chat, when cmcoder needs your answer while the chat isn't in view (default on) |
 | `cmcoder.autoContext` | Send the editor context with messages (default on) |
 
 A workspace can't change which program runs or the permission mode: the

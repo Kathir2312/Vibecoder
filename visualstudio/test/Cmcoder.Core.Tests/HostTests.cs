@@ -25,6 +25,7 @@ namespace Cmcoder.Core.Tests
             public void ToNavigator(string json) { lock (Navigator) Navigator.Add(json); }
             public void OpenNavigator() { lock (Calls) Calls.Add("openNavigator"); }
             public void FocusChat() { lock (Calls) Calls.Add("focusChat"); }
+            public void RequestWaiting(string what) { lock (Calls) Calls.Add("waiting " + what); }
             public JObject? EditorContext() => Context;
             public bool AutoContext => true;
             public bool DiffReview => true;
@@ -121,6 +122,7 @@ namespace Cmcoder.Core.Tests
             Assert.EndsWith("new.py", change.Path);
             Assert.Equal("x = 2\n", change.After);
             var id = Json.Str(ide.Events("permission_request")[0], "request_id")!;
+            lock (ide.Calls) Assert.Contains(ide.Calls, c => c.StartsWith("waiting ", StringComparison.Ordinal));
             host.Answer(id, true, false, null); // the diff viewer's Accept
             Fixtures.Until("the second turn", () => ide.Events("result").Count == 2, ide.LogText);
             Assert.Equal("x = 2\n", File.ReadAllText(Path.Combine(project, "new.py")));

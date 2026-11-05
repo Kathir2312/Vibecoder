@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { chromium, type Browser, type Page } from "playwright";
-import type { AgentEvent } from "../src/protocol";
+import type { AgentEvent, PermissionRequest } from "../src/protocol";
 import type { FromWebview, ToWebview } from "../src/messages";
 
 const root = join(__dirname, "..");
@@ -39,13 +39,13 @@ async function connected(page: Page, flavour: Flavour): Promise<void> {
   await page.waitForFunction(() => (window as unknown as { sent: unknown[] }).sent.length > 0);
 }
 
-async function panel(flavour: Flavour, product?: string, started = true): Promise<{ page: Page; send: (m: ToWebview) => Promise<void>; ev: (e: AgentEvent) => Promise<void>; sent: () => Promise<FromWebview[]> }> {
+async function panel(flavour: Flavour, product?: string, started = true, hostFeatures = "stopTool sessionRules"): Promise<{ page: Page; send: (m: ToWebview) => Promise<void>; ev: (e: AgentEvent) => Promise<void>; sent: () => Promise<FromWebview[]> }> {
   const page = await browser.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.setContent(`<!DOCTYPE html><html><head><style>${readFileSync(join(root, "dist", "chat.css"), "utf8")}</style>
     <script>${HOSTS[flavour]}</script>
-    </head><body data-icon="https://panel.test/icon.png"${product ? ` data-product="${product}"` : ""}><div id="app"></div></body></html>`);
+    </head><body data-icon="https://panel.test/icon.png" data-features="${hostFeatures}"${product ? ` data-product="${product}"` : ""}><div id="app"></div></body></html>`);
   await page.addScriptTag({ content: readFileSync(join(root, "dist", "chat.js"), "utf8") });
   await connected(page, flavour);
   // postMessage is delivered later: resolve only once the page has handled it
@@ -83,7 +83,7 @@ async function panel(flavour: Flavour, product?: string, started = true): Promis
     permission_mode: "default",
     critique: false,
     version: "0.1.0 (abc1234 2026-10-08)",
-    features: ["images"],
+    features: ["images", "stopTool", "sessionRules"],
   });
   return { page, send, ev, sent };
 }
@@ -100,6 +100,14 @@ const result: AgentEvent = {
   review: null,
 };
 
+/** A permission request with the usual fields; each test gives what it is about. */
+function ask(over: Partial<PermissionRequest> & Pick<PermissionRequest, "request_id" | "tool_use_id" | "name" | "label" | "input" | "suggested_rule">): AgentEvent {
+  return {
+    type: "permission_request", reason: "", can_remember: true, change: null, cwd: null, reasons: [], high_risk: false, agent: null,
+    ...over,
+  };
+}
+
 for (const flavour of FLAVOURS) {
   test(`${flavour}: a turn: prompt, streamed Markdown, tool card, todo list`, async () => {
     const { page, ev, sent } = await panel(flavour);
@@ -113,13 +121,15 @@ for (const flavour of FLAVOURS) {
     await ev({ type: "assistant_delta", text: " <img src=x onerror=alert(1)>" });
     await ev({ type: "assistant_message", text: "Done **now** <img src=x onerror=alert(1)>", reasoning: "", tool_calls: [{}], model: null });
     await ev({ type: "tool_use", id: "1", name: "Bash", input: {}, label: "Bash(pytest -q)", parent_tool_use_id: null });
-    await ev({ type: "tool_result", id: "1", name: "Bash", content: "a\nb\nc\nd\ne", is_error: false, summary: "exit 0", parent_tool_use_id: null, images: [] });
+    await ev({ type: "tool_result", id: "1", name: "Bash", content: "a\nb\nc\nd\ne", is_error: false, summary: "exit 0", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     await ev(result);
 
     assert.equal(await page.textContent(".todos"), "Todo list · 0/2 done► Fix☐ Test");
     assert.equal(await page.innerHTML(".msg.assistant strong"), "now");
     assert.equal(await page.locator(".msg.assistant img").count(), 0, "raw HTML from the model is not rendered");
-    assert.match((await page.textContent(".tool")) ?? "", /Bash\(pytest -q\)└ exit 0a\nb\nc\n… 2 more lines/);
+    assert.equal(await page.textContent(".tool.bash .bash-cmd"), "pytest -q");
+    assert.equal(await page.textContent(".tool.bash .bash-badge"), "✓ done");
+    assert.equal(await page.textContent(".tool.bash .bash-out"), "a\nb\nc\nd\ne");
     assert.equal(await page.isVisible(".send"), true);
     await page.close();
   });
@@ -131,6 +141,7 @@ for (const flavour of FLAVOURS) {
     await ev({
       type: "tool_result", id: "s1", name: "Browser", content: "Took a screenshot.", is_error: false,
       summary: "screenshot", parent_tool_use_id: null,
+      exit_code: null, duration_ms: null, total_lines: null, stopped: false,
       images: [png, "javascript:alert(1)", "data:text/html;base64,PHNjcmlwdD4="],
     });
     assert.equal(await page.locator(".tool img.shot").count(), 1, "only image data URLs are shown");
@@ -143,28 +154,30 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
-  test(`${flavour}: a permission request: diff, deny with feedback, no duplicate note`, async () => {
+  test(`${flavour}: an edit request: headline, why, diff, a denial with a note, no duplicate note`, async () => {
     const { page, send, ev, sent } = await panel(flavour);
     await send({ kind: "context", label: "app.py:3-5" });
     await page.fill("textarea", "edit");
     await page.press("textarea", "Enter");
     assert.equal(((await sent()).at(-1) as { includeContext: boolean }).includeContext, true);
-    await ev({
-      type: "permission_request",
-      request_id: "r1",
-      tool_use_id: "t1",
-      name: "Edit",
-      label: "Edit(app.py)",
-      input: { file_path: "app.py", old_string: "a", new_string: "b" },
-      suggested_rule: "Edit(app.py)",
-      reason: "",
-      can_remember: true,
-      change: { path: "/p/app.py", before: "a", after: "b" },
-    });
-    assert.match((await page.textContent(".permission pre")) ?? "", /- a\n\+ b/);
-    await page.click("text=Show diff");
-    await page.fill(".permission input", "keep a");
-    await page.click("text=Deny");
+    await ev(ask({
+      request_id: "r1", tool_use_id: "t1", name: "Edit", label: "Edit(app.py)",
+      input: { file_path: "src/app.py", old_string: "a", new_string: "b" }, suggested_rule: "Edit(app.py)",
+      reasons: ["edits ask first in default mode"],
+      change: { path: "/p/src/app.py", before: "x\na\ny\n", after: "x\nb\ny\n" },
+    }));
+    assert.equal(await page.textContent(".ask-title"), "Edit app.py");
+    assert.equal(await page.textContent(".ask-chips .chip"), "edits ask first in default mode");
+    assert.equal(await page.textContent(".drow.del .txt"), "a");
+    assert.equal(await page.textContent(".drow.add .txt"), "b");
+    assert.equal(await page.textContent(".drow.del .no"), "2");
+    assert.equal(await page.textContent(".diff-add"), "+1");
+    assert.equal(await page.textContent(".diff-del"), "−1");
+    assert.equal(await page.locator(".ask-deny input").isVisible(), false);
+    await page.click("text=Open in diff editor");
+    await page.click("text=Deny with a note…");
+    await page.fill(".ask-deny input", "keep a");
+    await page.click("text=Deny and send");
     await ev({ type: "permission_denied", id: "t1", name: "Edit", reason: "denied by user", parent_tool_use_id: null });
     const out = await sent();
     assert.deepEqual(out.slice(-2), [
@@ -172,28 +185,205 @@ for (const flavour of FLAVOURS) {
       { kind: "permission", requestId: "r1", allow: false, remember: false, feedback: "keep a" },
     ]);
     assert.equal(await page.locator(".note.warn").count(), 0);
-    assert.match((await page.textContent(".permission")) ?? "", /└ Denied/);
+    assert.match((await page.textContent(".permission")) ?? "", /└ Denied · “keep a”/);
+    assert.equal(await page.locator(".permission button, .permission input").count(), 0);
     await page.close();
   });
 
-  test(`${flavour}: high-risk requests have no 'Always'; answers from the diff editor close the card`, async () => {
+  test(`${flavour}: a command request: the command with its folder, highlighted; Allow once`, async () => {
+    const { page, ev, sent } = await panel(flavour);
+    await ev(ask({
+      request_id: "r3", tool_use_id: "t3", name: "Bash", label: "Bash(git commit -m 'x' && echo $HOME)",
+      input: { command: "git commit -m 'x' && echo $HOME" }, suggested_rule: "Bash(git commit:*)",
+      reasons: ["not on your allow list"], cwd: "/work/app",
+    }));
+    assert.equal(await page.textContent(".ask-title"), "Run a command");
+    assert.equal(await page.textContent(".ask-chips .chip"), "not on your allow list");
+    assert.equal(await page.textContent(".cmd-line .prompt"), "$");
+    assert.equal(await page.textContent(".cmd-line .bash-cmd"), "git commit -m 'x' && echo $HOME");
+    assert.equal(await page.textContent(".cmd-cwd"), "in /work/app");
+    assert.equal(await page.textContent(".cmd-line .sh-flag"), "-m");
+    assert.equal(await page.textContent(".cmd-line .sh-string"), "'x'");
+    assert.equal(await page.textContent(".cmd-line .sh-var"), "$HOME");
+    assert.equal(await page.locator(".permission.risk").count(), 0);
+    assert.equal(await page.evaluate(() => document.activeElement === document.body || document.activeElement?.tagName === "TEXTAREA"), true, "no button takes the focus");
+    await page.click("button:text-is('Allow')");
+    assert.deepEqual((await sent()).at(-1), { kind: "permission", requestId: "r3", allow: true, remember: false });
+    assert.match((await page.textContent(".permission")) ?? "", /└ Allowed$/);
+    await page.close();
+  });
+
+  test(`${flavour}: a high-risk request is red, names the danger and can be allowed once only`, async () => {
     const { page, send, ev } = await panel(flavour);
-    await ev({
-      type: "permission_request",
-      request_id: "r2",
-      tool_use_id: "t2",
-      name: "Bash",
-      label: "Bash(rm -rf build)",
-      input: { command: "rm -rf build" },
-      suggested_rule: "Bash(rm:*)",
-      reason: "high-risk command",
-      can_remember: false,
-      change: null,
-    });
+    await ev(ask({
+      request_id: "r2", tool_use_id: "t2", name: "Bash", label: "Bash(rm -rf build)",
+      input: { command: "rm -rf build" }, suggested_rule: "Bash(rm:*)", reason: "high-risk command",
+      reasons: ["high-risk: recursive delete"], can_remember: false, cwd: "/p", high_risk: true,
+    }));
+    assert.equal(await page.locator(".permission.risk").count(), 1);
+    assert.equal(await page.textContent(".ask-icon"), "⚠");
     assert.equal(await page.locator("text=Always allow").count(), 0);
+    assert.equal(await page.locator("button:text-is('Allow once')").count(), 1);
+    assert.match((await page.textContent(".ask-note")) ?? "", /Asked every time/);
+    assert.match((await page.textContent(".danger-parts")) ?? "", /Look at: rm -rf/);
+    assert.equal((await page.locator(".cmd-line .sh-danger").allTextContents()).join(""), "rm -rf");
     await send({ kind: "permissionAnswered", requestId: "r2", text: "Allowed" });
     assert.match((await page.textContent(".permission")) ?? "", /└ Allowed/);
     assert.equal(await page.locator(".permission button").count(), 0);
+    await page.close();
+  });
+
+  test(`${flavour}: Always allow shows the rule, then asks for the session or the project`, async () => {
+    const { page, ev, sent } = await panel(flavour);
+    const request = (id: string) => ask({
+      request_id: id, tool_use_id: `u${id}`, name: "Bash", label: "Bash(npm test)",
+      input: { command: "npm test" }, suggested_rule: "Bash(npm test:*)", reasons: ["not on your allow list"], cwd: "/p",
+    });
+    await ev(request("a1"));
+    assert.equal(await page.locator(".ask-always").isVisible(), false);
+    await page.click("text=Always allow…");
+    assert.equal(await page.locator(".ask-actions").isVisible(), false);
+    assert.match((await page.textContent(".ask-rule")) ?? "", /Allow from now on: Bash\(npm test:\*\)/);
+    await page.click("text=For this session");
+    assert.deepEqual((await sent()).at(-1), { kind: "permission", requestId: "a1", allow: true, remember: false, rememberSession: true });
+    assert.match((await page.textContent(".permission")) ?? "", /└ Allowed for this session/);
+
+    await ev(request("a2"));
+    await page.locator(".permission").last().locator("text=Always allow…").click();
+    await page.locator(".permission").last().locator("text=Cancel").click();
+    assert.equal(await page.locator(".permission").last().locator(".ask-actions").isVisible(), true, "Cancel goes back");
+    await page.locator(".permission").last().locator("text=Always allow…").click();
+    await page.locator(".permission").last().locator("text=In this project").click();
+    assert.deepEqual((await sent()).at(-1), { kind: "permission", requestId: "a2", allow: true, remember: true });
+    assert.match((await page.locator(".permission").last().textContent()) ?? "", /└ Allowed · rule saved for this project/);
+    await page.close();
+  });
+
+  test(`${flavour}: without the IDE's or cmcoder's support there is no session choice and no Stop`, async () => {
+    for (const [host, engine] of [["", ["images", "stopTool", "sessionRules"]], ["stopTool sessionRules", ["images"]]] as const) {
+      const { page, ev, send } = await panel(flavour, undefined, false, host);
+      await send({ kind: "state", state: "ready" });
+      await ev({ type: "system_init", protocol_version: 1, session_id: "s", cwd: "/p", model: "m", provider: "corp", tools: [], permission_mode: "default", critique: false, version: "0.1.0", features: [...engine] });
+      await ev({ type: "tool_use", id: "b9", name: "Bash", input: { command: "sleep 5" }, label: "Bash(sleep 5)", parent_tool_use_id: null });
+      await ev({ type: "tool_progress", id: "b9", name: "Bash", text: "x\n", elapsed_ms: 10, parent_tool_use_id: null });
+      assert.equal(await page.locator(".stop-cmd").isVisible(), false, "no Stop this command");
+      await ev(ask({ request_id: "g1", tool_use_id: "g1", name: "Edit", label: "Edit(a.py)", input: { file_path: "a.py", old_string: "a", new_string: "b" }, suggested_rule: "Edit(a.py)" }));
+      await page.click("text=Always allow…");
+      assert.equal(await page.locator("text=For this session").count(), 0);
+      assert.equal(await page.locator("button:text-is('In this project')").count(), 1);
+      await page.close();
+    }
+  });
+
+  test(`${flavour}: a new file and an edit without the whole file show their lines`, async () => {
+    const { page, ev } = await panel(flavour);
+    await ev(ask({
+      request_id: "n1", tool_use_id: "n1", name: "Write", label: "Write(new.py)", input: { file_path: "pkg/new.py", content: "a\nb\n" },
+      suggested_rule: "Write(new.py)", change: { path: "/p/pkg/new.py", before: null, after: "a\nb\n" },
+    }));
+    assert.equal(await page.textContent(".ask-title"), "Create new.py");
+    assert.equal(await page.textContent(".diff-new"), "new file");
+    assert.equal(await page.textContent(".diff-add"), "+2");
+    assert.equal(await page.locator(".diff-del").count(), 0, "no −0 for a new file");
+    assert.equal(await page.locator(".drow.add").count(), 2);
+    await ev(ask({
+      request_id: "n2", tool_use_id: "n2", name: "Edit", label: "Edit(big.py)", input: { file_path: "big.py", old_string: "one\ntwo", new_string: "one\n2" },
+      suggested_rule: "Edit(big.py)", change: null,
+    }));
+    const card = page.locator(".permission").last();
+    assert.equal(await card.locator(".ask-diff.plain").count(), 1, "no line numbers for a snippet");
+    assert.equal(await card.locator(".drow.del .txt").textContent(), "two");
+    assert.equal(await card.locator(".drow.add .txt").textContent(), "2");
+    await page.close();
+  });
+
+  test(`${flavour}: with several requests waiting each says which it is`, async () => {
+    const { page, ev, send } = await panel(flavour);
+    for (const id of ["q1", "q2"]) {
+      await ev(ask({ request_id: id, tool_use_id: id, name: "Bash", label: "Bash(touch a)", input: { command: "touch a" }, suggested_rule: "Bash(touch:*)", cwd: "/p" }));
+    }
+    assert.deepEqual(await page.locator(".ask-count").allTextContents(), ["1 of 2 waiting", "2 of 2 waiting"]);
+    await send({ kind: "permissionAnswered", requestId: "q1", text: "Allowed" });
+    assert.deepEqual(await page.locator(".ask-count").allTextContents(), [""], "the answered one drops its count");
+    await page.close();
+  });
+
+  test(`${flavour}: the Bash card: waits for the answer, shows output live, stops, ends as stopped`, async () => {
+    const { page, send, ev, sent } = await panel(flavour);
+    await ev({ type: "tool_use", id: "b1", name: "Bash", input: { command: "make build\nmake test" }, label: "Bash(make build)", parent_tool_use_id: null });
+    assert.match((await page.textContent(".bash-badge")) ?? "", /^running · \d+s$/);
+    assert.equal(await page.textContent(".bash-cmd"), "make build …", "the first line, with a mark for the rest");
+    await ev(ask({ request_id: "w1", tool_use_id: "b1", name: "Bash", label: "Bash(make build)", input: { command: "make build\nmake test" }, suggested_rule: "Bash(make:*)", cwd: "/p" }));
+    assert.equal(await page.textContent(".bash-badge"), "waiting for your answer");
+    assert.equal(await page.locator(".stop-cmd").isVisible(), false, "nothing to stop before it runs");
+    await page.click("button:text-is('Allow')");
+    assert.match((await page.textContent(".bash-badge")) ?? "", /^running/);
+    await ev({ type: "tool_progress", id: "b1", name: "Bash", text: "compiling\n", elapsed_ms: 1200, parent_tool_use_id: null });
+    await ev({ type: "tool_progress", id: "b1", name: "Bash", text: "linking\n", elapsed_ms: 2400, parent_tool_use_id: null });
+    await page.waitForFunction(() => document.querySelector(".bash-out")?.textContent === "compiling\nlinking");
+    assert.equal(await page.locator(".stop-cmd").isVisible(), true);
+    await page.click(".stop-cmd");
+    assert.deepEqual((await sent()).at(-1), { kind: "stopTool", toolUseId: "b1" });
+    assert.match((await page.textContent(".bash-badge")) ?? "", /^stopping… · \d+s$/);
+    assert.equal(await page.locator(".stop-cmd").isVisible(), false, "once");
+    await ev({
+      type: "tool_result", id: "b1", name: "Bash", is_error: true, summary: "stopped", parent_tool_use_id: null, images: [],
+      content: "(The user stopped this command before it finished. Its output so far follows.)\ncompiling\nlinking",
+      exit_code: null, duration_ms: 2600, total_lines: 2, stopped: true,
+    });
+    assert.equal(await page.textContent(".bash-badge"), "■ stopped · 2.6 s");
+    assert.equal(await page.textContent(".bash-out"), "compiling\nlinking");
+    assert.equal(await page.locator(".tool.bash").getAttribute("data-state"), "stopped");
+    await send({ kind: "reset" });
+    await page.close();
+  });
+
+  test(`${flavour}: the Bash card: exit code and time, only the end of long output, Show all, Copy`, async () => {
+    const { page, ev } = await panel(flavour);
+    await ev({ type: "tool_use", id: "c1", name: "Bash", input: { command: "pytest" }, label: "Bash(pytest)", parent_tool_use_id: null });
+    const lines = Array.from({ length: 20 }, (_, i) => `\u001b[32mline ${i + 1}\u001b[0m`);
+    await ev({
+      type: "tool_result", id: "c1", name: "Bash", is_error: true, summary: "exit 3", parent_tool_use_id: null, images: [],
+      content: `${lines.join("\n")}\n\nExit code 3`, exit_code: 3, duration_ms: 1500, total_lines: 20, stopped: false,
+    });
+    assert.equal(await page.textContent(".bash-badge"), "✗ exit 3 · 1.5 s");
+    assert.equal(await page.locator(".tool.bash").getAttribute("data-state"), "fail");
+    const shown = ((await page.textContent(".bash-out")) ?? "").split("\n");
+    assert.deepEqual([shown[0], shown[1], shown.at(-1)], ["… 12 earlier lines", "line 13", "line 20"], "the end, without colour codes or the exit-code trailer");
+    assert.equal(await page.textContent(".bash-foot .more"), "Show all (20 lines)");
+    await page.click(".bash-foot .more");
+    assert.equal(((await page.textContent(".bash-out")) ?? "").split("\n").length, 20);
+    assert.equal(await page.textContent(".bash-foot .more"), "Show less");
+    await page.evaluate(() => {
+      (window as unknown as { copied: string }).copied = "";
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t: string) => void ((window as unknown as { copied: string }).copied = t) } });
+    });
+    await page.click(".bash-foot .copy");
+    await page.waitForFunction(() => document.querySelector(".bash-foot .copy")?.textContent === "Copied");
+    const copied = await page.evaluate(() => (window as unknown as { copied: string }).copied);
+    assert.equal(copied.split("\n").length, 20);
+    assert.ok(!copied.includes("\u001b") && !copied.includes("Exit code"));
+    await ev({ type: "tool_use", id: "c2", name: "Bash", input: { command: "true" }, label: "Bash(true)", parent_tool_use_id: null });
+    await ev({ type: "tool_result", id: "c2", name: "Bash", is_error: false, summary: "exit 0", parent_tool_use_id: null, images: [], content: "(no output)", exit_code: 0, duration_ms: 40, total_lines: 0, stopped: false });
+    const second = page.locator(".tool.bash").nth(1);
+    assert.equal(await second.locator(".bash-badge").textContent(), "✓ exit 0 · 40 ms");
+    assert.equal(await second.locator(".bash-out").textContent(), "(no output)");
+    assert.equal(await second.locator(".bash-foot").isVisible(), false);
+    await page.close();
+  });
+
+  test(`${flavour}: a command still running when the turn ends is shown as interrupted`, async () => {
+    const { page, ev, send } = await panel(flavour);
+    await page.fill("textarea", "go");
+    await page.press("textarea", "Enter");
+    await ev({ type: "tool_use", id: "d1", name: "Bash", input: { command: "sleep 60" }, label: "Bash(sleep 60)", parent_tool_use_id: null });
+    await ev({ ...result, subtype: "interrupted" } as AgentEvent);
+    assert.equal(await page.textContent(".bash-badge"), "■ interrupted");
+    assert.equal(await page.locator(".stop-cmd").isVisible(), false);
+    // cmcoder itself ending takes its commands with it.
+    await ev({ type: "tool_use", id: "d2", name: "Bash", input: { command: "sleep 60" }, label: "Bash(sleep 60)", parent_tool_use_id: null });
+    await send({ kind: "state", state: "exited", message: "cmcoder stopped." });
+    assert.deepEqual(await page.locator(".bash-badge").allTextContents(), ["■ interrupted", "■ interrupted"]);
     await page.close();
   });
 
@@ -262,10 +452,10 @@ for (const flavour of FLAVOURS) {
     await page.press("textarea", "Enter");
     await ev({ type: "tool_use", id: "t", name: "Task", input: {}, label: "Task(explore: find the parser)", parent_tool_use_id: null });
     await ev({ type: "tool_use", id: "c1", name: "Grep", input: {}, label: "Grep(parse)", parent_tool_use_id: "t" });
-    await ev({ type: "tool_result", id: "c1", name: "Grep", content: "3 files", is_error: false, summary: null, parent_tool_use_id: "t", images: [] });
+    await ev({ type: "tool_result", id: "c1", name: "Grep", content: "3 files", is_error: false, summary: null, parent_tool_use_id: "t", exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     await ev({ type: "tool_use", id: "c2", name: "Read", input: {}, label: "Read(x.py)", parent_tool_use_id: "t" });
-    await ev({ type: "tool_result", id: "c2", name: "Read", content: "No such file\nmore", is_error: true, summary: null, parent_tool_use_id: "t", images: [] });
-    await ev({ type: "tool_result", id: "t", name: "Task", content: "Found it.", is_error: false, summary: "2 tool uses", parent_tool_use_id: null, images: [] });
+    await ev({ type: "tool_result", id: "c2", name: "Read", content: "No such file\nmore", is_error: true, summary: null, parent_tool_use_id: "t", exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
+    await ev({ type: "tool_result", id: "t", name: "Task", content: "Found it.", is_error: false, summary: "2 tool uses", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     await ev(result);
     assert.equal(await page.locator(".tool").count(), 1, "one card: the subagent's steps are inside it");
     assert.deepEqual(await page.locator(".tool .steps .step").allTextContents(), ["● Grep(parse)", "● Read(x.py) — No such file"]);
@@ -361,7 +551,7 @@ for (const flavour of FLAVOURS) {
     assert.deepEqual((await sent()).filter((m) => m.kind === "stopSubagent"), [{ kind: "stopSubagent", id: "b" }]);
 
     await status("b", 2, "Analyse TW.Api", "stopped");
-    await ev({ type: "tool_result", id: "b", name: "Task", content: "(stopped) partial", is_error: false, summary: "4 tool uses", parent_tool_use_id: null, images: [] });
+    await ev({ type: "tool_result", id: "b", name: "Task", content: "(stopped) partial", is_error: false, summary: "4 tool uses", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     assert.match((await page.locator(".tool").nth(1).textContent()) ?? "", /■ stopped · explore · 3\/100 steps/);
     assert.equal(await page.locator(".agents .agent.stopped .stop-one").count(), 0);
     assert.match((await page.textContent(".agents .title")) ?? "", /2 active · 1 finished/);

@@ -10,10 +10,13 @@ import type {
   PermissionRequest,
   ReviewResult,
   SubagentStatus,
+  ToolProgress,
   ToolResult,
   ToolUse,
 } from "../protocol";
 import { bridge, fromHost, hostSettings } from "../bridge";
+import { lineDiff } from "./diff";
+import { dangerousParts, renderShell } from "./shell";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
 
 const host = bridge<FromWebview>();
@@ -107,7 +110,7 @@ function setMarkdown(target: HTMLElement, markdown: string): void {
 // --- layout ------------------------------------------------------------------
 
 // The product name (from the extension's displayName; see brand.ts).
-const PRODUCT = hostSettings().product;
+const { product: PRODUCT, features: HOST_FEATURES } = hostSettings();
 
 const app = document.getElementById("app")!;
 app.innerHTML = `
@@ -188,6 +191,8 @@ const toolCards = new Map<string, HTMLElement>();
 // What this cmcoder can do, from its system_init; unknown until one arrives
 // (the page may have reloaded after it: then nothing is refused).
 let features: string[] | undefined;
+/** A control that needs both sides: this cmcoder (system_init.features) and the IDE (data-features). */
+const can = (feature: string) => HOST_FEATURES.includes(feature) && features?.includes(feature) === true;
 const permissionCards = new Map<string, HTMLElement>();
 // Tool calls the user denied here: their card already says so.
 const deniedHere = new Set<string>();
@@ -644,6 +649,9 @@ function onEvent(ev: AgentEvent): void {
       toolResult(ev);
       setActivity();
       break;
+    case "tool_progress":
+      bashProgress(ev);
+      break;
     case "subagent_status":
       subagentStatus(ev);
       break;
@@ -718,6 +726,7 @@ function onEvent(ev: AgentEvent): void {
       if (ev.conversation) {
         log.replaceChildren(); // the history that follows redraws it
         toolCards.clear();
+        bashRuns.clear();
         permissionCards.clear();
         rewound = `Rewound the conversation.${files}`;
         if (ev.prompt) {
@@ -744,6 +753,8 @@ function onEvent(ev: AgentEvent): void {
       reply = undefined;
       for (const card of permissionCards.values()) answered(card, "Cancelled");
       permissionCards.clear();
+      updateAskQueue();
+      endBashRuns();
       endAgents();
       if (ev.subtype === "interrupted") note(`Interrupted. What should ${PRODUCT} do instead?`, "warn");
       else if (ev.subtype === "max_turns") note(`Stopped: ${ev.result}`, "warn");
@@ -780,7 +791,13 @@ function reviewNote(ev: ReviewResult): void {
   }
 }
 
+// --- tool cards ------------------------------------------------------------------
+
 function toolCard(ev: ToolUse): void {
+  if (ev.name === "Bash") {
+    bashRun(ev.id, commandOf(ev));
+    return;
+  }
   const card = el("div", "tool");
   card.append(el("div", "label", `● ${ev.label}`));
   toolCards.set(ev.id, append(card));
@@ -788,6 +805,10 @@ function toolCard(ev: ToolUse): void {
 
 function toolResult(ev: ToolResult): void {
   if (ev.name === "TodoWrite") return;
+  if (ev.name === "Bash") {
+    finishBash(bashRuns.get(ev.id) ?? bashRun(ev.id, ""), ev);
+    return;
+  }
   const card = toolCards.get(ev.id) ?? append(el("div", "tool"));
   toolCards.delete(ev.id);
   const steps = card.querySelector<HTMLDetailsElement>("details.steps");
@@ -802,9 +823,6 @@ function toolResult(ev: ToolResult): void {
     return;
   }
   card.append(el("div", "result", `└ ${ev.summary || "done"}`));
-  if (ev.name === "Bash" && ev.content.trim() && ev.content.trim() !== "(no output)") {
-    card.append(el("pre", "output", clip(ev.content, 3)));
-  }
   // A browser screenshot (the Browser tool): shown small, a click enlarges it.
   for (const url of ev.images ?? []) {
     if (!url.startsWith("data:image/")) continue;
@@ -818,76 +836,481 @@ function toolResult(ev: ToolResult): void {
   }
 }
 
+// --- the Bash card: the command, its output as it comes, how it ended -----------------
+
+/** How many lines of output stay visible; "Show all" opens the rest. */
+const BASH_TAIL = 8;
+/** What the card keeps of a live output (the engine keeps more; the final result replaces it). */
+const BASH_LIVE_CHARS = 400_000;
+
+interface BashRun {
+  id: string;
+  command: string;
+  card: HTMLElement;
+  badge: HTMLElement;
+  out: HTMLElement;
+  foot: HTMLElement;
+  stop: HTMLButtonElement;
+  more: HTMLButtonElement;
+  copy: HTMLButtonElement;
+  state: "running" | "waiting" | "stopping" | "done";
+  text: string; // the output so far (live), or all of it (done)
+  started: number; // Date.now() when it began, as far as we know
+  expanded: boolean;
+  total?: number; // lines in the whole output, from the engine
+  result?: string; // "ok" | "fail" | "stopped" | "interrupted" once it ended
+  ended?: string; // the badge text of an ended command
+}
+
+const bashRuns = new Map<string, BashRun>();
+let bashTimer: number | undefined;
+let bashRenderQueued = false;
+
+/** The command of a Bash call: its input, or (history, an older cmcoder) its label. */
+function commandOf(ev: ToolUse): string {
+  const c = (ev.input as Record<string, unknown>).command;
+  if (typeof c === "string") return c;
+  const m = /^Bash\(([\s\S]*)\)$/.exec(ev.label);
+  return m ? m[1] : ev.label;
+}
+
+function bashRun(id: string, command: string): BashRun {
+  const card = el("div", "tool bash");
+  const head = el("div", "bash-head");
+  head.append(el("span", "prompt", "$"));
+  const code = el("code", "bash-cmd");
+  code.append(renderShell(command.split("\n")[0] + (command.includes("\n") ? " …" : "")));
+  code.title = command;
+  const badge = el("span", "bash-badge");
+  head.append(code, badge);
+  const out = el("pre", "bash-out");
+  out.hidden = true;
+  const foot = el("div", "bash-foot");
+  const stop = el("button", "secondary stop-cmd", "Stop this command") as HTMLButtonElement;
+  stop.title = "Ends this command only; the turn goes on with what it printed";
+  const more = el("button", "link more") as HTMLButtonElement;
+  const copy = el("button", "link copy", "Copy output") as HTMLButtonElement;
+  foot.append(stop, more, copy);
+  card.append(head, out, foot);
+  const run: BashRun = {
+    id, command, card, badge, out, foot, stop, more, copy,
+    state: "running", text: "", started: Date.now(), expanded: false,
+  };
+  stop.onclick = () => {
+    if (run.state !== "running") return;
+    run.state = "stopping";
+    post({ kind: "stopTool", toolUseId: id });
+    renderBash(run);
+  };
+  more.onclick = () => {
+    run.expanded = !run.expanded;
+    renderBash(run);
+  };
+  copy.onclick = () => copyText(cleanOutput(run), copy);
+  append(card);
+  bashRuns.set(id, run);
+  renderBash(run);
+  if (bashTimer === undefined) bashTimer = window.setInterval(tickBash, 1000);
+  return run;
+}
+
+/** Output as a person reads it: no colour codes, a carriage-return line shows its last state. */
+function plainOutput(text: string): string {
+  return text
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .split("\n")
+    .map((line) => (line.includes("\r") ? (line.split("\r").filter(Boolean).pop() ?? "") : line))
+    .join("\n");
+}
+
+/** What the card shows of a finished command's text: the engine's trailer lines are the badge's job. */
+function cleanOutput(run: BashRun): string {
+  let text = plainOutput(run.text);
+  if (run.state === "done" && run.result !== "fail-other") {
+    text = text
+      .replace(/^\(The user stopped this command[^\n]*\n?/, "")
+      .replace(/(?:^|\n\n?)Exit code -?\d+\s*$/, "");
+  }
+  text = text.replace(/\s+$/, "");
+  return text === "(no output)" ? "" : text;
+}
+
+function renderBash(run: BashRun): void {
+  const { state } = run;
+  run.card.dataset.state = run.state === "done" ? (run.result ?? "ok") : state;
+  run.card.classList.toggle("running", state === "running" || state === "stopping");
+  // The badge.
+  if (state === "done" || run.ended) {
+    run.badge.textContent = run.ended ?? "";
+    run.badge.className = `bash-badge ${run.result ?? ""}`;
+  } else {
+    const word = state === "waiting" ? "waiting for your answer" : state === "stopping" ? "stopping…" : "running";
+    const time = state === "waiting" ? "" : ` · ${duration(Date.now() - run.started)}`;
+    run.badge.textContent = `${word}${time}`;
+    run.badge.className = `bash-badge ${state}`;
+  }
+  // The output: the last lines, or all of them.
+  const text = cleanOutput(run);
+  const lines = text ? text.split("\n") : [];
+  const total = Math.max(run.total ?? 0, lines.length);
+  const folded = !run.expanded && lines.length > BASH_TAIL;
+  run.out.hidden = lines.length === 0 && state !== "done";
+  run.out.classList.toggle("empty", lines.length === 0);
+  if (lines.length === 0) run.out.textContent = state === "done" ? "(no output)" : "";
+  else {
+    const shown = folded ? lines.slice(-BASH_TAIL) : lines;
+    run.out.textContent = (folded ? `… ${lines.length - BASH_TAIL} earlier lines\n` : "") + shown.join("\n");
+  }
+  run.out.classList.toggle("expanded", run.expanded);
+  if (run.expanded && state !== "done") run.out.scrollTop = run.out.scrollHeight;
+  // The buttons.
+  run.stop.hidden = !(state === "running" && can("stopTool"));
+  run.more.hidden = lines.length <= BASH_TAIL;
+  run.more.textContent = run.expanded ? "Show less" : `Show all (${total} lines)`;
+  run.copy.hidden = lines.length === 0;
+  run.foot.hidden = run.stop.hidden && run.more.hidden && run.copy.hidden;
+}
+
+function queueBashRender(): void {
+  if (bashRenderQueued) return;
+  bashRenderQueued = true;
+  requestAnimationFrame(() => {
+    bashRenderQueued = false;
+    for (const r of bashRuns.values()) if (r.state !== "done") renderBash(r);
+  });
+}
+
+/** Once a second: the running time of every command still going. */
+function tickBash(): void {
+  let live = false;
+  for (const run of bashRuns.values()) {
+    if (run.state === "done") continue;
+    live = true;
+    renderBash(run);
+  }
+  if (!live && bashTimer !== undefined) {
+    window.clearInterval(bashTimer);
+    bashTimer = undefined;
+  }
+}
+
+function bashProgress(ev: ToolProgress): void {
+  const run = bashRuns.get(ev.id);
+  if (!run || run.state === "done" || ev.parent_tool_use_id) return;
+  run.text = (run.text + ev.text).slice(-BASH_LIVE_CHARS);
+  run.started = Date.now() - ev.elapsed_ms;
+  if (run.state === "waiting") run.state = "running"; // output means it is running
+  queueBashRender();
+}
+
+/** The permission question for a Bash call opened or closed: it waits for the answer, or runs. */
+function bashWaiting(toolUseId: string, waiting: boolean): void {
+  const run = bashRuns.get(toolUseId);
+  if (!run || run.state === "done" || run.state === "stopping") return;
+  run.state = waiting ? "waiting" : "running";
+  if (!waiting) run.started = Date.now(); // the time it ran, not the time it waited
+  renderBash(run);
+}
+
+function elapsed(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+  return duration(ms);
+}
+
+function finishBash(run: BashRun, ev: ToolResult): void {
+  const code = ev.exit_code ?? null;
+  run.state = "done";
+  run.text = ev.content;
+  run.total = ev.total_lines ?? undefined;
+  let text: string;
+  if (ev.stopped) {
+    run.result = "stopped";
+    text = "■ stopped";
+  } else if (!ev.is_error) {
+    run.result = "ok";
+    text = code === null ? "✓ done" : `✓ exit ${code}`;
+  } else if (code !== null) {
+    run.result = "fail";
+    text = `✗ exit ${code}`;
+  } else {
+    // Timed out, the shell ended, or it was denied: the content says which, as it is.
+    run.result = "fail-other";
+    text = `✗ ${ev.summary || "failed"}`;
+  }
+  if (ev.duration_ms !== null && ev.duration_ms !== undefined) text += ` · ${elapsed(ev.duration_ms)}`;
+  run.ended = text;
+  if (run.result === "fail-other") run.card.dataset.state = "fail";
+  renderBash(run);
+}
+
+/** The turn ended with commands still shown as running: they did not finish, whatever the reason. */
+function endBashRuns(): void {
+  for (const run of bashRuns.values()) {
+    if (run.state === "done") continue;
+    run.state = "done";
+    run.result = "interrupted";
+    run.ended = "■ interrupted";
+    renderBash(run);
+  }
+}
+
+/** Copy to the clipboard: the browser's API where the page may use it, else the old way. */
+function copyText(text: string, button: HTMLElement): void {
+  const said = (ok: boolean) => {
+    const was = button.dataset.label ?? button.textContent ?? "";
+    button.dataset.label = was;
+    button.textContent = ok ? "Copied" : "Could not copy";
+    window.setTimeout(() => (button.textContent = was), 1500);
+  };
+  const fallback = () => {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    said(ok);
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => said(true), fallback);
+  else fallback();
+}
+
+// --- the consent card: what is asked, why, where, and the ways to answer ---------------
+
+/** The last part of a path, for a headline. */
+function base(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+function askHeadline(ev: PermissionRequest): string {
+  const i = ev.input as Record<string, unknown>;
+  const path = typeof i.file_path === "string" ? i.file_path : (ev.change?.path ?? "");
+  switch (ev.name) {
+    case "Bash":
+      return "Run a command";
+    case "Write":
+      return ev.change && ev.change.before === null ? `Create ${base(path)}` : `Write ${base(path)}`;
+    case "Edit":
+    case "MultiEdit":
+      return `Edit ${base(path)}`;
+    default:
+      return `Allow ${ev.label}?`;
+  }
+}
+
+/** The diff of a file change: line numbers, the changed lines and a little around them. */
+function diffBlock(path: string, before: string | null, after: string, numbers: boolean): HTMLElement {
+  const view = lineDiff(before, after);
+  const box = el("div", `ask-diff${numbers ? "" : " plain"}`);
+  const head = el("div", "diff-head");
+  const name = el("span", "diff-path", path);
+  name.title = path;
+  head.append(name);
+  if (before === null) head.append(el("span", "diff-new", "new file"));
+  if (view.added || !view.removed) head.append(el("span", "diff-add", `+${view.added}`));
+  if (view.removed || !view.added) head.append(el("span", "diff-del", `−${view.removed}`));
+  box.append(head);
+  const rows = el("div", "diff-rows");
+  if (!view.rows.length) rows.append(el("div", "drow gap", "No change"));
+  for (const row of view.rows) {
+    if (row.kind === "gap") {
+      rows.append(el("div", "drow gap", `⋯ ${row.hidden} line${row.hidden === 1 ? "" : "s"} not shown`));
+      continue;
+    }
+    const line = el("div", `drow ${row.kind}`);
+    line.append(
+      el("span", "no", row.oldNo === undefined ? "" : String(row.oldNo)),
+      el("span", "no", row.newNo === undefined ? "" : String(row.newNo)),
+      el("span", "sign", row.kind === "add" ? "+" : row.kind === "del" ? "−" : " "),
+      el("span", "txt", row.text),
+    );
+    rows.append(line);
+  }
+  box.append(rows);
+  return box;
+}
+
+/** What the request is about: the command, the change, or the input as it is. */
+function askBody(ev: PermissionRequest): HTMLElement | null {
+  const i = ev.input as Record<string, unknown>;
+  const s = (v: unknown) => (typeof v === "string" ? v : "");
+  if (ev.name === "Bash") {
+    const box = el("div", "ask-cmd");
+    const line = el("div", "cmd-line");
+    const code = el("code", "bash-cmd");
+    code.append(renderShell(s(i.command)));
+    line.append(el("span", "prompt", "$"), code);
+    box.append(line);
+    if (ev.cwd) {
+      const where = el("div", "cmd-cwd", `in ${ev.cwd}`);
+      where.title = ev.cwd;
+      box.append(where);
+    }
+    return box;
+  }
+  if (ev.change) return diffBlock(ev.change.path, ev.change.before, ev.change.after, true);
+  if (ev.name === "Edit" && s(i.file_path)) return diffBlock(s(i.file_path), s(i.old_string), s(i.new_string), false);
+  if (ev.name === "Write" && s(i.file_path)) return diffBlock(s(i.file_path), null, s(i.content), false);
+  return el("pre", "preview", clip(JSON.stringify(i, null, 2), 20));
+}
+
+type Scope = "once" | "project" | "session";
+
 function permissionCard(ev: PermissionRequest): void {
   progress.waiting = true;
   if (busy) renderProgress();
-  const card = el("div", "permission");
+  const risky = ev.high_risk === true;
+  const card = el("div", `permission${risky ? " risk" : ""}`);
   card.dataset.toolUseId = ev.tool_use_id;
-  card.append(el("div", "title", `Allow ${ev.label}?`));
-  if (ev.reason) card.append(el("div", "reason", ev.reason));
-  const preview = permissionPreview(ev);
-  if (preview) card.append(el("pre", "preview", preview));
-  if (ev.change) {
-    const show = el("button", "link", "Show diff");
-    show.title = "Open the proposed change in VS Code's diff editor";
-    show.onclick = () => post({ kind: "showDiff", requestId: ev.request_id });
-    card.append(show);
+
+  // The headline: what it wants to do, who asks, and (with several waiting) which one this is.
+  const head = el("div", "ask-head");
+  head.append(el("span", "ask-icon", risky ? "⚠" : "?"));
+  head.append(el("span", "ask-title", askHeadline(ev)));
+  if (ev.agent) head.append(el("span", "ask-agent", `from ${ev.agent}`));
+  head.append(el("span", "ask-count"));
+  card.append(head);
+
+  // Why it is asked.
+  const why = ev.reasons?.length ? ev.reasons : ev.reason ? [ev.reason] : [];
+  if (why.length) {
+    const chips = el("div", "ask-chips");
+    for (const reason of why) chips.append(el("span", "chip", reason));
+    card.append(chips);
   }
 
-  const feedback = document.createElement("input");
-  feedback.type = "text";
-  feedback.placeholder = `Optional: tell ${PRODUCT} what to do instead (when denying)`;
+  const body = askBody(ev);
+  if (body) card.append(body);
 
-  const buttons = el("div", "buttons");
-  const answer = (allow: boolean, remember: boolean) => {
-    post({ kind: "permission", requestId: ev.request_id, allow, remember, feedback: allow ? undefined : feedback.value.trim() });
+  if (risky) {
+    const parts = ev.name === "Bash" ? dangerousParts(String((ev.input as Record<string, unknown>).command ?? "")) : [];
+    const note = el("div", "ask-note", "Asked every time: this can't be allowed again for the session or saved as a rule.");
+    if (parts.length) note.append(el("div", "danger-parts", `Look at: ${parts.join("  ·  ")}`));
+    card.append(note);
+  }
+
+  const answer = (allow: boolean, scope: Scope, feedback = "") => {
+    post({
+      kind: "permission",
+      requestId: ev.request_id,
+      allow,
+      remember: allow && scope === "project",
+      ...(allow && scope === "session" ? { rememberSession: true } : {}),
+      ...(allow ? {} : { feedback: feedback.trim() }),
+    });
     permissionCards.delete(ev.request_id);
     if (!allow) deniedHere.add(ev.tool_use_id);
-    answered(card, allow ? (remember ? "Allowed (always)" : "Allowed") : "Denied");
+    else bashWaiting(ev.tool_use_id, false);
+    const said = !allow
+      ? feedback.trim()
+        ? `Denied · “${feedback.trim().slice(0, 80)}”`
+        : "Denied"
+      : scope === "session"
+        ? "Allowed for this session"
+        : scope === "project"
+          ? "Allowed · rule saved for this project"
+          : "Allowed";
+    answered(card, said);
   };
-  const allow = el("button", "", "Allow");
-  allow.onclick = () => answer(true, false);
-  buttons.append(allow);
-  if (ev.can_remember) {
-    const always = el("button", "secondary", "Always allow");
-    always.title = `Saves the rule ${ev.suggested_rule} for this project`;
-    always.onclick = () => answer(true, true);
-    buttons.append(always);
+
+  // "Always allow" shows the rule first, then asks where it should hold.
+  const always = el("div", "ask-always");
+  always.hidden = true;
+  const rule = el("div", "ask-rule");
+  rule.append(document.createTextNode("Allow from now on: "), el("code", "", ev.suggested_rule));
+  always.append(rule);
+  const where = el("div", "buttons");
+  const sessionRules = can("sessionRules");
+  if (sessionRules) {
+    const session = el("button", "", "For this session");
+    session.title = "Until you close this conversation; nothing is saved";
+    session.onclick = () => answer(true, "session");
+    where.append(session);
   }
-  const deny = el("button", "secondary", "Deny");
-  deny.onclick = () => answer(false, false);
-  buttons.append(deny);
-  feedback.onkeydown = (e) => {
-    if (e.key === "Enter") answer(false, false);
+  const project = el("button", sessionRules ? "secondary" : "", "In this project");
+  project.title = `Saves ${ev.suggested_rule} in this project's settings`;
+  project.onclick = () => answer(true, "project");
+  const never = el("button", "secondary", "Cancel");
+  never.onclick = () => {
+    always.hidden = true;
+    actions.hidden = false;
   };
-  card.append(buttons, feedback);
+  where.append(project, never);
+  always.append(where);
+
+  // A note for the model when denying.
+  const deny = el("div", "ask-deny");
+  deny.hidden = true;
+  const feedback = document.createElement("input");
+  feedback.type = "text";
+  feedback.placeholder = `Tell ${PRODUCT} what to do instead`;
+  const send = el("button", "secondary", "Deny and send");
+  send.onclick = () => answer(false, "once", feedback.value);
+  feedback.onkeydown = (e) => {
+    if (e.key === "Enter") answer(false, "once", feedback.value);
+  };
+  deny.append(feedback, send);
+
+  const actions = el("div", "ask-actions");
+  const allow = el("button", risky ? "danger" : "", risky ? "Allow once" : "Allow");
+  allow.onclick = () => answer(true, "once");
+  actions.append(allow);
+  if (ev.can_remember && !risky) {
+    const ever = el("button", "secondary", "Always allow…");
+    ever.onclick = () => {
+      always.hidden = false;
+      actions.hidden = true;
+    };
+    actions.append(ever);
+  }
+  const no = el("button", "secondary", "Deny");
+  no.onclick = () => answer(false, "once");
+  actions.append(no);
+  const note = el("button", "link", "Deny with a note…");
+  note.onclick = () => {
+    deny.hidden = false;
+    note.hidden = true;
+    feedback.focus();
+  };
+  actions.append(note);
+  if (ev.change) {
+    const show = el("button", "link", "Open in diff editor");
+    show.title = "Open the proposed change in the IDE's diff editor";
+    show.onclick = () => post({ kind: "showDiff", requestId: ev.request_id });
+    actions.append(show);
+  }
+  card.append(actions, always, deny);
   permissionCards.set(ev.request_id, append(card));
-  allow.focus();
+  updateAskQueue();
+  bashWaiting(ev.tool_use_id, true);
 }
 
-function permissionPreview(ev: PermissionRequest): string {
-  const i = ev.input as Record<string, unknown>;
-  const s = (v: unknown) => (typeof v === "string" ? v : "");
-  switch (ev.name) {
-    case "Bash":
-      return s(i.command);
-    case "Write":
-      return `${s(i.file_path)}\n\n${clip(s(i.content), 30)}`;
-    case "Edit": {
-      const lines = (prefix: string, text: string) =>
-        clip(text, 15).split("\n").map((l) => prefix + l).join("\n");
-      return `${s(i.file_path)}\n\n${lines("- ", s(i.old_string))}\n${lines("+ ", s(i.new_string))}`;
-    }
-    default:
-      return clip(JSON.stringify(i, null, 2), 20);
-  }
+/** With several requests waiting, each says which it is. */
+function updateAskQueue(): void {
+  const cards = Array.from(permissionCards.values());
+  cards.forEach((card, i) => {
+    const count = card.querySelector<HTMLElement>(".ask-count");
+    if (count) count.textContent = cards.length > 1 ? `${i + 1} of ${cards.length} waiting` : "";
+  });
 }
 
 function answered(card: HTMLElement, text: string): void {
   progress.waiting = false;
-  card.querySelectorAll("button, input").forEach((e) => e.remove());
+  // Only what was asked stays; the ways to answer go.
+  card.querySelectorAll(".ask-actions, .ask-always, .ask-deny, .ask-note, button, input").forEach((e) => e.remove());
+  card.querySelector(".ask-count")?.remove();
   card.classList.add("answered");
   card.append(el("div", "answer", `└ ${text}`));
+  updateAskQueue();
 }
 
 function renderTodos(todos: Record<string, unknown>[]): void {
@@ -1087,6 +1510,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       } else if (m.state === "ready") showStatus();
       else {
         modelLabel.textContent = `${PRODUCT} stopped`;
+        endBashRuns(); // whatever was running went with it
         setBusy(false);
         showStatus();
         const box = el("div", "note error", m.message ?? `${PRODUCT} stopped.`);
@@ -1104,6 +1528,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       log.replaceChildren();
       renderTodos([]);
       toolCards.clear();
+      bashRuns.clear();
       permissionCards.clear();
       agentRuns.clear();
       renderAgents();
@@ -1130,6 +1555,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       if (card) {
         permissionCards.delete(m.requestId);
         if (m.text === "Denied" && card.dataset.toolUseId) deniedHere.add(card.dataset.toolUseId);
+        else if (card.dataset.toolUseId) bashWaiting(card.dataset.toolUseId, false);
         answered(card, m.text);
       }
       break;
