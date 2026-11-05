@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -230,7 +231,9 @@ def test_the_durable_store_is_a_private_sqlite_file_shared_by_projects(
     first.user.save("Pref", "for everyone", "user")
     first.close()
     db = Path(__import__("os").environ["CMCODER_CONFIG_DIR"]) / "memory.db"
-    assert db.exists() and db.stat().st_mode & 0o077 == 0
+    assert db.exists()
+    if sys.platform != "win32":  # Windows has no POSIX modes: the profile folder is private by ACL
+        assert db.stat().st_mode & 0o077 == 0
     other = tmp_path / "other"
     other.mkdir()
     again = Memory.for_project(project)

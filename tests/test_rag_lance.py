@@ -126,7 +126,8 @@ async def test_the_index_survives_reopening_and_is_private(tmp_path: Path) -> No
     first = LanceVectorStore(folder, FakeEmbedding())  # type: ignore[arg-type]
     await fill(first)
     await first.aclose()
-    assert folder.stat().st_mode & 0o077 == 0
+    if sys.platform != "win32":  # Windows has no POSIX modes: the profile folder is private by ACL
+        assert folder.stat().st_mode & 0o077 == 0
     again = LanceVectorStore(folder, FakeEmbedding())  # type: ignore[arg-type]
     try:
         assert await again.acount() == 3

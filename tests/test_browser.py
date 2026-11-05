@@ -114,7 +114,7 @@ def test_unsafe_addresses_and_modes(ctx: ToolContext) -> None:
     assert check("chrome://settings", ctx).decision is Decision.DENY
     assert check("http://localhost:3000", ctx, mode="plan").decision is Decision.DENY
     assert check("https://example.com", ctx, mode="bypassPermissions").decision is Decision.ALLOW
-    assert check("file://" + str(ctx.project_root / ".env"), ctx).decision is Decision.DENY
+    assert check((ctx.project_root / ".env").as_uri(), ctx).decision is Decision.DENY
 
 
 def test_approved_hosts_and_always_allow_are_per_host(ctx: ToolContext) -> None:
