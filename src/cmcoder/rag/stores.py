@@ -91,18 +91,28 @@ class _CodeStore(VectorStore):
         self, query: str, k: int = 4, path_prefix: str | None = None, **kwargs: Any
     ) -> list[tuple[Document, float]]:
         vector = (await self.embedding.embed([query]))[0]
-        return await self.asimilarity_search_by_vector_with_score(vector, k, path_prefix)
+        return await self.asimilarity_search_by_vector_with_score(
+            vector, k, path_prefix, query_text=query
+        )
 
     async def asimilarity_search(self, query: str, k: int = 4, **kwargs: Any) -> list[Document]:
         return [d for d, _ in await self.asimilarity_search_with_score(query, k, **kwargs)]
 
     async def asimilarity_search_by_vector_with_score(
-        self, vector: np.ndarray, k: int, path_prefix: str | None = None
+        self,
+        vector: np.ndarray,
+        k: int,
+        path_prefix: str | None = None,
+        query_text: str | None = None,
     ) -> list[tuple[Document, float]]:
         raise NotImplementedError
 
     async def adelete_paths(self, paths: list[str]) -> None:
         raise NotImplementedError
+
+    async def aoptimize(self) -> None:
+        """Called after an update that changed the index: stores that benefit from
+        housekeeping (LanceDB: compaction, search indexes) do it here."""
 
     async def acount(self) -> int:
         raise NotImplementedError
@@ -222,7 +232,11 @@ class LocalVectorStore(_CodeStore):
             return self._matrix
 
     async def asimilarity_search_by_vector_with_score(
-        self, vector: np.ndarray, k: int, path_prefix: str | None = None
+        self,
+        vector: np.ndarray,
+        k: int,
+        path_prefix: str | None = None,
+        query_text: str | None = None,
     ) -> list[tuple[Document, float]]:
         matrix = await asyncio.to_thread(self._load)
         if not len(self._rows) or matrix.shape[1] != vector.shape[0]:
@@ -370,7 +384,11 @@ class ChromaVectorStore(_CodeStore):
             await self._call("POST", f"{self.base}/{cid}/delete", {"where": where})
 
     async def asimilarity_search_by_vector_with_score(
-        self, vector: np.ndarray, k: int, path_prefix: str | None = None
+        self,
+        vector: np.ndarray,
+        k: int,
+        path_prefix: str | None = None,
+        query_text: str | None = None,
     ) -> list[tuple[Document, float]]:
         cid = await self._collection()
         body = {

@@ -102,6 +102,7 @@ class UpdateResult:
     unchanged: int = 0
     skipped: list[str] = field(default_factory=list)  # unreadable, binary, too large
     seconds: float = 0.0
+    migrated: int = 0  # pieces moved over from the built-in store (not embedded again)
 
 
 @dataclass
@@ -141,6 +142,10 @@ class CodeIndex:
         self._lock = asyncio.Lock()
         self._background: asyncio.Task[None] | None = None
         self.last_error: str | None = None  # from the last background update
+        # A built-in index of this project and model, to move into this store
+        # (LanceDB) on the first update instead of embedding everything again.
+        self._import: tuple[dict[str, Any], Path] | None = None
+        self._unoptimized = False  # changed since the store last did its housekeeping
         self._load_manifest()
 
     # -- manifest ---------------------------------------------------------------
@@ -154,8 +159,17 @@ class CodeIndex:
             data = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        if data.get("version") != MANIFEST_VERSION or data.get("store") != self.store.describe():
-            return  # another store or format: start again
+        if data.get("version") != MANIFEST_VERSION:
+            return  # another format: start again
+        if data.get("store") != self.store.describe():
+            database = self.folder / "local" / "index.db"
+            if (
+                hasattr(self.store, "aimport_local")
+                and str(data.get("store", "")).startswith("local index (")
+                and database.is_file()
+            ):
+                self._import = (data, database)
+            return  # another store: start again (or move the built-in index over)
         self._files = {
             p: FileState(int(v[0]), int(v[1]), str(v[2])) for p, v in data.get("files", {}).items()
         }
@@ -256,6 +270,7 @@ class CodeIndex:
         started = time.monotonic()
         async with self._lock:
             result = UpdateResult()
+            result.migrated = await self._migrate_local()
             if paths is None:
                 todo, removed, result.unchanged = await asyncio.to_thread(self._changes)
             else:
@@ -311,10 +326,45 @@ class CodeIndex:
                 self._save_manifest()
             for path in todo:
                 self._dirty.discard(self.selector.rel(path))
+            if result.indexed or result.removed:
+                self._unoptimized = True
+            if paths is None and self._unoptimized:
+                await self._optimize()  # a full update: the store's housekeeping
             if progress is not None:
                 progress(Progress(total, total, result.chunks))
         result.seconds = time.monotonic() - started
         return result
+
+    async def _migrate_local(self) -> int:
+        """Move a built-in index into this store, with its manifest, so the next step
+        finds nothing to embed. A failed copy is dropped and the project is indexed again."""
+        if self._import is None:
+            return 0
+        data, database = self._import
+        self._import = None
+        importer: Any = self.store
+        try:
+            if await self.store.acount():
+                await self.store.aclear()  # an older index of this store: don't mix
+            moved = int(await importer.aimport_local(database))
+        except StoreError:
+            await self.store.aclear()
+            return 0
+        self._files = {
+            p: FileState(int(v[0]), int(v[1]), str(v[2])) for p, v in data.get("files", {}).items()
+        }
+        self._updated = data.get("updated")
+        self._chunks = moved
+        self._save_manifest()
+        self._unoptimized = True
+        return moved
+
+    async def _optimize(self) -> None:
+        try:
+            await self.store.aoptimize()
+            self._unoptimized = False
+        except StoreError as e:
+            self.last_error = str(e)  # housekeeping only: the index itself is fine
 
     async def _count(self) -> int:
         try:
@@ -356,7 +406,9 @@ class CodeIndex:
         vector = (await self.embedder.embed([query]))[0]
 
         async def find() -> list[Hit]:
-            found = await self.store.asimilarity_search_by_vector_with_score(vector, k, path)
+            found = await self.store.asimilarity_search_by_vector_with_score(
+                vector, k, path, query_text=query
+            )
             return [Hit(Chunk.from_document(doc), score) for doc, score in found]
 
         hits = await find()
@@ -391,6 +443,7 @@ class CodeIndex:
         self._files = {}
         self._chunks = 0
         self._updated = None
+        self._import = None  # starting from nothing: don't move an old index over
         self.manifest_path.unlink(missing_ok=True)
 
     async def close(self) -> None:
@@ -398,6 +451,8 @@ class CodeIndex:
             self._background.cancel()  # what's done so far is saved
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._background
+        if self._unoptimized and not self.read_only:
+            await self._optimize()  # single-file refreshes since the last full update
         await self.store.aclose()
         if self.owns_gateway:
             await self.embedder.gateway.aclose()
@@ -419,7 +474,7 @@ def open_store(
 
         if not lancedb_available():
             raise StoreError(LANCEDB_MISSING)
-        return LanceVectorStore(folder / "lancedb", embedding)
+        return LanceVectorStore(folder / "lancedb", embedding, hybrid=store.hybrid)
     if not store.url:
         raise StoreError(chroma_needs_url())
     name = store.collection or collection_name(root, model)

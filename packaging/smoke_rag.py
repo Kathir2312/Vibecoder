@@ -39,6 +39,7 @@ def refresh_auth_token(session):
     session.token = session.provider.renew(session.refresh_token)
     return session.token
 '''
+ERRORS = "class HTTPServerError(Exception): pass\n"
 BILLING = '''"""Billing."""
 
 
@@ -57,10 +58,18 @@ def main(argv: list[str]) -> int:
     if not exe.is_file():
         print(f"not found: {exe}", file=sys.stderr)
         return 2
-    call = {
-        "tool_calls": [{"name": "CodeSearch", "arguments": {"query": "refresh the auth token"}}]
-    }
-    server = MockServer(MockState([call, {"content": "Found it."}], api_key=API_KEY))
+
+    def search_call(query: str) -> dict[str, list[dict[str, object]]]:
+        return {"tool_calls": [{"name": "CodeSearch", "arguments": {"query": query}}]}
+
+    # The second search is by words inside a camelCase name: the made-up embeddings can't
+    # match it, so finding errors.py proves the words index (LanceDB's hybrid search) runs.
+    script = [
+        search_call("refresh the auth token"),
+        search_call("server error"),
+        {"content": "Found it."},
+    ]
+    server = MockServer(MockState(script, api_key=API_KEY))
     server.thread.start()
     with tempfile.TemporaryDirectory(prefix="cmcoder-smoke-rag-") as tmp:
         tmp_path = Path(tmp)
@@ -70,6 +79,7 @@ def main(argv: list[str]) -> int:
         (project / ".git").mkdir(parents=True)
         (project / "auth.py").write_text(AUTH)
         (project / "billing.py").write_text(BILLING)
+        (project / "errors.py").write_text(ERRORS)
         log = tmp_path / "started.log"
         env = no_python.environment(os.environ, no_python.trap(tmp_path / "trap"), log)
         env = {k: v for k, v in env.items() if not k.lower().endswith("_proxy")}
@@ -109,12 +119,13 @@ def main(argv: list[str]) -> int:
     server.httpd.shutdown()
     label = "LanceDB" if args.store == "lancedb" else "the built-in store"
     seen = str(server.requests)
+    results = str(server.requests[-1]["messages"][-1])  # the second search's answer
     checks = {
         "setup and the first index worked": setup.returncode == 0
-        and "Indexed 2 files" in setup.stdout,
+        and "Indexed 3 files" in setup.stdout,
         f"it uses {label}": ("LanceDB inside cmcoder" in setup.stdout) == (args.store == "lancedb"),
         "an unchanged project is not indexed again": "Indexed 0 files" in again.stdout
-        and "2 unchanged" in again.stdout,
+        and "3 unchanged" in again.stdout,
         "status describes the store": status.returncode == 0
         and ("LanceDB index" if args.store == "lancedb" else "local index") in status.stdout,
         "the store's folder exists and is private": private,
@@ -124,6 +135,8 @@ def main(argv: list[str]) -> int:
         and "refresh_auth_token" in seen,
         "no Python was started": not python_started,
     }
+    if args.store == "lancedb":
+        checks["the words index finds a camelCase name by its words"] = "errors.py" in results
     for name, ok in checks.items():
         print(f"{'ok  ' if ok else 'FAIL'} {name}")
     if not all(checks.values()):
