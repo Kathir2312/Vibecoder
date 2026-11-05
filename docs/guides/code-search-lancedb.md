@@ -113,6 +113,9 @@ or you want exact-name search through hybrid mode.
   (+106 MB). Startup is unchanged (about 0.6 s): `lancedb` and `pyarrow` are loaded only when a
   LanceDB index is first used. LanceDB's own engine is a single 180 MB native library that can't
   be made smaller.
+- **Always in the download:** every build the project publishes (the release, the IDE
+  plugins, the terminal package) includes LanceDB; a test fails if a workflow or packaging
+  script drops it. The flags below are for a build you make yourself.
 - **A smaller build:** `build.py --without-lancedb` leaves LanceDB and `pyarrow` out (the
   built-in and Chroma stores still work, and choosing LanceDB says "This cmcoder doesn't include
   LanceDB"); `--without-browser` leaves out Playwright; `--slim` is both.
