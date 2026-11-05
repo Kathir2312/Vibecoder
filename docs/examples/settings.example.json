@@ -22,7 +22,8 @@
   "browser": {
     "enabled": true,
     "headless": true,
-    "executablePath": null
+    "executablePath": null,
+    "useIdeBrowser": true
   },
   "memory": {
     "enabled": true,
@@ -31,6 +32,12 @@
   "team": {
     "enabled": false,
     "maxRounds": 3
+  },
+  "rethink": {
+    "enabled": true,
+    "afterFailures": 3,
+    "maxRethinks": 1,
+    "budgetWarning": 0.8
   },
   "autoCompact": true,
   "autoCompactThreshold": 0.8,

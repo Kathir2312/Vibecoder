@@ -104,8 +104,19 @@
         "icon": "$(type-hierarchy)"
       },
       {
+        "command": "cmcoder.openTasks",
+        "title": "Open Tasks",
+        "category": "cmcoder",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "cmcoder.showLog",
         "title": "Show Log",
+        "category": "cmcoder"
+      },
+      {
+        "command": "cmcoder.showBrowserTools",
+        "title": "Show the IDE's Browser Tools",
         "category": "cmcoder"
       },
       {
@@ -145,6 +156,11 @@
           "command": "cmcoder.openNavigator",
           "when": "view == cmcoder.chat",
           "group": "navigation@3"
+        },
+        {
+          "command": "cmcoder.openTasks",
+          "when": "view == cmcoder.chat",
+          "group": "navigation@4"
         },
         {
           "command": "cmcoder.continueConversation",
@@ -242,6 +258,17 @@
           "default": "",
           "description": "Permission mode for new conversations (empty: your cmcoder settings decide). User settings only: a workspace can't change it.",
           "scope": "machine"
+        },
+        "cmcoder.useIntegratedBrowser": {
+          "type": "boolean",
+          "default": true,
+          "description": "Test web apps in VS Code's built-in Integrated Browser (a tab inside VS Code, the one Copilot's agent uses) instead of a separate Chrome or Edge window. Needs VS Code 1.110 or newer with workbench.browser.enableChatTools on; without it cmcoder opens its own browser window."
+        },
+        "cmcoder.integratedBrowserTools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "The names of VS Code's browser tools to pass to cmcoder, if automatic detection finds none (see 'cmcoder: Show the IDE's Browser Tools')."
         },
         "cmcoder.diffReview": {
           "type": "boolean",

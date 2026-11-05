@@ -7,8 +7,10 @@ import { AgentProcess } from "./agentProcess";
 import { productName } from "./brand";
 import { DiffReview } from "./diffReview";
 import { AgentNavigator } from "./navigator";
+import { TasksTab } from "./tasksTab";
 import { cmcoderCommand } from "./executable";
 import { contextLabel, currentEditor, editorContext, IDE_TOOLS, runIdeTool } from "./editorContext";
+import { browserTools, describeTools, runBrowserTool, type LmLike } from "./ideBrowser";
 import type { AgentEvent, ClientMessage, FileChange, PermissionRequest, RewindPoint } from "./protocol";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "./webviewMessages";
 
@@ -20,6 +22,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private state: AgentState = "exited";
   /** Open permission requests that have a diff to review. */
   private readonly changes = new Map<string, FileChange>();
+  /** VS Code's browser tools last offered to cmcoder (by name and schema), and their names. */
+  private offered = "";
+  private browserNames = new Set<string>();
   private readonly events = new vscode.EventEmitter<AgentEvent>();
   /** Every protocol event from cmcoder (used by the integration tests). */
   readonly onEvent = this.events.event;
@@ -28,6 +33,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   readonly onPanelState = this.panelStates.event;
   /** The Agent Navigator tab (the turn's agents as a mind map). */
   readonly navigator: AgentNavigator;
+  /** The Tasks tab (the agent's whole todo list; the chat shows one compact bar). */
+  readonly tasks: TasksTab;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -37,6 +44,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.navigator = new AgentNavigator(
       extensionUri,
       (id) => this.agent?.send({ type: "stop_subagent", id }),
+      () => void vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`),
+    );
+    this.tasks = new TasksTab(
+      extensionUri,
       () => void vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`),
     );
   }
@@ -55,6 +66,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** Sends a message, with the editor context when asked and enabled, and any images. */
   sendText(text: string, includeContext: boolean, images: ImageAttachment[] = []): boolean {
+    this.offerIdeTools(); // VS Code's browser tools can appear after cmcoder started: look again
     const enabled = vscode.workspace.getConfiguration("cmcoder").get<boolean>("autoContext", true);
     const context = includeContext && enabled ? editorContext(currentEditor()) : null;
     const attached = images.map((i) => ({ data: i.data, media_type: i.mediaType, name: i.name || null }));
@@ -74,6 +86,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await this.stopAgent();
     this.post({ kind: "reset" });
     this.navigator.reset();
+    this.tasks.reset();
     this.startAgent(extraArgs);
   }
 
@@ -84,6 +97,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   interrupt(): void {
     this.agent?.send({ type: "interrupt" });
+  }
+
+  /** VS Code's language-model API, where this VS Code has it (1.95+; the browser tools 1.110+). */
+  private lm(): LmLike | undefined {
+    return (vscode as unknown as { lm?: LmLike }).lm;
+  }
+
+  /**
+   * Tells cmcoder which IDE tools exist: its own two (problems, open file) and, when VS Code has
+   * its Integrated Browser tools, those (cmcoder then uses them instead of starting a Chrome
+   * window). Sent when cmcoder starts, and again before a message if the list has changed.
+   */
+  private offerIdeTools(force = false): void {
+    const config = vscode.workspace.getConfiguration("cmcoder");
+    const defs = config.get<boolean>("useIntegratedBrowser", true)
+      ? browserTools(this.lm(), config.get<string[]>("integratedBrowserTools", []))
+      : [];
+    const key = JSON.stringify(defs.map((d) => [d.name, d.input_schema]));
+    if (!force && key === this.offered) return;
+    this.offered = key;
+    this.browserNames = new Set(defs.map((d) => d.name));
+    this.agent?.send({ type: "ide_capabilities", tools: IDE_TOOLS, tool_defs: defs });
+    this.log.appendLine(
+      defs.length
+        ? `Browser: using VS Code's own browser tools (${defs.map((d) => d.name).join(", ")})`
+        : `Browser: VS Code offers no browser tools here; ${productName()} opens its own browser window when it needs one`,
+    );
+  }
+
+  /** The command "Show the IDE's Browser Tools": what this VS Code offers, in the log. */
+  showBrowserTools(): void {
+    const config = vscode.workspace.getConfiguration("cmcoder");
+    const text = describeTools(this.lm(), config.get<string[]>("integratedBrowserTools", []));
+    this.log.appendLine(text);
+    this.log.show(true);
   }
 
   /**
@@ -140,6 +188,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   async dispose(): Promise<void> {
     this.navigator.dispose();
+    this.tasks.dispose();
     await this.stopAgent();
   }
 
@@ -219,12 +268,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // The panel sees every event first and in order; side effects come after.
     this.post({ kind: "event", event });
     this.navigator.event(event);
+    if (event.type === "todo_update") this.tasks.update(event.todos);
     this.events.fire(event);
     switch (event.type) {
       case "system_init":
         this.log.appendLine(`${productName()} ${event.version || "(an older version)"}: ${event.model} (${event.provider})`);
         this.setState("ready");
-        this.agent?.send({ type: "ide_capabilities", tools: IDE_TOOLS });
+        this.offerIdeTools(true);
         this.updateContext();
         break;
       case "permission_request":
@@ -237,7 +287,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         break;
       case "ide_tool_request": {
-        const result = await runIdeTool(event.name, event.input);
+        const result = this.browserNames.has(event.name)
+          ? await runBrowserTool(this.lm(), event.name, event.input)
+          : await runIdeTool(event.name, event.input);
         this.agent?.send({ type: "ide_tool_result", request_id: event.request_id, ...result });
         break;
       }
@@ -331,6 +383,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "openNavigator":
         this.navigator.open();
         break;
+      case "openTasks":
+        this.tasks.open();
+        break;
       case "permission":
         this.answer(m.requestId, m.allow, m.remember, m.feedback, m.rememberSession ?? false);
         break;
@@ -341,6 +396,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       case "setMode":
         this.agent?.send({ type: "set_mode", mode: m.mode });
+        break;
+      case "setAgent":
+        this.agent?.send({ type: "set_agent", agent: m.agent });
         break;
       case "setCritique":
         this.agent?.send({ type: "set_critique", enabled: m.enabled, save: true });
@@ -406,7 +464,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <link href="${style}" rel="stylesheet">
   <title>${escapeHtml(productName())}</title>
 </head>
-<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules">
+<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab agents">
   <div id="app"></div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

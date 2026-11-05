@@ -179,14 +179,14 @@ def webtest_command(session: Session, arg: str) -> CommandResult:
     from ..webtest import webtest_prompt
 
     a = session.agent
-    if a.ctx.browser is None:
+    if a.ctx.browser is None and not a.ide_tool_names:
         return CommandResult(
             [
                 "The Browser tool is off here: it is switched off in settings (browser.enabled), "
                 "or this is a slim build without Playwright."
             ]
         )
-    return CommandResult(send=webtest_prompt(a.ctx.project_root, arg))
+    return CommandResult(send=webtest_prompt(a.ctx.project_root, arg, a.ide_tool_names))
 
 
 async def review_command(session: Session, target: str) -> CommandResult:

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -41,10 +42,25 @@ sys.path.insert(0, str(ROOT / "packaging"))
 
 import brand  # noqa: E402
 
+BUILD_NAME = re.compile(r"[A-Za-z0-9._-]{1,24}")
+
 
 def build_id() -> str:
-    """The commit and UTC date, e.g. "aa3dc83 2026-10-07" ("+changes" if the tree isn't clean)."""
+    """The commit and UTC date, e.g. "aa3dc83 2026-10-07" ("+changes" if the tree isn't clean).
+
+    Without git (or without a commit) set CMCODER_BUILD_ID to a name of your own, e.g.
+    "nogit" or "2026-11-r1": the build is then "<name> <date>" and git is not used.
+    """
     import subprocess
+
+    today = f"{datetime.datetime.now(datetime.UTC):%Y-%m-%d}"
+    named = os.environ.get("CMCODER_BUILD_ID", "").strip()
+    if named:
+        if not BUILD_NAME.fullmatch(named):
+            sys.exit(
+                f"CMCODER_BUILD_ID {named!r}: letters, digits, '.', '_' and '-' only, at most 24."
+            )
+        return f"{named} {today}"
 
     def git(*args: str) -> str:
         try:
@@ -58,7 +74,7 @@ def build_id() -> str:
     commit = git("rev-parse", "--short=7", "HEAD") or "unknown"
     if git("status", "--porcelain", "--untracked-files=no"):
         commit += "+changes"
-    return f"{commit} {datetime.datetime.now(datetime.UTC):%Y-%m-%d}"
+    return f"{commit} {today}"
 
 
 # LanceDB's engine is a native extension and it loads some modules by name.

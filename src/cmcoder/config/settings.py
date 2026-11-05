@@ -247,6 +247,22 @@ class BrowserConfig(_Model):
     headless: bool = True  # false: show the window (demos)
     # A browser program to use instead of looking for Chrome or Edge.
     executable_path: str | None = Field(None, alias="executablePath")
+    # When the IDE has browser tools of its own (VS Code's Integrated Browser), use those:
+    # the page opens inside the IDE instead of in a separate Chrome or Edge window.
+    use_ide_browser: bool = Field(True, alias="useIdeBrowser")
+
+
+class RethinkConfig(_Model):
+    """Stuck detection (middleware/rethink.py): after `afterFailures` failed tool calls in a
+    row the agent is told to stop, say what went wrong and try something different; still
+    failing after `maxRethinks` rethinks, it must report to you instead of trying again; and a
+    reminder to wrap up when `budgetWarning` of the model calls (maxTurns) are used."""
+
+    enabled: bool = True
+    after_failures: int = Field(3, alias="afterFailures", ge=2, le=10)
+    max_rethinks: int = Field(1, alias="maxRethinks", ge=1, le=5)
+    # 0 turns the reminder off; 0.8: when 80% of maxTurns are used.
+    budget_warning: float = Field(0.8, alias="budgetWarning", ge=0, le=1)
 
 
 class TeamConfig(_Model):
@@ -315,6 +331,7 @@ class Settings(_Model):
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
+    rethink: RethinkConfig = Field(default_factory=lambda: RethinkConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")
     denied_mcp_servers: list[str] = Field(default_factory=list, alias="deniedMcpServers")

@@ -36,6 +36,8 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 | Feature | How |
 |---|---|
 | Permission prompts | In the chat: why it is asked, the command or a diff of the change; **Allow**, **Always allow…** (shows the rule; for this session or saved for this project), **Deny** (with an optional note for cmcoder); a notification when the chat is out of view |
+| Agents | The **Agent** dropdown above the input: the default agent, or one of your agents (`.cmcoder/agents/*.md` of a trusted project, `~/.cmcoder/agents`, or a built-in one). Choosing one makes the whole conversation that agent: its instructions, tools and model; a project's agents are greyed out until you run `cmcoder trust` |
+| Todo list | One compact bar in the chat (done/total, a meter, the task in progress); click it, or use **cmcoder: Open Tasks**, for an editor tab with the whole list, numbered and grouped, so a long list never takes the chat's room |
 | Commands | A card per command: exit code, time, live output, **Stop this command**, **Show all**, **Copy output** |
 | Review edits | A proposed Write/Edit opens in the diff editor; **✓ Accept** / **✕ Reject** in its title bar (or on the chat card) |
 | Editor context | The active file, selection and its problems go with each message; the 📎 line shows what, and its checkbox leaves it out once |
@@ -56,6 +58,8 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 | `cmcoder.permissionMode` | Permission mode for new conversations (user settings only) |
 | `cmcoder.diffReview` | Open proposed edits in the diff editor (default on) |
 | `cmcoder.notifyWhenHidden` | A notification, with a button to open the chat, when cmcoder needs your answer while the chat isn't in view (default on) |
+| `cmcoder.useIntegratedBrowser` | Test web apps in VS Code's own Integrated Browser (VS Code 1.110+) instead of a separate Chrome or Edge window (default on) |
+| `cmcoder.integratedBrowserTools` | The names of VS Code's browser tools to use, if detection finds none (see the command *cmcoder: Show the IDE's Browser Tools*) |
 | `cmcoder.autoContext` | Send the editor context with messages (default on) |
 
 A workspace can't change which program runs or the permission mode: the

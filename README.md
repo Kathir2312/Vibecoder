@@ -71,7 +71,8 @@ uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-js
 | MCP servers | `mcpServers` in settings, `.mcp.json` in a project (approved before first start), `--mcp-config`; `/mcp` |
 | Hooks | `hooks` in settings: PreToolUse, PostToolUse, Stop, SubagentStop, UserPromptSubmit, SessionStart, PreCompact, Notification |
 | Custom commands, skills | `.cmcoder/commands/*.md`, `.cmcoder/skills/<name>/SKILL.md` (yours in `~/.cmcoder/`) |
-| Subagents | the `Task` tool; your own in `.cmcoder/agents/*.md`; `/agents` |
+| Subagents | the `Task` tool; your own in `.cmcoder/agents/*.md`; `/agents`. **Talk to one yourself:** the Agent dropdown in the VS Code and Visual Studio chat, or `cmcoder --agent NAME`: the whole conversation is that agent (its instructions, tools, model) |
+| Rethink when stuck | on by default (`"rethink": {"enabled": false}` turns it off): three failed tool calls in a row make the agent say what went wrong and try something different; still failing, it stops and reports to you what it tried and what it needs. A reminder to wrap up at 80% of `maxTurns` |
 | Critic | `/critic on`, `--critic` or `"critic": {"enabled": true}`: a read-only reviewer checks each answer first |
 | Team | `"team": {"enabled": true}`, then `/team <feature>`: PM → developer → tester (↺ developer on a failure, up to `team.maxRounds`) → DevOps. Roles: `pm.md`, `developer.md`, `tester.md`, `devops.md` in `.cmcoder/agents/`, else built-in |
 
@@ -114,7 +115,7 @@ or kept on a Chroma server (`"store": {"type": "chroma", "url": "..."}`).
 | `src/cmcoder/agents/` | `build_agent()`: `create_agent` with cmcoder's middleware stack; subagents; the team `StateGraph` |
 | `src/cmcoder/mcp/` | MCP servers through `langchain-mcp-adapters` |
 | `src/cmcoder/rag/` | Code search: embeddings, vector stores, chunking, the incremental index |
-| `src/cmcoder/middleware/` | Permissions (interrupts), hooks, the critic, compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard |
+| `src/cmcoder/middleware/` | Permissions (interrupts), hooks, the critic, compaction, context budget and window learning, text tool calls, file snapshots, tool-call repair, loop guard, rethink when stuck |
 | `src/cmcoder/runtime/` | `Session` (streaming, interrupts, compaction, rewind), SQLite session store, slash commands, titles |
 | `src/cmcoder/tools/` | Read/Write/Edit/Glob/Grep/Bash and the LangChain adapter (todos: LangChain's `write_todos`) |
 | `src/cmcoder/core/`, `config/`, `protocol/`, `sandbox/` | Carried over from cmcoderagent: permission rules, high-risk command checks, settings, IDE protocol |

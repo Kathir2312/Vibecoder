@@ -12,7 +12,7 @@ Visual Studio exists only on Windows, so there is one file, built on Windows.
 |---|---|
 | **Windows 10/11 x64** | Visual Studio and the Windows cmcoder |
 | **Visual Studio 2022 or newer** (any edition) with the **"Visual Studio extension development"** workload; or the **Build Tools for Visual Studio** with "MSBuild" and the ".NET Framework 4.8 targeting pack" | builds the extension (MSBuild; the VS SDK comes from NuGet) |
-| **Git for Windows** | the build is named after its commit |
+| **Git for Windows** | the build is named after its commit; without git, set `CMCODER_BUILD_ID` ([README.md](README.md#building-without-git)) |
 | **uv** ([docs.astral.sh/uv](https://docs.astral.sh/uv/)) | builds cmcoder; it downloads its own Python 3.12 |
 | **Node.js 22 LTS** (with npm) | builds the shared chat page |
 | Internet access to PyPI, the npm registry and nuget.org | the build's packages |

@@ -211,6 +211,34 @@ class SessionList(_Event):
     sessions: list[SessionSummary]
 
 
+class AgentInfo(BaseModel):
+    """An agent a conversation can be switched to (`set_agent`): a subagent definition."""
+
+    name: str
+    description: str  # one line (the definition's, without its examples)
+    origin: Literal["built-in", "user", "project"]
+    # False: listed but not available, and `hint` says why (a project's agents are used only
+    # once the project is trusted: `cmcoder trust`).
+    usable: bool = True
+    hint: str = ""
+
+
+class AgentList(_Event):
+    """The agents to choose from, and the one in use (None: the default). Sent at start and after
+    each switch."""
+
+    type: Literal["agent_list"] = "agent_list"
+    agents: list[AgentInfo]
+    current: str | None = None
+
+
+class AgentChanged(_Event):
+    """The conversation now talks to this agent (None: the default)."""
+
+    type: Literal["agent_changed"] = "agent_changed"
+    agent: str | None = None
+
+
 class CommandInfo(BaseModel):
     name: str  # without the "/"
     description: str
@@ -447,6 +475,8 @@ Event = Annotated[
     | ModeChanged
     | ModelChanged
     | IdeToolRequest
+    | AgentList
+    | AgentChanged
     | SessionList
     | CommandList
     | RewindPoints

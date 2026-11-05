@@ -56,6 +56,7 @@ export async function run(): Promise<void> {
     "cmcoder.updateIndex",
     "cmcoder.codeSearch",
     "cmcoder.openNavigator",
+    "cmcoder.openTasks",
   ]) {
     assert.ok(commands.includes(c), `command ${c} missing`);
   }
@@ -116,4 +117,16 @@ export async function run(): Promise<void> {
   await until("the Agent Navigator's script", () => navigatorReady);
   await shot("3-navigator");
   readyListener.dispose();
+
+  // 4. The Tasks tab (the agent's whole todo list; the chat shows one compact bar) opens as an
+  // editor tab and its script runs: it reports "ready" after packaging, like the navigator.
+  let tasksReady = false;
+  const tasksListener = api.onTasksReady(() => (tasksReady = true));
+  await vscode.commands.executeCommand("cmcoder.openTasks");
+  await until("the Tasks tab", () =>
+    vscode.window.tabGroups.all.some((g) => g.tabs.some((t) => t.label.endsWith(": Tasks"))),
+  );
+  await until("the Tasks tab's script", () => tasksReady);
+  await shot("4-tasks");
+  tasksListener.dispose();
 }

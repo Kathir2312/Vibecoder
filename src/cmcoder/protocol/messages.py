@@ -101,14 +101,36 @@ class SetModel(_Message):
     model: str = Field(min_length=1)
 
 
+class SetAgent(_Message):
+    """Talk to one of the agents in `agent_list` for the rest of the conversation (its
+    instructions, tools and model replace the default's), or `agent: null` for the default.
+    Refused during a turn. Answered with `agent_changed`."""
+
+    type: Literal["set_agent"] = "set_agent"
+    agent: str | None = None
+
+
+class IdeToolDef(_Message):
+    """A tool the IDE itself defines, for the model to call (VS Code's built-in browser
+    tools, found at run time): its name, what it does, and its inputs as a JSON schema.
+    cmcoder offers it as it is and relays each call with `ide_tool_request`."""
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str = ""
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
 class IdeCapabilities(_Message):
     """The client can run these IDE tools (e.g. getDiagnostics, openFile).
 
-    Send once after `system_init`; the agent offers them to the model and
-    asks the client to run them with `ide_tool_request`."""
+    Send once after `system_init` (and again when the list changes, before a turn); the
+    agent offers them to the model and asks the client to run them with `ide_tool_request`.
+    `tools`: tools cmcoder knows by name; `tool_defs`: tools only the IDE knows (their
+    schemas come with them)."""
 
     type: Literal["ide_capabilities"] = "ide_capabilities"
     tools: list[str]
+    tool_defs: list[IdeToolDef] = Field(default_factory=list)
 
 
 class IdeToolResult(_Message):
@@ -118,6 +140,8 @@ class IdeToolResult(_Message):
     request_id: str
     content: str
     is_error: bool = False
+    # Pictures for the user's chat (a screenshot): `data:image/...;base64,` URLs.
+    images: list[str] = Field(default_factory=list)
 
 
 class ListSessions(_Message):
@@ -205,6 +229,7 @@ ClientMessage = Annotated[
     | StopTool
     | SetMode
     | SetModel
+    | SetAgent
     | IdeCapabilities
     | IdeToolResult
     | ListSessions

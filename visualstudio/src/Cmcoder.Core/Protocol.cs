@@ -222,6 +222,14 @@ namespace Cmcoder.Core
             return Text(m);
         }
 
+        /// <summary>Talk to one of the agents in <c>agent_list</c> for the rest of the conversation; null: the default one.</summary>
+        public static string SetAgent(string? agent)
+        {
+            var m = Message("set_agent");
+            m["agent"] = agent == null ? JValue.CreateNull() : (JToken)agent;
+            return Text(m);
+        }
+
         public static string SetCritique(bool enabled)
         {
             var m = Message("set_critique");
@@ -305,6 +313,8 @@ namespace Cmcoder.Core
                 IdeCapabilities(new[] { "getDiagnostics", "openFile" }),
                 IdeToolResult("t1", "No problems.", false),
                 SetMode("acceptEdits"),
+                SetAgent("planner"),
+                SetAgent(null),
                 SetCritique(true),
                 StopSubagent("s1"),
                 StopTool("t1"),

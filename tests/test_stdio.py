@@ -202,6 +202,7 @@ async def test_modes_models_and_bad_messages(mock_server: Any, project: Path) ->
     agent = await Agent.start(project, server, "--permission-mode", "plan")
     try:
         assert (await agent.next())["permission_mode"] == "plan"
+        assert (await agent.next())["type"] == "agent_list"  # the agents to choose from
         await agent.send(type="set_mode", mode="acceptEdits")
         assert (await agent.next()) == {"type": "mode_changed", "mode": "acceptEdits"}
         await agent.send(type="set_mode", mode="yolo")
@@ -272,6 +273,7 @@ async def test_resumed_conversation_sends_its_todos(mock_server: Any, project: P
             {"role": "assistant", "text": "Planned."},
         ]
         assert (await second.next()) == {"type": "todo_update", "todos": plan}
+        assert (await second.next())["type"] == "agent_list"  # then the agents to choose from
 
         await second.send(type="list_sessions")
         listed = await second.next()

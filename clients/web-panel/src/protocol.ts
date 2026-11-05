@@ -6,6 +6,15 @@ export const PROTOCOL_VERSION = 1;
 
 // ---- Agent -> client (stdout) ----
 
+/** An agent a conversation can be switched to (`set_agent`): a subagent definition. */
+export interface AgentInfo {
+  name: string;
+  description: string;
+  origin: "built-in" | "user" | "project";
+  usable: boolean;
+  hint: string;
+}
+
 export interface CodeContextItem {
   path: string;
   start_line: number;
@@ -214,6 +223,22 @@ export interface IdeToolRequest {
   input: Record<string, unknown>;
 }
 
+/**
+ * The agents to choose from, and the one in use (None: the default). Sent at start and after
+ * each switch.
+ */
+export interface AgentList {
+  type: "agent_list";
+  agents: AgentInfo[];
+  current: string | null;
+}
+
+/** The conversation now talks to this agent (None: the default). */
+export interface AgentChanged {
+  type: "agent_changed";
+  agent: string | null;
+}
+
 export interface SessionList {
   type: "session_list";
   sessions: SessionSummary[];
@@ -391,6 +416,8 @@ export type AgentEvent =
   | ModeChanged
   | ModelChanged
   | IdeToolRequest
+  | AgentList
+  | AgentChanged
   | SessionList
   | CommandList
   | RewindPoints
@@ -430,6 +457,17 @@ export interface IdeSelection {
   start_line: number;
   end_line: number;
   text: string;
+}
+
+/**
+ * A tool the IDE itself defines, for the model to call (VS Code's built-in browser
+ * tools, found at run time): its name, what it does, and its inputs as a JSON schema.
+ * cmcoder offers it as it is and relays each call with `ide_tool_request`.
+ */
+export interface IdeToolDef {
+  name: string;
+  description?: string;
+  input_schema?: Record<string, unknown>;
 }
 
 /**
@@ -485,14 +523,27 @@ export interface SetModel {
 }
 
 /**
+ * Talk to one of the agents in `agent_list` for the rest of the conversation (its
+ * instructions, tools and model replace the default's), or `agent: null` for the default.
+ * Refused during a turn. Answered with `agent_changed`.
+ */
+export interface SetAgent {
+  type: "set_agent";
+  agent?: string | null;
+}
+
+/**
  * The client can run these IDE tools (e.g. getDiagnostics, openFile).
  *
- * Send once after `system_init`; the agent offers them to the model and
- * asks the client to run them with `ide_tool_request`.
+ * Send once after `system_init` (and again when the list changes, before a turn); the
+ * agent offers them to the model and asks the client to run them with `ide_tool_request`.
+ * `tools`: tools cmcoder knows by name; `tool_defs`: tools only the IDE knows (their
+ * schemas come with them).
  */
 export interface IdeCapabilities {
   type: "ide_capabilities";
   tools: string[];
+  tool_defs?: IdeToolDef[];
 }
 
 /** The answer to an `ide_tool_request`. */
@@ -501,6 +552,7 @@ export interface IdeToolResult {
   request_id: string;
   content: string;
   is_error?: boolean;
+  images?: string[];
 }
 
 /** Ask for this project's saved conversations (answered with `session_list`). */
@@ -587,6 +639,7 @@ export type ClientMessage =
   | StopTool
   | SetMode
   | SetModel
+  | SetAgent
   | IdeCapabilities
   | IdeToolResult
   | ListSessions

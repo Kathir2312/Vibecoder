@@ -164,6 +164,29 @@ namespace Cmcoder.Core.Tests
             Assert.False(host.Running);
         }
 
+        [SkippableFact]
+        public void ThePanelChoosesAnAgentAndGoesBack()
+        {
+            using var server = new MockServer("[{\"content\":\"ok\"}]");
+            var project = Fixtures.Project();
+            var ide = new FakeIde();
+            var host = new Host(ide, Config(project, server.Url));
+            host.OnPanelMessage("{\"kind\":\"ready\"}");
+            Fixtures.Until("ready", () => host.State == "ready", ide.LogText);
+            // cmcoder lists the agents (the built-in ones are always there) ...
+            Fixtures.Until("the agent list", () => ide.Events("agent_list").Count > 0, ide.LogText);
+            var names = Json.List(ide.Events("agent_list")[0], "agents").Select(a => (string?)a["name"]).ToList();
+            Assert.Contains("explore", names);
+            // ... the panel's choice reaches it, and so does going back to the default agent.
+            host.OnPanelMessage("{\"kind\":\"setAgent\",\"agent\":\"explore\"}");
+            Fixtures.Until("the switch", () => ide.Events("agent_changed").Count == 1, ide.LogText);
+            Assert.Equal("explore", Json.Str(ide.Events("agent_changed")[0], "agent"));
+            host.OnPanelMessage("{\"kind\":\"setAgent\",\"agent\":null}");
+            Fixtures.Until("the switch back", () => ide.Events("agent_changed").Count == 2, ide.LogText);
+            Assert.Null(Json.Str(ide.Events("agent_changed")[1], "agent"));
+            host.Dispose();
+        }
+
         [Fact]
         public void ARelativeProgramSettingIsExplained()
         {
