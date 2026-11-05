@@ -209,7 +209,9 @@ class StdioServer:
                 self.emit(ev.History(messages=await self.session.history()))
                 if todos := await self.session.todos():
                     self.emit(ev.TodoUpdate(todos=todos))
-            self.emit(self._agent_list())  # (after those: clients read init, history, todos in order)
+            self.emit(
+                self._agent_list()
+            )  # (after those: clients read init, history, todos in order)
             try:
                 while True:
                     line = await self.inbox.get()

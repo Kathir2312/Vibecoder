@@ -109,3 +109,36 @@ async def test_a_subagent_gets_its_own_budget(mock_server, project: Path) -> Non
     inner = [e for e in of_type(events, ev.ToolUse) if e.parent_tool_use_id]
     assert len(inner) == 30  # the subagent's own maxTurns ended it
     assert of_type(events, ev.Result)[0].subtype == "success"
+
+
+async def test_the_step_limit_follows_the_agent_in_use_after_a_rebuild(
+    mock_server, project: Path
+) -> None:
+    """Choosing an agent (or a model, or IDE tools) rebuilds the graph; the limit must be the
+    new graph's, not the one worked out when the conversation began."""
+    (project / ".cmcoder" / "agents").mkdir(parents=True)
+    (project / ".cmcoder" / "agents" / "small.md").write_text(
+        "---\nname: small\ndescription: x\ntools: Read\n---\nYou are small.\n"
+    )
+    server = mock_server([{"content": "ok"}])
+    session = make_session(server.base_url, project, settings={"maxTurns": 30})
+    try:
+        default_limit = session.run_config()["recursion_limit"]
+        assert default_limit == session.agent.recursion_limit
+        smaller = build_agent_as(session, "small", project)
+        session.agent = smaller  # what a rebuild does (cli/stdio.py)
+        assert session.run_config()["recursion_limit"] == smaller.recursion_limit
+        assert smaller.recursion_limit != default_limit  # fewer hooks: a different budget
+        # Every run is allowed all of its model calls: nodes per loop times maxTurns, and more.
+        nodes = len([n for n in smaller.graph.nodes if not n.startswith("__")])
+        assert smaller.recursion_limit >= smaller.max_turns * nodes
+    finally:
+        await session.agent.close()
+
+
+def build_agent_as(session: Any, name: str, project: Path) -> Any:
+    from cmcoder.agents.main import AgentOptions, build_agent
+
+    settings = session.agent.spec["settings"]
+    settings.project_trusted = True
+    return build_agent(settings, AgentOptions(cwd=project, agent=name, max_turns=30))

@@ -126,16 +126,20 @@ class Session:
         if agent.telemetry is not None:  # counted when it starts, even without a turn
             agent.telemetry.session_started(agent.frontend, self.session_id)
 
+    def run_config(self) -> RunnableConfig:
+        """The config for running the graph: the thread, and LangGraph's safety limit on graph
+        steps. The limit is sized from the graph that is *in use now* (agents/main.py
+        `recursion_limit_for`: every middleware hook is a step), so it is read at each run: the
+        agent is rebuilt when an agent, a model or IDE tools are chosen, and a limit worked out for
+        the old graph could be too small for the new one. What ends a turn that goes on is
+        `maxTurns` (ModelCallLimitMiddleware); this only catches a graph that never stops."""
+        limit = self.agent.recursion_limit or self.agent.max_turns * 12 + 25
+        return {**self.config, "recursion_limit": limit}
+
     # --- threads ---------------------------------------------------------------
     def _use_thread(self, thread_id: str) -> None:
         self.session_id = thread_id
-        self.config: RunnableConfig = {
-            "configurable": {"thread_id": thread_id},
-            # LangGraph's own safety limit on graph steps, sized from the graph (every
-            # middleware hook is a step: agents/main.py `recursion_limit_for`); what ends a
-            # turn that goes on is `maxTurns`, ModelCallLimitMiddleware.
-            "recursion_limit": self.agent.recursion_limit or self.agent.max_turns * 12 + 25,
-        }
+        self.config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
         folder = None
         if self.store is not None and self.store.persistent:
             folder = sessions_dir(self.agent.ctx.project_root) / f"{thread_id}.checkpoints"
@@ -350,7 +354,7 @@ class Session:
             step_limit = True
             yield ev.Warning(
                 message=f"Stopped: the agent used its whole step budget "
-                f"({self.config.get('recursion_limit')} graph steps) without finishing. "
+                f"({self.run_config().get('recursion_limit')} graph steps) without finishing. "
                 'Say "continue" to go on, or raise maxTurns in your settings.'
             )
             await self.repair_after_interrupt()
@@ -441,7 +445,7 @@ class Session:
     async def _stream(
         self, graph_input: Any, context: RunContext, state: _TurnState, usage: dict[str, int]
     ) -> AsyncIterator[ev.Event]:
-        config: RunnableConfig = self.config
+        config: RunnableConfig = self.run_config()
         if self.agent.telemetry is not None:
             # A LangChain callback handler: it sees every model call and tool
             # run of this turn, the subagents' too (telemetry.py).
