@@ -187,3 +187,17 @@ def test_the_guides_name_the_scripts() -> None:
         text = (ROOT / "docs" / "build-package" / page).read_text("utf-8")
         assert f"package-{name}" in text, f"docs/build-package/{page} doesn't name package-{name}"
     assert "package-all" in (ROOT / "docs" / "build-package" / "README.md").read_text("utf-8")
+
+
+def test_every_download_includes_lancedb() -> None:
+    """Decision: LanceDB ships in every build people download (a PC gets code search for big
+    projects with nothing to install). `--without-lancedb` and `--slim` stay for builds
+    people make themselves; no workflow or packaging script may use them."""
+    files = [*(ROOT / ".github" / "workflows").glob("*.yml"), *PACKAGING.glob("package-*")]
+    files += [PACKAGING / "terminal.py", PACKAGING / "build-vsix.ps1"]
+    for path in files:
+        if not path.is_file():
+            continue
+        text = path.read_text("utf-8")
+        assert "--without-lancedb" not in text, path.name
+        assert "--slim" not in text, path.name
