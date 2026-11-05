@@ -124,7 +124,7 @@ for (const flavour of FLAVOURS) {
     await ev({ type: "tool_result", id: "1", name: "Bash", content: "a\nb\nc\nd\ne", is_error: false, summary: "exit 0", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     await ev(result);
 
-    assert.equal(await page.textContent(".todos"), "Todo list · 0/2 done► Fix☐ Test");
+    assert.equal(await page.textContent(".todos"), "0/2► 1. Fix");
     assert.equal(await page.innerHTML(".msg.assistant strong"), "now");
     assert.equal(await page.locator(".msg.assistant img").count(), 0, "raw HTML from the model is not rendered");
     assert.equal(await page.textContent(".tool.bash .bash-cmd"), "pytest -q");
@@ -384,6 +384,74 @@ for (const flavour of FLAVOURS) {
     await ev({ type: "tool_use", id: "d2", name: "Bash", input: { command: "sleep 60" }, label: "Bash(sleep 60)", parent_tool_use_id: null });
     await send({ kind: "state", state: "exited", message: "cmcoder stopped." });
     assert.deepEqual(await page.locator(".bash-badge").allTextContents(), ["■ interrupted", "■ interrupted"]);
+    await page.close();
+  });
+
+  test(`${flavour}: a long todo list is one compact bar; the chat keeps its room`, async () => {
+    const { page, ev } = await panel(flavour);
+    const todos = Array.from({ length: 20 }, (_, i) => ({
+      content: `Generate test: ${i + 1}.1 A rather long task title that would fill the line`,
+      status: i === 0 ? "in_progress" : "pending",
+    }));
+    await ev({ type: "todo_update", todos });
+    assert.equal(await page.textContent(".todo-count"), "0/20");
+    assert.match((await page.textContent(".todo-now")) ?? "", /^► 1\. Generate test: 1\.1 /);
+    const bar = (await page.locator(".todos").boundingBox())!;
+    assert.ok(bar.height < 45, `the whole list is one line, not ${bar.height}px`);
+    const log = (await page.locator(".log").boundingBox())!;
+    assert.ok(log.height > 300, `the chat keeps its room (${log.height}px)`);
+    assert.equal(await page.locator(".todo").count(), 0, "the rows are not drawn until asked for");
+    // Without a Tasks tab in this IDE a click opens the list here, in a box of limited height.
+    await page.click(".todo-bar");
+    assert.equal(await page.locator(".todo").count(), 20);
+    const list = (await page.locator(".todo-list").boundingBox())!;
+    assert.ok(list.height <= 720 * 0.3, `the list scrolls inside ${list.height}px`);
+    assert.match((await page.locator(".todo").first().textContent()) ?? "", /^► 1\. Generate test/);
+    await page.click(".todo-bar");
+    assert.equal(await page.locator(".todo-list").count(), 0);
+    assert.equal(await page.locator(".todo-toggle").count(), 0, "no second button without a tab");
+    await page.close();
+  });
+
+  test(`${flavour}: the todo bar counts what is done and ends with All tasks done`, async () => {
+    const { page, ev } = await panel(flavour);
+    const make = (done: number, total: number) =>
+      Array.from({ length: total }, (_, i) => ({
+        content: `Task ${i + 1}`,
+        status: i < done ? "completed" : i === done ? "in_progress" : "pending",
+      }));
+    await ev({ type: "todo_update", todos: make(3, 20) });
+    assert.equal(await page.textContent(".todo-count"), "3/20");
+    assert.equal(await page.locator(".todo-fill").evaluate((e) => (e as HTMLElement).style.width), "15%");
+    assert.match((await page.textContent(".todo-now")) ?? "", /^► 4\. Task 4$/);
+    assert.match((await page.getAttribute(".todo-bar", "title")) ?? "", /3 done · 1 in progress · 16 to do/);
+    await ev({ type: "todo_update", todos: make(20, 20).map((t) => ({ ...t, status: "completed" })) });
+    assert.equal(await page.textContent(".todo-count"), "20/20");
+    assert.equal(await page.textContent(".todo-now"), "✓ All tasks done");
+    await ev({ type: "todo_update", todos: [] });
+    assert.equal(await page.isVisible(".todos"), false);
+    await page.close();
+  });
+
+  test(`${flavour}: with a Tasks tab the bar opens it, and a small button shows the list here`, async () => {
+    const { page, ev, sent } = await panel(flavour, undefined, true, "stopTool sessionRules tasksTab");
+    const todos = [
+      { content: "Plan", status: "completed" },
+      { content: "Build", status: "in_progress" },
+      { content: "Test", status: "pending" },
+    ];
+    await ev({ type: "todo_update", todos });
+    assert.equal(await page.locator(".todo-open").count(), 1, "the ↗ says it opens elsewhere");
+    await page.click(".todo-bar");
+    assert.deepEqual((await sent()).at(-1), { kind: "openTasks" });
+    assert.equal(await page.locator(".todo-list").count(), 0, "the list stays closed");
+    await page.click(".todo-toggle");
+    assert.equal(await page.locator(".todo").count(), 3);
+    assert.equal(await page.getAttribute(".todo-toggle", "aria-expanded"), "true");
+    await ev({ type: "todo_update", todos: [...todos, { content: "Ship", status: "pending" }] });
+    assert.equal(await page.locator(".todo").count(), 4, "an open list stays open as the agent works");
+    await page.click(".todo-toggle");
+    assert.equal(await page.locator(".todo-list").count(), 0);
     await page.close();
   });
 

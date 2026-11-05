@@ -4,6 +4,8 @@
 !dist/chat.css
 !dist/navigator.js
 !dist/navigator.css
+!dist/tasks.js
+!dist/tasks.css
 !media/**
 !package.json
 !README.md

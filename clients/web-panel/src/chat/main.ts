@@ -15,6 +15,7 @@ import type {
   ToolUse,
 } from "../protocol";
 import { bridge, fromHost, hostSettings } from "../bridge";
+import { summarizeTodos, TODO_MARKS } from "../todos";
 import { lineDiff } from "./diff";
 import { dangerousParts, renderShell } from "./shell";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
@@ -48,7 +49,6 @@ const MODE_HELP: Record<string, string> = {
   plan: "Read only: looks and plans, changes nothing",
   bypassPermissions: "Asks only for high-risk commands",
 };
-const MARKS: Record<string, string> = { pending: "☐", in_progress: "►", completed: "☑" };
 
 // Model output is Markdown; any raw HTML in it is shown as text, never run.
 marked.use({
@@ -1313,16 +1313,57 @@ function answered(card: HTMLElement, text: string): void {
   updateAskQueue();
 }
 
+// --- the todo list: one compact bar, so a long list never pushes the chat out of view ------------
+//
+// "3/20", a meter and the task in progress. A click opens the Tasks tab with the whole list
+// (an IDE that has one says so: data-features "tasksTab"); where there is none, it opens the
+// list here, in a scrolling box of limited height.
+
+let todosOpen = false; // the list is shown under the bar
+let lastTodos: Record<string, unknown>[] = [];
+
 function renderTodos(todos: Record<string, unknown>[]): void {
+  lastTodos = todos;
   todosPanel.replaceChildren();
   todosPanel.hidden = todos.length === 0;
   if (!todos.length) return;
-  const done = todos.filter((t) => t.status === "completed").length;
-  todosPanel.append(el("div", "title", `Todo list · ${done}/${todos.length} done`));
-  for (const t of todos) {
-    const status = String(t.status);
-    todosPanel.append(el("div", `todo ${status}`, `${MARKS[status] ?? "☐"} ${String(t.content ?? "")}`));
+  const s = summarizeTodos(todos);
+  const tab = HOST_FEATURES.includes("tasksTab");
+  const toggle = () => {
+    todosOpen = !todosOpen;
+    renderTodos(lastTodos);
+  };
+
+  const bar = el("button", "todo-bar") as HTMLButtonElement;
+  bar.append(el("span", "todo-count", `${s.done}/${s.total}`));
+  const meter = el("span", "todo-meter");
+  const fill = el("span", "todo-fill");
+  fill.style.width = `${s.percent}%`;
+  meter.append(fill);
+  bar.append(meter);
+  const now = s.current ? `${TODO_MARKS[s.current.status]} ${s.current.no}. ${s.current.text}` : "✓ All tasks done";
+  bar.append(el("span", "todo-now", now));
+  if (tab) bar.append(el("span", "todo-open", "↗"));
+  const counts = `${s.done} done · ${s.active} in progress · ${s.pending} to do`;
+  bar.title = `${counts}\n${tab ? "Click to open all tasks in a tab" : todosOpen ? "Click to hide the list" : "Click to show the list"}`;
+  bar.setAttribute("aria-label", `Tasks: ${counts}`);
+  bar.onclick = () => (tab ? post({ kind: "openTasks" }) : toggle());
+  const row = el("div", "todo-row");
+  row.append(bar);
+  if (tab) {
+    const chevron = el("button", "todo-toggle secondary", todosOpen ? "▴" : "▾") as HTMLButtonElement;
+    chevron.title = todosOpen ? "Hide the list here" : "Show the list here";
+    chevron.setAttribute("aria-expanded", String(todosOpen));
+    chevron.onclick = toggle;
+    row.append(chevron);
   }
+  todosPanel.append(row);
+
+  if (!todosOpen) return;
+  const list = el("div", "todo-list");
+  for (const r of s.rows) list.append(el("div", `todo ${r.status}`, `${TODO_MARKS[r.status]} ${r.no}. ${r.text}`));
+  todosPanel.append(list);
+  list.querySelector(".in_progress")?.scrollIntoView({ block: "nearest" });
 }
 
 // --- input ---------------------------------------------------------------------

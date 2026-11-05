@@ -1,6 +1,7 @@
 // Builds the shared panel into dist/ (or the folder given to buildPanel):
 //   chat.js, chat.css           the chat panel
 //   navigator.js, navigator.css the Agent Navigator
+//   tasks.js, tasks.css         the Tasks tab (the agent's whole todo list)
 //   test-driver.js              only for tests: lets an IDE's tests read and click the
 //                               panel through its embedded browser (never shipped)
 // Every IDE takes these files as they are. --tests bundles test/*.test.ts into
@@ -27,10 +28,12 @@ export async function buildPanel(outdir = join(here, "dist"), { production = fal
   await Promise.all([
     esbuild.build({ ...browser, entryPoints: ["src/chat/main.ts"], outfile: join(outdir, "chat.js") }),
     esbuild.build({ ...browser, entryPoints: ["src/navigator/main.ts"], outfile: join(outdir, "navigator.js") }),
+    esbuild.build({ ...browser, entryPoints: ["src/tasks/main.ts"], outfile: join(outdir, "tasks.js") }),
     esbuild.build({ ...browser, entryPoints: ["src/test-driver.ts"], outfile: join(outdir, "test-driver.js") }),
   ]);
   copyFileSync(join(here, "src/chat/chat.css"), join(outdir, "chat.css"));
   copyFileSync(join(here, "src/navigator/navigator.css"), join(outdir, "navigator.css"));
+  copyFileSync(join(here, "src/tasks/tasks.css"), join(outdir, "tasks.css"));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
