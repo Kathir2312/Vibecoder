@@ -235,6 +235,9 @@ async def test_stale_numbers_bad_input_and_unsafe_schemes(site: str, ctx: ToolCo
         assert (await act(session, ctx, action="click")).is_error
         unreachable = await act(session, ctx, action="open", url="http://127.0.0.1:1/")
         assert unreachable.is_error and "Could not open" in unreachable.content
+        # The browser is not left on its error page: the next action still works.
+        after = await act(session, ctx, action="snapshot")
+        assert not after.is_error and "chrome-error" not in after.content
         shot = await act(session, ctx, action="screenshot")
         assert ".png" in shot.content and "can't view images" in shot.content
     finally:

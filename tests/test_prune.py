@@ -63,7 +63,7 @@ def test_linux_layout(tmp_path: Path) -> None:
             "pyarrow_like_but_not.so": 5,
         },
     )
-    removed, freed = prune.prune(tmp_path)
+    removed, freed = prune.prune(tmp_path, dedupe=True)
     assert tree(internal) == {
         "pyarrow/lib.cpython-313-x86_64-linux-gnu.so",
         "pyarrow/_dataset.cpython-313-x86_64-linux-gnu.so",
@@ -96,7 +96,7 @@ def test_windows_and_macos_names(tmp_path: Path) -> None:
             "pyarrow/libparquet.2600.dylib": 10,
         },
     )
-    prune.prune(tmp_path)
+    prune.prune(tmp_path, dedupe=False)
     assert tree(tmp_path / "_internal") == {
         "pyarrow/arrow.dll",
         "pyarrow/arrow_substrait.dll",
@@ -121,3 +121,40 @@ def test_running_it_twice_changes_nothing_more(tmp_path: Path) -> None:
     )
     prune.prune(tmp_path)
     assert prune.prune(tmp_path) == ([], 0)
+
+
+def test_a_mac_keeps_the_copies_one_folder_up(tmp_path: Path) -> None:
+    """On macOS pyarrow's modules load libarrow_python from the folder above their own
+    (found by CI: removing it gave "Library not loaded: @rpath/libarrow_python.2600.dylib")."""
+    make(
+        tmp_path / "_internal",
+        {
+            "pyarrow/lib.cpython-312-darwin.so": 10,
+            "pyarrow/libarrow_python.2600.dylib": 10,
+            "libarrow_python.2600.dylib": 10,
+            "libarrow.2600.dylib": 10,
+            "pyarrow/libarrow.2600.dylib": 10,
+            "libarrow_flight.2600.dylib": 10,
+            "pyarrow/libarrow_flight.2600.dylib": 10,
+        },
+    )
+    prune.prune(tmp_path, dedupe=False)
+    assert tree(tmp_path / "_internal") == {
+        "pyarrow/lib.cpython-312-darwin.so",
+        "pyarrow/libarrow_python.2600.dylib",
+        "libarrow_python.2600.dylib",
+        "libarrow.2600.dylib",
+        "pyarrow/libarrow.2600.dylib",
+    }  # only what the index never uses is gone
+
+
+def test_the_default_is_to_dedupe_on_linux_only(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    for platform, expect_removed in (("linux", True), ("darwin", False), ("win32", False)):
+        folder = tmp_path / platform
+        make(
+            folder / "_internal",
+            {"pyarrow/lib.so": 10, "pyarrow/libarrow.so": 10, "libarrow.so": 10},
+        )
+        monkeypatch.setattr(prune.sys, "platform", platform)
+        prune.prune(folder)
+        assert (not (folder / "_internal" / "libarrow.so").exists()) is expect_removed, platform
