@@ -100,6 +100,10 @@ async def run_update(index: CodeIndex, *, rebuild: bool = False) -> int:
             if hint:
                 err.print(f"  {escape(hint)}")
             return 1
+    if result.migrated:
+        console.print(
+            f"Moved {result.migrated} pieces over from the built-in index (not embedded again)."
+        )
     console.print(
         f"Indexed {result.indexed} files ({result.chunks} pieces) in {result.seconds:.1f}s; "
         f"{result.unchanged} unchanged, {result.removed} removed"

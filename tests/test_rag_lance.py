@@ -12,7 +12,15 @@ from typing import Any
 import numpy as np
 import pytest
 
-from cmcoder.rag.lance import LanceVectorStore, in_list, prefix_filter, quote
+from cmcoder.rag.lance import (
+    LanceVectorStore,
+    in_list,
+    prefix_filter,
+    quote,
+    rrf,
+    search_text,
+    split_identifiers,
+)
 from cmcoder.rag.stores import StoreError
 
 
@@ -213,3 +221,281 @@ def test_a_build_without_lancedb_says_what_to_do(
     )
     with pytest.raises(StoreError, match="doesn't include LanceDB"):
         open_index(settings, tmp_path)
+
+
+# --- phase 3: hybrid search, the nearest-neighbour index, housekeeping -----------------
+
+
+def test_the_words_inside_camel_case_names() -> None:
+    assert split_identifiers("class HTTPServerError(Exception):") == "http server error"
+    assert split_identifiers("parseConfigFile(path)") == "parse config file"
+    assert split_identifiers("getUserByID and getUserById") == "get user by id"
+    assert split_identifiers("snake_case_name MAX_SIZE lower UPPER") == ""
+    assert split_identifiers("Config") == ""  # one word: nothing to add
+    assert search_text("def f(): pass") == "def f(): pass"
+    assert search_text("fooBarBaz()").endswith("\nfoo bar baz")
+
+
+def test_reciprocal_rank_fusion() -> None:
+    assert rrf([["a", "b", "c"], ["c", "b", "d"]]) == ["c", "b", "a", "d"]  # 1/63 + 1/61 beats 2/62
+    assert rrf([["a", "b"]]) == ["a", "b"]
+    assert rrf([]) == []
+    # present in both rankings beats best in only one
+    assert rrf([["x", "y"], ["z", "y"]])[0] == "y"
+
+
+async def hybrid_store(tmp_path: Path, hybrid: bool = True) -> LanceVectorStore:
+    store = LanceVectorStore(tmp_path / f"h{hybrid}", FakeEmbedding(), hybrid=hybrid)  # type: ignore[arg-type]
+    texts = [
+        "class HTTPServerError(Exception): pass",
+        "def parse_config(path): return json.load(open(path))",
+        "send monthly invoices by email to customers",
+        "refresh the expired auth token with the provider",
+        "def compute_checksum(data): return zlib.crc32(data)",
+    ]
+    metas = [meta("srv/errors.py"), meta("cfg/load.py"), meta("mail/send.py"), meta("auth.py")]
+    await store.aadd_texts(texts[:4], metas)
+    await store.aadd_texts(texts[4:], [meta("util/sum.py")])
+    return store
+
+
+async def test_words_find_what_the_meaning_search_misses(tmp_path: Path) -> None:
+    both = await hybrid_store(tmp_path, hybrid=True)
+    vector_only = await hybrid_store(tmp_path, hybrid=False)
+    try:
+        for query, path in [
+            ("server error", "srv/errors.py"),  # words inside a camelCase name
+            ("parse_config", "cfg/load.py"),  # an exact name
+            ("crc32", "util/sum.py"),
+        ]:
+            top = (await both.asimilarity_search_with_score(query, k=1))[0][0]
+            assert top.metadata["path"] == path, query
+        miss = (await vector_only.asimilarity_search_with_score("server error", k=1))[0][0]
+        assert miss.metadata["path"] != "srv/errors.py"  # the made-up embedding blurs names
+    finally:
+        await both.aclose()
+        await vector_only.aclose()
+
+
+async def test_scores_stay_cosine_whichever_search_found_the_piece(tmp_path: Path) -> None:
+    store = await hybrid_store(tmp_path)
+    try:
+        embed = FakeEmbedding()
+        query = "server error"
+        qv = (await embed.embed([query]))[0]
+        (doc, score), *_ = await store.asimilarity_search_with_score(query, k=1)
+        assert doc.metadata["path"] == "srv/errors.py"  # found by its words
+        stored = (await embed.embed([embedding_text_of(doc)]))[0]
+        assert score == pytest.approx(float(np.dot(qv, stored)), abs=1e-5)
+        assert -1.0001 <= score <= 1.0001
+    finally:
+        await store.aclose()
+
+
+def embedding_text_of(doc: Any) -> str:
+    from cmcoder.rag.stores import embedding_text
+
+    return embedding_text(doc.page_content, doc.metadata)
+
+
+async def test_the_path_filter_applies_to_the_words_too(tmp_path: Path) -> None:
+    store = await hybrid_store(tmp_path)
+    try:
+        everywhere = await store.asimilarity_search_with_score("parse_config", k=3)
+        assert everywhere[0][0].metadata["path"] == "cfg/load.py"
+        narrowed = await store.asimilarity_search_with_score(
+            "parse_config", k=3, path_prefix="mail"
+        )
+        assert {d.metadata["path"] for d, _ in narrowed} == {"mail/send.py"}
+    finally:
+        await store.aclose()
+
+
+async def test_pieces_added_later_are_found_by_words_before_housekeeping(tmp_path: Path) -> None:
+    store = await hybrid_store(tmp_path)
+    try:
+        await store.aadd_texts(["def quarantine_tarball(blob): pass"], [meta("new/late.py")])
+        top = (await store.asimilarity_search_with_score("quarantine tarball", k=1))[0][0]
+        assert top.metadata["path"] == "new/late.py"
+    finally:
+        await store.aclose()
+
+
+async def test_a_words_index_that_fails_never_fails_the_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = await hybrid_store(tmp_path)
+    try:
+
+        async def broken(table: Any) -> None:
+            raise RuntimeError("words index unavailable")
+
+        monkeypatch.setattr(store, "_ensure_fts", broken)
+        hits = await store.asimilarity_search_with_score("refresh the token", k=2)
+        assert hits and hits[0][0].metadata["path"] == "auth.py"
+    finally:
+        await store.aclose()
+
+
+async def test_odd_questions_do_not_break_the_words_search(tmp_path: Path) -> None:
+    store = await hybrid_store(tmp_path)
+    try:
+        for query in [
+            "foo(bar)",
+            "a:b",
+            '"quoted',
+            "it's",
+            "x AND y",
+            "*",
+            "~",
+            "a",
+            "  ",
+            "def f(self, path):",
+        ]:
+            assert await store.asimilarity_search_with_score(query, k=2) is not None
+    finally:
+        await store.aclose()
+
+
+async def count_vector_indexes(store: LanceVectorStore) -> int:
+    table = await store._open()
+    return sum("vector" in i.columns for i in await table.list_indices())
+
+
+async def test_big_indexes_get_a_nearest_neighbour_index(tmp_path: Path) -> None:
+    store = LanceVectorStore(tmp_path / "big", FakeEmbedding(16), ann_min_rows=300)  # type: ignore[arg-type]
+    small = LanceVectorStore(tmp_path / "small", FakeEmbedding(16))  # type: ignore[arg-type]
+    try:
+        texts = [f"unique{i} filler{i % 7} body{i % 13} token{i}" for i in range(400)]
+        metas = [meta(f"f{i}.py") for i in range(400)]
+        await store.aadd_texts(texts, metas)
+        await small.aadd_texts(texts[:20], metas[:20])
+        assert await count_vector_indexes(store) == 0
+        await store.aoptimize()
+        await small.aoptimize()
+        assert await count_vector_indexes(store) == 1  # past the threshold
+        assert await count_vector_indexes(small) == 0  # exact scan is fine for a small one
+        # Searching through the approximate index still finds the piece.
+        top = (await store.asimilarity_search_with_score("unique123 token123", k=3))[0][0]
+        assert top.metadata["path"] == "f123.py"
+        await store.aoptimize()  # again: nothing to redo, nothing breaks
+        assert await count_vector_indexes(store) == 1
+    finally:
+        await store.aclose()
+        await small.aclose()
+
+
+def folder_bytes(folder: Path) -> int:
+    return sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
+
+
+async def test_housekeeping_removes_old_versions(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    store = LanceVectorStore(tmp_path / "v", FakeEmbedding(), keep_versions=timedelta(0))  # type: ignore[arg-type]
+    try:
+        for round_ in range(15):  # a file edited again and again
+            await store.aadd_texts(
+                [f"edit {round_} of the same file", "another piece"],
+                [meta("a.py", 1), meta("a.py", 10)],
+            )
+        before = folder_bytes(tmp_path / "v")
+        await store.aoptimize()
+        assert folder_bytes(tmp_path / "v") < before
+        assert await store.acount() == 2
+    finally:
+        await store.aclose()
+
+
+async def test_an_index_made_before_the_words_index_is_upgraded(tmp_path: Path) -> None:
+    import lancedb
+    import pyarrow as pa
+
+    folder = tmp_path / "old" / "lancedb"
+    folder.mkdir(parents=True)
+    db = await lancedb.connect_async(str(folder))
+    schema = pa.schema(
+        [
+            pa.field("id", pa.string()),
+            pa.field("path", pa.string()),
+            pa.field("start", pa.int32()),
+            pa.field("end", pa.int32()),
+            pa.field("language", pa.string()),
+            pa.field("symbol", pa.string()),
+            pa.field("text", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), 32)),
+        ]
+    )
+    table = await db.create_table("chunks", schema=schema)
+    vec = (await FakeEmbedding().embed(["legacy marker word"]))[0].tolist()
+    await table.add(
+        pa.Table.from_pylist(
+            [
+                {
+                    "id": "x:1",
+                    "path": "x.py",
+                    "start": 1,
+                    "end": 2,
+                    "language": "python",
+                    "symbol": "",
+                    "text": "legacy marker word",
+                    "vector": vec,
+                }
+            ],
+            schema=schema,
+        )
+    )
+    db.close()
+    store = LanceVectorStore(folder, FakeEmbedding())  # type: ignore[arg-type]
+    try:
+        assert await store.acount() == 1
+        await store.aadd_texts(["a newer piece"], [meta("y.py")])
+        (doc, _), *_ = await store.asimilarity_search_with_score("legacy marker", k=1)
+        assert doc.metadata["path"] == "x.py"
+    finally:
+        await store.aclose()
+
+
+class CountingEmbedding(FakeEmbedding):
+    def __init__(self, dim: int = 32) -> None:
+        super().__init__(dim)
+        self.calls = 0
+
+    async def embed(self, texts: list[str]) -> np.ndarray:
+        self.calls += 1
+        return await super().embed(texts)
+
+
+async def test_a_builtin_index_moves_over_without_embedding_again(tmp_path: Path) -> None:
+    from cmcoder.rag.stores import LocalVectorStore
+
+    embedding = CountingEmbedding()
+    local = LocalVectorStore(tmp_path / "local", embedding)  # type: ignore[arg-type]
+    await fill(local)
+    local_hits = await local.asimilarity_search_with_score("monthly email", k=2)
+    await local.aclose()
+    calls = embedding.calls
+
+    lance = LanceVectorStore(tmp_path / "lancedb", embedding)  # type: ignore[arg-type]
+    try:
+        assert await lance.aimport_local(tmp_path / "local" / "index.db") == 3
+        assert await lance.aimport_local(tmp_path / "local" / "index.db") == 3  # again: same rows
+        assert await lance.acount() == 3
+        assert embedding.calls == calls  # nothing was embedded for the move
+        moved = await lance.asimilarity_search_with_score("monthly email", k=2)
+        assert [d.metadata["path"] for d, _ in moved] == [d.metadata["path"] for d, _ in local_hits]
+        assert moved[0][1] == pytest.approx(local_hits[0][1], abs=1e-4)
+        assert moved[0][0].page_content == local_hits[0][0].page_content
+    finally:
+        await lance.aclose()
+
+
+async def test_an_unreadable_builtin_index_is_an_error_not_a_crash(tmp_path: Path) -> None:
+    bad = tmp_path / "index.db"
+    bad.write_text("not a database")
+    lance = LanceVectorStore(tmp_path / "lancedb", FakeEmbedding())  # type: ignore[arg-type]
+    try:
+        with pytest.raises(StoreError, match="built-in index"):
+            await lance.aimport_local(bad)
+    finally:
+        await lance.aclose()

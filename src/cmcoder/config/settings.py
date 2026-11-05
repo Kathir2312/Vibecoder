@@ -159,6 +159,9 @@ class RagStoreConfig(_Model):
     collection: str | None = None
     # Only search, never write (e.g. a shared index that CI keeps up to date).
     read_only: bool = Field(False, alias="readOnly")
+    # LanceDB only: search by words as well as by meaning and merge the two (finds
+    # exact names that embeddings blur). On by default.
+    hybrid: bool = True
 
 
 class RagAutoContextConfig(_Model):

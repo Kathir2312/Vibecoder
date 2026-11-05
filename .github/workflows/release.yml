@@ -95,6 +95,12 @@ jobs:
         run: |
           exe=dist/cmcoder/cmcoder; [ "$RUNNER_OS" = Windows ] && exe=dist/cmcoder/cmcoder.exe
           uv run python packaging/smoke_browser.py $exe
+      - name: Test code search with LanceDB as users run it (pruned pyarrow, no Python in reach)
+        shell: bash
+        run: |
+          exe=dist/cmcoder/cmcoder; [ "$RUNNER_OS" = Windows ] && exe=dist/cmcoder/cmcoder.exe
+          uv run python packaging/smoke_rag.py $exe
+          uv run python packaging/smoke_rag.py $exe --store local
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin

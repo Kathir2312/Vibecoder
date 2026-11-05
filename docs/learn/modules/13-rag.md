@@ -188,61 +188,79 @@ showing Open WebUI's bare HTTP 500.
   [`embedding_text`](../../../src/cmcoder/rag/stores.py#L57) puts
   `File: <path>` and `Defines: <symbol>` before the code, which helps find
   it by meaning; the stored `page_content` is the plain code.
-* The sync API [raises "use the a... methods"](../../../src/cmcoder/rag/stores.py#L125).
+* The sync API [raises "use the a... methods"](../../../src/cmcoder/rag/stores.py#L135).
   Retrievers call the async path (`asimilarity_search`) from `ainvoke`, so
   `as_retriever()` still works.
 
 The three stores:
 
-* [`LocalVectorStore`](../../../src/cmcoder/rag/stores.py#L146) (the
+* [`LocalVectorStore`](../../../src/cmcoder/rag/stores.py#L156) (the
   default): a SQLite file under `~/.cmcoder/index/`, the vectors as BLOBs.
-  [`aadd_texts`](../../../src/cmcoder/rag/stores.py#L166) embeds and
+  [`aadd_texts`](../../../src/cmcoder/rag/stores.py#L176) embeds and
   upserts; search loads every vector into one numpy matrix and
-  [ranks with one matrix product](../../../src/cmcoder/rag/stores.py#L230).
+  [ranks with one matrix product](../../../src/cmcoder/rag/stores.py#L244).
   Nothing to install, so it works in the standalone build; fine up to about
   100k pieces.
-* [`LanceVectorStore`](../../../src/cmcoder/rag/lance.py#L78) (`"type":
+* [`LanceVectorStore`](../../../src/cmcoder/rag/lance.py#L147) (`"type":
   "lancedb"`): LanceDB, a database that runs inside cmcoder and keeps its data
   on disk, so the index isn't limited by memory like the built-in one. It is
   our own `VectorStore` over LanceDB's async client, not `langchain-lancedb`:
   that package is sync-only and has no metadata filter, count or delete by
   path, which the index needs. The database applies the
-  [path filter](../../../src/cmcoder/rag/lance.py#L67) (`starts_with`, so `_`
-  and `%` in a name mean themselves) and [upserts by id](../../../src/cmcoder/rag/lance.py#L161);
-  scores are `1 - cosine distance`. `lancedb` and `pyarrow` are imported on first
-  use, so cmcoder starts as fast as before. Nothing in it uses the network.
-* [`ChromaVectorStore`](../../../src/cmcoder/rag/stores.py#L266): Chroma at a
+  [path filter](../../../src/cmcoder/rag/lance.py#L94) (`starts_with`, so `_`
+  and `%` in a name mean themselves) and [upserts by id](../../../src/cmcoder/rag/lance.py#L257).
+  `lancedb` and `pyarrow` are imported on first use, so cmcoder starts as fast
+  as before. Nothing in it uses the network. Three things it adds:
+  * **Hybrid search.**
+    [`asimilarity_search_by_vector_with_score`](../../../src/cmcoder/rag/lance.py#L372)
+    searches by meaning (the vectors) and by words (a full-text index) and merges the two
+    rankings with [Reciprocal Rank Fusion](../../../src/cmcoder/rag/lance.py#L135):
+    a piece's score is the sum of `1 / (60 + rank)` over the rankings it is in. The
+    words index also holds [the parts of camelCase names](../../../src/cmcoder/rag/lance.py#L112)
+    (`HTTPServerError` is also "http server error"). Scores stay cosine, so thresholds
+    mean the same everywhere. This is why the search method takes the question's text
+    (`query_text`) as well as its vector; the other stores ignore it.
+  * **An ANN index and housekeeping.**
+    [`aoptimize`](../../../src/cmcoder/rag/lance.py#L337) runs after a full update
+    (`CodeIndex` calls it, and again when the index closes): it builds the words
+    index, an IVF-PQ index once there are 10,000 pieces (searches then re-rank its best
+    candidates by exact distance, which took recall@10 from 0.14 to 0.86 at 300,000
+    pieces), merges small files and removes versions older than an hour.
+  * **Moving over.** [`aimport_local`](../../../src/cmcoder/rag/lance.py#L286) copies a
+    built-in index's pieces and vectors; `CodeIndex` calls it on the first update after
+    the store changed, so nothing is embedded again.
+* [`ChromaVectorStore`](../../../src/cmcoder/rag/stores.py#L280): Chroma at a
   URL (on this PC or a team server) through its REST API v2 with cmcoder's own
-  HTTP client: a [cosine collection](../../../src/cmcoder/rag/stores.py#L323),
-  `upsert` in batches of 100, and [`/query`](../../../src/cmcoder/rag/stores.py#L381)
+  HTTP client: a [cosine collection](../../../src/cmcoder/rag/stores.py#L337),
+  `upsert` in batches of 100, and [`/query`](../../../src/cmcoder/rag/stores.py#L399)
   for search (distance turned into a similarity, `1 - distance`).
   `langchain-chroma` would pull in the whole `chromadb` package, which the
   standalone program can't include; the REST API needs nothing.
 
 ### 5. The index: `rag/index.py`
 
-[`CodeIndex`](../../../src/cmcoder/rag/index.py#L117) is the bookkeeping
-around a store. Its [manifest](../../../src/cmcoder/rag/index.py#L165)
+[`CodeIndex`](../../../src/cmcoder/rag/index.py#L118) is the bookkeeping
+around a store. Its [manifest](../../../src/cmcoder/rag/index.py#L179)
 (`manifest.json`, per project and embedding model) remembers each file's
 time, size and sha1:
 
-* [`_changes`](../../../src/cmcoder/rag/index.py#L213) compares the files
+* [`_changes`](../../../src/cmcoder/rag/index.py#L227) compares the files
   with it: size and time first, the content hash only when the time moved.
-* [`update`](../../../src/cmcoder/rag/index.py#L245) deletes removed files,
+* [`update`](../../../src/cmcoder/rag/index.py#L259) deletes removed files,
   then works in batches of 20 files: chunk, delete the file's old pieces,
-  [`aadd_documents(docs, ids=...)`](../../../src/cmcoder/rag/index.py#L294),
+  [`aadd_documents(docs, ids=...)`](../../../src/cmcoder/rag/index.py#L309),
   save the manifest. An interrupted update keeps what it did.
-* Files the agent writes are [noted as changed](../../../src/cmcoder/rag/index.py#L325)
+* Files the agent writes are [noted as changed](../../../src/cmcoder/rag/index.py#L375)
   (the Write and Edit tools call it) and re-indexed before the next
-  [`search`](../../../src/cmcoder/rag/index.py#L354); a hit whose file
-  changed since it was indexed is [refreshed](../../../src/cmcoder/rag/index.py#L337)
+  [`search`](../../../src/cmcoder/rag/index.py#L404); a hit whose file
+  changed since it was indexed is [refreshed](../../../src/cmcoder/rag/index.py#L387)
   and searched again.
 
 LangChain has an `index()` helper with a "record manager" for the same job
 (skip unchanged documents). Here the unit is a file, compared by size, time
 and content, so the manifest does it directly.
 
-[`open_index`](../../../src/cmcoder/rag/index.py#L432) builds it all from
+[`open_index`](../../../src/cmcoder/rag/index.py#L494) builds it all from
 settings (`rag.embeddingModel`, `rag.store`).
 [`open_code_index`](../../../src/cmcoder/rag/session.py#L37) is what the agent
 calls: the index only when the project has one, and a

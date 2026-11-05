@@ -16,6 +16,12 @@ without it; the Browser tool is then not offered.
 
     uv run --with pyinstaller python packaging/build.py --without-browser
 
+LanceDB (a store for the code index, rag.store.type "lancedb") is bundled too,
+with the pyarrow it needs, trimmed by packaging/prune.py (Flight, S3, HDFS, ORC,
+headers and a second copy of the arrow libraries go: 780 MB becomes 586 MB unpacked
+on Linux). `--without-lancedb` leaves both out; the code index then offers only the
+built-in store (and Chroma), and says so if LanceDB is chosen. `--slim` is both flags.
+
 LangChain note: LangChain and LangGraph import some modules lazily (by name,
 at run time), which PyInstaller's import scan can't see, and read their own
 versions from package metadata. `--collect-submodules` / `--copy-metadata`
@@ -55,8 +61,18 @@ def build_id() -> str:
     return f"{commit} {datetime.datetime.now(datetime.UTC):%Y-%m-%d}"
 
 
+# LanceDB's engine is a native extension and it loads some modules by name.
+LANCEDB = [
+    "--collect-submodules=lancedb",
+    "--collect-binaries=lancedb",
+    "--copy-metadata=lancedb",
+]
+
+
 def main() -> None:
-    with_browser = "--without-browser" not in sys.argv[1:]
+    flags = sys.argv[1:]
+    with_browser = "--without-browser" not in flags and "--slim" not in flags
+    with_lancedb = "--without-lancedb" not in flags and "--slim" not in flags
     try:
         import PyInstaller.__main__
     except ImportError:
@@ -118,6 +134,11 @@ def main() -> None:
             "--copy-metadata=keyring",
             "--collect-submodules=truststore",
             *(["--collect-all=playwright"] if with_browser else ["--exclude-module=playwright"]),
+            *(
+                LANCEDB
+                if with_lancedb
+                else ["--exclude-module=lancedb", "--exclude-module=pyarrow"]
+            ),
             *[
                 f"--copy-metadata={name}"
                 for name in (
@@ -134,6 +155,11 @@ def main() -> None:
             *windows,
         ]
     )
+    if with_lancedb:
+        import prune
+
+        removed, freed = prune.prune(out / "cmcoder")
+        print(f"pruned pyarrow: {len(removed)} files and folders, {freed / 1_048_576:.0f} MB")
     exe = out / "cmcoder" / ("cmcoder.exe" if sys.platform == "win32" else "cmcoder")
     print(f"built {exe}")
 

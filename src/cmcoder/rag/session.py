@@ -105,6 +105,11 @@ async def index_command(
             f"Indexed {result.indexed} files ({result.chunks} pieces) in {result.seconds:.1f}s; "
             f"{result.unchanged} unchanged, {result.removed} removed."
         ]
+        if result.migrated:
+            lines.insert(
+                0,
+                f"Moved {result.migrated} pieces over from the built-in index (not embedded again).",
+            )
         if not attached and await index.available():
             session.agent = await rebuild_agent(agent, code_index=index)
             attached = True

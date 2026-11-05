@@ -103,8 +103,8 @@ words gets the best-matching code added to it automatically
 (`rag.autoContext`). `/index` builds or updates the index from the chat. The
 index is built in (`~/.cmcoder/index/`, readable by you only), kept by
 LanceDB inside cmcoder for big codebases (`"store": {"type": "lancedb"}`, on
-disk, no server), or kept on a Chroma server (`"store": {"type": "chroma",
-"url": "..."}`).
+disk, no server; see [docs/guides/code-search-lancedb.md](docs/guides/code-search-lancedb.md)),
+or kept on a Chroma server (`"store": {"type": "chroma", "url": "..."}`).
 
 ## Layout
 

@@ -268,3 +268,64 @@ async def test_the_store_is_a_langchain_retriever(code_project: Path, make_index
         assert "refresh_auth_token" in docs[0].page_content
     finally:
         await idx.close()
+
+
+async def test_switching_to_lancedb_moves_the_index_over_without_embedding_again(
+    code_project: Path, make_index: Any
+) -> None:
+    local, server = make_index(code_project, {"type": "local"})
+    first = await local.update()
+    await local.close()
+    embedded = len(server.state.embedding_requests)
+    assert first.indexed == 2 and embedded > 0
+
+    lance, _ = make_index(code_project, {"type": "lancedb"})
+    try:
+        moved = await lance.update()
+        assert moved.migrated == first.chunks and moved.indexed == 0 and moved.unchanged == 2
+        assert len(server.state.embedding_requests) == embedded  # nothing sent to the gateway
+        assert (await lance.status()).chunks == first.chunks
+        hits = await lance.search("refresh the expired auth token", k=1)
+        assert hits[0].chunk.path == "auth.py"
+        again = await lance.update()  # and it stays current from here
+        assert again.migrated == 0 and again.indexed == 0
+        (code_project / "auth.py").write_text(AUTH + "\n\ndef rotate_keys():\n    pass\n")
+        assert (await lance.update()).indexed == 1
+        # A rebuild is from scratch: nothing is moved over.
+        await lance.clear()
+        rebuilt = await lance.update()
+        assert rebuilt.migrated == 0 and rebuilt.indexed == 2
+    finally:
+        await lance.clear()
+        await lance.close()
+
+
+async def test_a_failed_move_falls_back_to_indexing_again(
+    code_project: Path, make_index: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local, _ = make_index(code_project, {"type": "local"})
+    await local.update()
+    await local.close()
+    lance, server = make_index(code_project, {"type": "lancedb"})
+
+    async def broken(database: Path) -> int:
+        raise StoreError("cannot read the old index")
+
+    monkeypatch.setattr(lance.store, "aimport_local", broken)
+    try:
+        result = await lance.update()
+        assert result.migrated == 0 and result.indexed == 2  # indexed from scratch
+        assert (await lance.search("invoice total", k=1))[0].chunk.path == "auth.py"
+    finally:
+        await lance.clear()
+        await lance.close()
+
+
+async def test_hybrid_can_be_switched_off(code_project: Path, make_index: Any) -> None:
+    on, _ = make_index(code_project, {"type": "lancedb"})
+    off, _ = make_index(code_project, {"type": "lancedb", "hybrid": False})
+    try:
+        assert on.store.hybrid is True and off.store.hybrid is False  # type: ignore[attr-defined]
+    finally:
+        await on.close()
+        await off.close()
