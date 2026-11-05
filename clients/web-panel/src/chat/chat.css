@@ -56,18 +56,58 @@ select, input, textarea {
 
 select { padding: 2px 4px; }
 
+/* The todo list: one compact bar (done/total, a meter, the task in progress) however long the
+   list, so it never pushes the chat out of view. A click opens the Tasks tab, or the list here. */
 .todos {
-  padding: 6px 10px;
+  flex: none;
+  padding: 3px 10px;
   border-bottom: 1px solid var(--vscode-panel-border, transparent);
   font-family: var(--vscode-editor-font-family);
 }
-
-.todos .title { opacity: 0.7; margin-bottom: 2px; }
-.todos .completed { text-decoration: line-through; opacity: 0.6; }
-.todos .in_progress { color: var(--vscode-textLink-foreground); font-weight: 600; }
+.todo-row { display: flex; align-items: center; gap: 6px; }
+.todo-bar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  color: inherit;
+  background: none;
+  border-radius: 3px;
+  text-align: left;
+  font: inherit;
+}
+.todo-bar:hover { background: var(--vscode-input-background); }
+.todo-count { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+.todo-meter {
+  flex: none;
+  width: 56px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-panel-border, transparent);
+  overflow: hidden;
+}
+.todo-fill { display: block; height: 100%; background: var(--vscode-testing-iconPassed); }
+.todo-now {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-textLink-foreground);
+}
+.todo-open { flex: none; opacity: 0.7; }
+.todo-toggle { flex: none; padding: 0 6px; }
+.todo-list { max-height: 28vh; overflow-y: auto; margin: 4px 0 2px; }
+.todo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.todo.completed { text-decoration: line-through; opacity: 0.6; }
+.todo.in_progress { color: var(--vscode-textLink-foreground); font-weight: 600; }
 
 .log {
   flex: 1;
+  min-height: 6em; /* the chat always keeps room, whatever sits above and below it */
   overflow-y: auto;
   padding: 8px 10px;
 }
@@ -478,7 +518,8 @@ footer .commands .description { opacity: 0.7; margin-left: 8px; }
   padding: 4px 10px 6px;
   border-top: 1px solid var(--vscode-panel-border, transparent);
   font-family: var(--vscode-editor-font-family);
-  max-height: 40vh;
+  flex: none;
+  max-height: 24vh;
   overflow-y: auto;
 }
 .agents .title { opacity: 0.7; margin-bottom: 2px; }

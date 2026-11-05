@@ -7,6 +7,7 @@ import { AgentProcess } from "./agentProcess";
 import { productName } from "./brand";
 import { DiffReview } from "./diffReview";
 import { AgentNavigator } from "./navigator";
+import { TasksTab } from "./tasksTab";
 import { cmcoderCommand } from "./executable";
 import { contextLabel, currentEditor, editorContext, IDE_TOOLS, runIdeTool } from "./editorContext";
 import type { AgentEvent, ClientMessage, FileChange, PermissionRequest, RewindPoint } from "./protocol";
@@ -28,6 +29,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   readonly onPanelState = this.panelStates.event;
   /** The Agent Navigator tab (the turn's agents as a mind map). */
   readonly navigator: AgentNavigator;
+  /** The Tasks tab (the agent's whole todo list; the chat shows one compact bar). */
+  readonly tasks: TasksTab;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -37,6 +40,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.navigator = new AgentNavigator(
       extensionUri,
       (id) => this.agent?.send({ type: "stop_subagent", id }),
+      () => void vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`),
+    );
+    this.tasks = new TasksTab(
+      extensionUri,
       () => void vscode.commands.executeCommand(`${ChatViewProvider.viewId}.focus`),
     );
   }
@@ -74,6 +81,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     await this.stopAgent();
     this.post({ kind: "reset" });
     this.navigator.reset();
+    this.tasks.reset();
     this.startAgent(extraArgs);
   }
 
@@ -140,6 +148,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   async dispose(): Promise<void> {
     this.navigator.dispose();
+    this.tasks.dispose();
     await this.stopAgent();
   }
 
@@ -219,6 +228,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // The panel sees every event first and in order; side effects come after.
     this.post({ kind: "event", event });
     this.navigator.event(event);
+    if (event.type === "todo_update") this.tasks.update(event.todos);
     this.events.fire(event);
     switch (event.type) {
       case "system_init":
@@ -331,6 +341,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "openNavigator":
         this.navigator.open();
         break;
+      case "openTasks":
+        this.tasks.open();
+        break;
       case "permission":
         this.answer(m.requestId, m.allow, m.remember, m.feedback, m.rememberSession ?? false);
         break;
@@ -406,7 +419,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <link href="${style}" rel="stylesheet">
   <title>${escapeHtml(productName())}</title>
 </head>
-<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules">
+<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab">
   <div id="app"></div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

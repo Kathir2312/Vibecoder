@@ -17,6 +17,7 @@ export interface CmcoderApi {
   onEvent: ChatViewProvider["onEvent"];
   /** The Agent Navigator's script reported it's running. */
   onNavigatorReady: vscode.Event<void>;
+  onTasksReady: vscode.Event<void>;
   /** The chat page took cmcoder's state from the extension (its script runs, messages reach it). */
   onPanelState: ChatViewProvider["onPanelState"];
   send(text: string): boolean;
@@ -74,6 +75,7 @@ export function activate(context: vscode.ExtensionContext): CmcoderApi {
     vscode.commands.registerCommand("cmcoder.openTerminal", () => openTerminal(context.extensionUri)),
     vscode.commands.registerCommand("cmcoder.showLog", () => log.show()),
     vscode.commands.registerCommand("cmcoder.openNavigator", () => view.navigator.open()),
+    vscode.commands.registerCommand("cmcoder.openTasks", () => view.tasks.open()),
     vscode.commands.registerCommand("cmcoder.openSettings", openSettings),
     codeSearch,
     vscode.commands.registerCommand("cmcoder.codeSearch", () => codeSearch.menu()),
@@ -83,6 +85,7 @@ export function activate(context: vscode.ExtensionContext): CmcoderApi {
   return {
     onEvent: view.onEvent,
     onNavigatorReady: view.navigator.onReady,
+    onTasksReady: view.tasks.onReady,
     onPanelState: view.onPanelState,
     send: (text) => view.sendText(text, true),
   };

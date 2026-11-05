@@ -35,6 +35,8 @@ export type FromWebview =
   | { kind: "interrupt" }
   | { kind: "stopSubagent"; id: string }
   | { kind: "openNavigator" }
+  /** Open the Tasks tab with the whole todo list (data-features "tasksTab"). */
+  | { kind: "openTasks" }
   | {
       kind: "permission";
       requestId: string;
@@ -71,6 +73,16 @@ export type ToNavigator =
   | { kind: "reset"; prompt: string; model: string; busy: boolean }
   /** A protocol event of the current turn. */
   | { kind: "event"; event: AgentEvent };
+
+// Messages between the extension and the Tasks tab (an editor tab with the agent's whole todo list).
+
+export type ToTasks =
+  /** The todo list as it is now. */
+  | { kind: "todos"; todos: Record<string, unknown>[] }
+  /** A new conversation: no tasks. */
+  | { kind: "reset" };
+
+export type FromTasks = { kind: "ready" } | { kind: "openChat" };
 
 export type FromNavigator =
   | { kind: "ready" }

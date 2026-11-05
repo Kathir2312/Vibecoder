@@ -104,6 +104,12 @@
         "icon": "$(type-hierarchy)"
       },
       {
+        "command": "cmcoder.openTasks",
+        "title": "Open Tasks",
+        "category": "cmcoder",
+        "icon": "$(checklist)"
+      },
+      {
         "command": "cmcoder.showLog",
         "title": "Show Log",
         "category": "cmcoder"
@@ -145,6 +151,11 @@
           "command": "cmcoder.openNavigator",
           "when": "view == cmcoder.chat",
           "group": "navigation@3"
+        },
+        {
+          "command": "cmcoder.openTasks",
+          "when": "view == cmcoder.chat",
+          "group": "navigation@4"
         },
         {
           "command": "cmcoder.continueConversation",
