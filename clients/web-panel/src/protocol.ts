@@ -433,6 +433,17 @@ export interface IdeSelection {
 }
 
 /**
+ * A tool the IDE itself defines, for the model to call (VS Code's built-in browser
+ * tools, found at run time): its name, what it does, and its inputs as a JSON schema.
+ * cmcoder offers it as it is and relays each call with `ide_tool_request`.
+ */
+export interface IdeToolDef {
+  name: string;
+  description?: string;
+  input_schema?: Record<string, unknown>;
+}
+
+/**
  * An image the user pasted, dropped or picked. cmcoder checks the bytes
  * (PNG, JPEG, GIF or WebP only) and makes a large one smaller.
  */
@@ -487,12 +498,15 @@ export interface SetModel {
 /**
  * The client can run these IDE tools (e.g. getDiagnostics, openFile).
  *
- * Send once after `system_init`; the agent offers them to the model and
- * asks the client to run them with `ide_tool_request`.
+ * Send once after `system_init` (and again when the list changes, before a turn); the
+ * agent offers them to the model and asks the client to run them with `ide_tool_request`.
+ * `tools`: tools cmcoder knows by name; `tool_defs`: tools only the IDE knows (their
+ * schemas come with them).
  */
 export interface IdeCapabilities {
   type: "ide_capabilities";
   tools: string[];
+  tool_defs?: IdeToolDef[];
 }
 
 /** The answer to an `ide_tool_request`. */
@@ -501,6 +515,7 @@ export interface IdeToolResult {
   request_id: string;
   content: string;
   is_error?: boolean;
+  images?: string[];
 }
 
 /** Ask for this project's saved conversations (answered with `session_list`). */

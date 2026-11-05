@@ -247,6 +247,9 @@ class BrowserConfig(_Model):
     headless: bool = True  # false: show the window (demos)
     # A browser program to use instead of looking for Chrome or Edge.
     executable_path: str | None = Field(None, alias="executablePath")
+    # When the IDE has browser tools of its own (VS Code's Integrated Browser), use those:
+    # the page opens inside the IDE instead of in a separate Chrome or Edge window.
+    use_ide_browser: bool = Field(True, alias="useIdeBrowser")
 
 
 class RethinkConfig(_Model):

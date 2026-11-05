@@ -43,14 +43,19 @@ HOW THE PIECES MEET
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
+import re
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
+from pathlib import Path
 from typing import Any, BinaryIO
 
 from pydantic import ValidationError
@@ -60,6 +65,7 @@ from ..config.settings import Settings, SettingsError, add_local_allow_rule, fin
 from ..core.hooks import Hook
 from ..core.ide import IDE_TOOLS, format_ide_context
 from ..core.permissions import MODES, Decision, ModeNotAllowed
+from ..ide_browser import IdeToolSet
 from ..images import Image, ImageError, from_base64
 from ..mcp import McpManager
 from ..mcp.manager import McpServer
@@ -73,6 +79,11 @@ from ..tools.base import Tool, ToolResult
 from ..tools.files import ReadInput, ReadTool
 
 IDE_TOOL_TIMEOUT = 30.0  # seconds
+MAX_IDE_IMAGES = 3  # pictures kept from one IDE tool result
+MAX_IDE_IMAGE_BYTES = 8 * 1024 * 1024
+IMAGE_DATA_URL = re.compile(
+    r"data:image/(?P<kind>png|jpeg|gif|webp);base64,(?P<data>[A-Za-z0-9+/]+={0,2})"
+)
 # Built-in commands that work in an IDE panel; the others (/clear, /resume,
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
@@ -107,6 +118,9 @@ class StdioServer:
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.ide_pending: dict[str, asyncio.Future[ToolResult]] = {}
         self.ide_tools: list[Tool] = []
+        self.ide_browser: IdeToolSet | None = None  # the IDE's own tools (VS Code's browser)
+        self.ide_shots: Path | None = None  # their screenshots, until this process ends
+        self.ide_dirty = False  # the IDE's tools changed during a turn: rebuild before the next
         self.mcp: McpManager | None = None
         self.inbox: asyncio.Queue[bytes] = asyncio.Queue()
 
@@ -221,6 +235,8 @@ class StdioServer:
                 await self.session.close()
                 await self.agent.close()
                 await self.mcp.close()
+                if self.ide_shots is not None:
+                    shutil.rmtree(self.ide_shots, ignore_errors=True)
         return 0
 
     async def handle(self, message: msg.ClientMessage) -> None:
@@ -291,13 +307,21 @@ class StdioServer:
             self.emit(ev.ModelChanged(model=b.name, context_window=b.profile.context_window))
         elif isinstance(message, msg.IdeCapabilities):
             self.ide_tools = [IDE_TOOLS[n](self.ide_call) for n in message.tools if n in IDE_TOOLS]
-            await self._rebuild()
+            self.ide_browser = IdeToolSet(message.tool_defs, self.ide_call) or None
+            if self.busy:
+                self.ide_dirty = True  # a new graph in the middle of a turn: not now
+            else:
+                await self._rebuild()
         elif isinstance(message, msg.IdeToolResult):
             pending = self.ide_pending.pop(message.request_id, None)
             if pending is None or pending.done():
                 self.error("protocol", f"No pending IDE tool request {message.request_id!r}.")
                 return
-            pending.set_result(ToolResult(message.content, is_error=message.is_error))
+            pending.set_result(
+                ToolResult(
+                    message.content, is_error=message.is_error, images=self._save_images(message)
+                )
+            )
         elif isinstance(message, msg.ListSessions):
             assert self.store is not None
             sessions = [
@@ -342,7 +366,12 @@ class StdioServer:
         """A new graph (another model, IDE tools, MCP tools, a code index) on the
         same checkpointer and thread."""
         assert self.session is not None
-        changes: dict[str, Any] = {"extra_tools": self.ide_tools, "mcp": self.mcp, **more}
+        changes: dict[str, Any] = {
+            "extra_tools": self.ide_tools,
+            "mcp": self.mcp,
+            "ide_browser": self.ide_browser,
+            **more,
+        }
         if model:
             changes["model"] = model
             self.opts.model = model
@@ -351,6 +380,9 @@ class StdioServer:
     async def _start_mcp(self) -> None:
         """MCP servers start with the first message, as in cmcoderagent; a
         project's own servers ask first (through the permission prompt)."""
+        if self.ide_dirty:
+            self.ide_dirty = False
+            await self._rebuild()
         if self.mcp is None or self.mcp.started:
             return
         for warning in await self.mcp.start(self._approve_server):
@@ -618,6 +650,29 @@ class StdioServer:
         if (answer.get("remember") or answer.get("remember_session")) and not req.can_remember:
             answer["remember"] = answer["remember_session"] = False
         return answer
+
+    def _save_images(self, message: msg.IdeToolResult) -> list[Path]:
+        """The pictures an IDE tool returned (`data:image/...;base64,...`), as files the chat
+        can show: only real image types, a few, none of them huge."""
+        paths: list[Path] = []
+        for url in message.images[:MAX_IDE_IMAGES]:
+            m = IMAGE_DATA_URL.fullmatch(url)
+            if m is None:
+                continue
+            try:
+                data = base64.b64decode(m["data"], validate=True)
+            except ValueError:
+                continue
+            if not data or len(data) > MAX_IDE_IMAGE_BYTES:
+                continue
+            if self.ide_shots is None:
+                self.ide_shots = Path(tempfile.mkdtemp(prefix="cmcoder-ide-"))
+            path = (
+                self.ide_shots / f"shot-{uuid.uuid4().hex[:8]}.{m['kind'].replace('jpeg', 'jpg')}"
+            )
+            path.write_bytes(data)
+            paths.append(path)
+        return paths
 
     async def ide_call(self, name: str, data: dict[str, Any]) -> ToolResult:
         """Run an IDE tool in the client and wait for its answer."""

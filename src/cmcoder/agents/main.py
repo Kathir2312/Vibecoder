@@ -73,6 +73,7 @@ from ..core.hooks import ApproveHookFn, HookRunner
 from ..core.permissions import ModeNotAllowed, PermissionPolicy
 from ..core.prompt import build_system_prompt, load_memory_files
 from ..core.skills import SkillTool, load_skills, skills_prompt
+from ..ide_browser import IdeToolSet
 from ..mcp import McpManager
 from ..middleware.checkpoint import FileCheckpointMiddleware
 from ..middleware.code_context import AutoContextMiddleware
@@ -157,6 +158,8 @@ class Agent:
     frontend: str = "cli"
     # Shown once, with the first turn (e.g. a sandbox asked for that can't run here).
     startup_warnings: list[str] = field(default_factory=list)
+    # The names of the IDE's own tools (VS Code's browser), when it has some.
+    ide_tool_names: list[str] = field(default_factory=list)
     # How it was built, so `rebuild_agent` can build it again with changes.
     spec: dict[str, Any] = field(default_factory=dict)
 
@@ -314,10 +317,14 @@ def build_agent(
     telemetry: Telemetry | None = None,
     code_index: CodeIndex | None = None,
     memory: Memory | None = None,
+    ide_browser: IdeToolSet | None = None,
 ) -> Agent:
     """`sandbox`, `telemetry`, `code_index`, `memory`: reuse these (a rebuild, or
-    /index turning code search on); else made from settings."""
+    /index turning code search on); else made from settings. `ide_browser`: tools the IDE
+    defines itself (VS Code's Integrated Browser), used instead of the Browser tool."""
     cwd = opts.cwd.resolve()
+    if not settings.browser.use_ide_browser:
+        ide_browser = None
     root = find_project_root(cwd)
     bundle = build_chat_model(settings, opts.model)
     profile = bundle.profile
@@ -346,8 +353,8 @@ def build_agent(
         tools["CodeSearch"] = CodeSearchTool()
     # A real browser to test web apps (Playwright); started only when first used.
     ctx.browser = browser_session(settings, root)
-    if ctx.browser is not None:
-        tools["Browser"] = BrowserTool()
+    if ctx.browser is not None and not ide_browser:
+        tools["Browser"] = BrowserTool()  # (the IDE's own browser, when it has one, replaces it)
     # Tools an IDE runs for the agent (getDiagnostics, openFile; core/ide.py).
     tools.update({t.name: t for t in extra_tools or []})
     # Skills (SKILL.md folders): only their descriptions go in the prompt; the
@@ -404,6 +411,16 @@ def build_agent(
         # the permission rules see them through small stand-ins.
         lc_tools += mcp.langchain_tools()
         tools.update({t.name: t for t in mcp.permission_tools()})
+    ide_lc_tools: list[BaseTool] = []
+    ide_names: set[str] = set()
+    if ide_browser:
+        # The IDE's own tools (already LangChain tools, like MCP's) and their stand-ins.
+        ide_browser.max_chars = ctx.max_output_chars
+        ide_lc_tools = ide_browser.langchain_tools()
+        lc_tools += ide_lc_tools
+        stand_ins = ide_browser.permission_tools()
+        tools.update({t.name: t for t in stand_ins})
+        ide_names = {t.name for t in stand_ins}
     compaction: CompactionMiddleware | None = None
     if settings.auto_compact:
         # Built-in (subclassed): summarise old turns with the small model.
@@ -436,8 +453,10 @@ def build_agent(
         policy=policy,
         hooks=hooks,
         main=bundle,
-        cmcoder_tools={n: t for n, t in tools.items() if not n.startswith("mcp__")},
-        langchain_tools=mcp.langchain_tools() if mcp is not None else [],
+        cmcoder_tools={
+            n: t for n, t in tools.items() if not n.startswith("mcp__") and n not in ide_names
+        },
+        langchain_tools=[*(mcp.langchain_tools() if mcp is not None else []), *ide_lc_tools],
         permission_tools=tools,
         sandbox=sandbox,
         code_index=code_index,
@@ -491,6 +510,7 @@ def build_agent(
         else telemetry_from_settings(settings.telemetry),
         frontend=opts.frontend,
         startup_warnings=warnings,
+        ide_tool_names=sorted(ide_names),
         spec={
             "settings": settings,
             "opts": opts,
@@ -498,5 +518,6 @@ def build_agent(
             "extra_middleware": extra_middleware,
             "extra_tools": extra_tools,
             "mcp": mcp,
+            "ide_browser": ide_browser,
         },
     )

@@ -28,6 +28,28 @@ report of what worked and what failed (JavaScript errors, failed requests, 404s)
 
 With `"browser": {"headless": false}` you can watch the window.
 
+## In VS Code: the browser opens inside VS Code
+
+VS Code has its own **Integrated Browser** (a browser tab inside the editor) and tools to drive
+it: the ones GitHub Copilot's agent uses. When the cmcoder extension finds them, cmcoder uses
+**those instead of starting Chrome or Edge**: the page opens in a VS Code tab and you watch it
+there; its own `Browser` tool steps aside. The tools are cmcoder's `ide_…` tools (for example
+`ide_open_browser_page`); opening a page, clicking and typing ask first like any command, and
+reading a page or taking a screenshot does not. Screenshots appear in the chat as before.
+
+- **Needs** VS Code 1.110 or newer with the setting `workbench.browser.enableChatTools` on (VS
+  Code's default). Without the tools cmcoder opens its own browser window as before; the
+  extension's log (**cmcoder: Show Log**) says which it found.
+- **Look at what your VS Code offers:** the command **cmcoder: Show the IDE's Browser Tools**
+  lists the tools and their inputs. If your VS Code names them differently from what the
+  extension expects, put the names in the setting `cmcoder.integratedBrowserTools`.
+- **Turn it off:** the setting `cmcoder.useIntegratedBrowser` (VS Code) or
+  `"browser": {"useIdeBrowser": false}` (settings file): cmcoder then uses its own browser.
+- VS Code only: Visual Studio, Eclipse and NetBeans have no browser of this kind, and keep
+  the separate window.
+- The tool names and inputs are VS Code's, and VS Code may change them: cmcoder passes on
+  whatever the tools say about themselves.
+
 ## `/webtest`: test the app in one command
 
 ```

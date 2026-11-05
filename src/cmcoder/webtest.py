@@ -44,6 +44,27 @@ did, what happened, what you expected, and where in the code the cause probably 
 )
 
 
+IDE_PROMPT = PromptTemplate.from_template(
+    """\
+Test the web app of this project in a real browser, and report what works and what \
+doesn't. Do not change any project file unless I ask afterwards.
+
+{start}
+
+Then, with the browser tools ({tools}: they drive the browser inside the IDE, where I can \
+watch): open {where}, read the page, and go through {what}. Click and type with the tools, \
+and read the page again whenever it changes. Errors the page shows or logs matter even \
+when it looks fine. Take a screenshot once the page has loaded, and again whenever \
+something looks wrong: I see them in the chat.
+
+When you are done, close the page if a tool lets you{cleanup}.
+
+Report: what you tested; what worked; and for each failure the element or page, what you \
+did, what happened, what you expected, and where in the code the cause probably is \
+(read the code to check before you say so)."""
+)
+
+
 def package_manager(root: Path) -> str:
     for lockfile, name in (("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("bun.lockb", "bun")):
         if (root / lockfile).exists():
@@ -77,7 +98,9 @@ def split_request(arg: str) -> tuple[str | None, str]:
     return None, arg.strip()
 
 
-def webtest_prompt(root: Path, arg: str) -> str:
+def webtest_prompt(root: Path, arg: str, ide_tools: list[str] | None = None) -> str:
+    """The /webtest request. `ide_tools`: the names of the IDE's own browser tools, when it has
+    some (they are used instead of the Browser tool)."""
     address, goal = split_request(arg)
     if address:
         start = f"The app is already running at {address}; do not start it."
@@ -102,4 +125,8 @@ def webtest_prompt(root: Path, arg: str) -> str:
         if goal
         else "the main things a user can do here: each page you can reach, each form and button"
     )
+    if ide_tools:
+        return IDE_PROMPT.format(
+            start=start, tools=", ".join(ide_tools), where=where, what=what, cleanup=cleanup
+        )
     return PROMPT.format(start=start, where=where, what=what, cleanup=cleanup)

@@ -56,6 +56,8 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 | `cmcoder.permissionMode` | Permission mode for new conversations (user settings only) |
 | `cmcoder.diffReview` | Open proposed edits in the diff editor (default on) |
 | `cmcoder.notifyWhenHidden` | A notification, with a button to open the chat, when cmcoder needs your answer while the chat isn't in view (default on) |
+| `cmcoder.useIntegratedBrowser` | Test web apps in VS Code's own Integrated Browser (VS Code 1.110+) instead of a separate Chrome or Edge window (default on) |
+| `cmcoder.integratedBrowserTools` | The names of VS Code's browser tools to use, if detection finds none (see the command *cmcoder: Show the IDE's Browser Tools*) |
 | `cmcoder.autoContext` | Send the editor context with messages (default on) |
 
 A workspace can't change which program runs or the permission mode: the

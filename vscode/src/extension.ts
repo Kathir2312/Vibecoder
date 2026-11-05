@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext): CmcoderApi {
     }),
     vscode.commands.registerCommand("cmcoder.openTerminal", () => openTerminal(context.extensionUri)),
     vscode.commands.registerCommand("cmcoder.showLog", () => log.show()),
+    vscode.commands.registerCommand("cmcoder.showBrowserTools", () => view.showBrowserTools()),
     vscode.commands.registerCommand("cmcoder.openNavigator", () => view.navigator.open()),
     vscode.commands.registerCommand("cmcoder.openSettings", openSettings),
     codeSearch,
