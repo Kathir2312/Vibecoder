@@ -20,6 +20,7 @@ of Microsoft Edge); without it the chat says what to install.
 | The chat | **Tools → cmcoder → Open Chat** (docks next to Solution Explorer) |
 | Ask about the selection | the editor's context menu, or **Ctrl+Shift+Alt+K** |
 | Agent Navigator | the chat's button, or **Tools → cmcoder → Open Agent Navigator** |
+| Tasks | a long todo list is one line in the chat (done/total, a meter, the task in progress); click it, or use **Tools → cmcoder → Open Tasks**, for a document tab with the whole list, numbered and grouped, following the agent live |
 | Proposed changes | the diff window, with **Accept**, **Accept Always**, **Reject** above it |
 | Code search | the button above the chat, or **Tools → cmcoder → Code Search…** |
 | Settings | **Tools → Options → cmcoder** |
@@ -57,6 +58,6 @@ experimental instance, starts the mock model server, opens a small folder,
 and the extension's self-test (`Gate.cs`) runs a whole conversation through
 the real chat page: the bundled cmcoder starts, the editor context, the
 Error List as an IDE tool, a change accepted and one rejected in the diff
-window, the navigator, blocked navigation, Ask About Selection, diagnostics
+window, the navigator, the Tasks tab, blocked navigation, Ask About Selection, diagnostics
 without the API key, and closing the folder stopping cmcoder. No Python is
 on PATH for any of it.

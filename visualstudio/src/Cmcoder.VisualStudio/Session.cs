@@ -78,6 +78,7 @@ namespace Cmcoder.VisualStudio
         /// <summary>The last state sent to the chat, with its message (diagnostics).</summary>
         internal volatile string LastState = "";
         internal volatile Panel? Navigator;
+        internal volatile Panel? Tasks;
 
         /// <summary>Runs on the session's thread, after reading the settings cmcoder starts with again.</summary>
         public void Run(Action<Host> action)
@@ -146,6 +147,13 @@ namespace Cmcoder.VisualStudio
         public void NavigatorClosed(Panel panel)
         {
             if (Navigator == panel) Navigator = null;
+        }
+
+        public void TasksOpened(Panel panel) => Tasks = panel;
+
+        public void TasksClosed(Panel panel)
+        {
+            if (Tasks == panel) Tasks = null;
         }
 
         /// <summary>changed runs (any thread) when code search's state changes; dispose to stop.</summary>

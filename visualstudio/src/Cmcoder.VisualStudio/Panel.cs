@@ -16,7 +16,7 @@ using System.Windows.Media;
 namespace Cmcoder.VisualStudio
 {
     /// <summary>
-    /// One of the shared pages (chat or navigator) in WebView2: the page the
+    /// One of the shared pages (chat, navigator or tasks) in WebView2: the page the
     /// web-panel README describes, the extension's own files only (a virtual
     /// host name, no file://), messages both ways, Visual Studio's theme
     /// (H5, H16, H18, H19, H20). UI thread only.
@@ -158,12 +158,12 @@ namespace Cmcoder.VisualStudio
 
         // -- the pages -----------------------------------------------------------------------------
 
-        /// <summary>Writes chat.html and navigator.html (a new nonce each start) to the user's own folder.</summary>
+        /// <summary>Writes chat.html, navigator.html and tasks.html (a new nonce each start) to the user's own folder.</summary>
         private static string WritePages()
         {
             var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "cmcoder", "pages");
             Directory.CreateDirectory(folder);
-            foreach (var name in new[] { "chat", "navigator" })
+            foreach (var name in new[] { "chat", "navigator", "tasks" })
                 File.WriteAllText(Path.Combine(folder, name + ".html"), Html(name), new UTF8Encoding(false));
             return folder;
         }
@@ -184,7 +184,7 @@ namespace Cmcoder.VisualStudio
                 + "  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src " + source
                 + "; img-src " + source + " data:; script-src 'nonce-" + nonce + "'\">\n"
                 + "  <link href=\"" + source + "/" + page + ".css\" rel=\"stylesheet\">\n"
-                + "</head>\n<body data-product=\"" + Attr(Brand.Product) + "\" data-icon=\"" + source + "/icon.png\" data-features=\"stopTool sessionRules agents\">\n"
+                + "</head>\n<body data-product=\"" + Attr(Brand.Product) + "\" data-icon=\"" + source + "/icon.png\" data-features=\"stopTool sessionRules agents tasksTab\">\n"
                 + "  <div id=\"app\"></div>\n"
                 + "  <script nonce=\"" + nonce + "\" src=\"" + source + "/" + page + ".js\"></script>" + testScript + "\n"
                 + "</body></html>\n";

@@ -85,7 +85,7 @@
   </ItemGroup>
   <!-- The shared chat panel (clients/web-panel, built first), its theme list, the brand. -->
   <ItemGroup>
-    <Content Include="..\..\..\clients\web-panel\dist\chat.js;..\..\..\clients\web-panel\dist\chat.css;..\..\..\clients\web-panel\dist\navigator.js;..\..\..\clients\web-panel\dist\navigator.css;..\..\..\clients\web-panel\theme.json;..\..\..\branding\icon.png;..\..\..\branding\brand.json">
+    <Content Include="..\..\..\clients\web-panel\dist\chat.js;..\..\..\clients\web-panel\dist\chat.css;..\..\..\clients\web-panel\dist\navigator.js;..\..\..\clients\web-panel\dist\navigator.css;..\..\..\clients\web-panel\dist\tasks.js;..\..\..\clients\web-panel\dist\tasks.css;..\..\..\clients\web-panel\theme.json;..\..\..\branding\icon.png;..\..\..\branding\brand.json">
       <Link>panel\%(Filename)%(Extension)</Link>
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -16,6 +16,7 @@ namespace Cmcoder.Core.Tests
         {
             public readonly List<string> Panel = new List<string>();
             public readonly List<string> Navigator = new List<string>();
+            public readonly List<string> Tasks = new List<string>();
             public readonly List<string> Calls = new List<string>();
             public readonly List<Protocol.FileChange> Diffs = new List<Protocol.FileChange>();
             public readonly List<string> LogLines = new List<string>();
@@ -24,6 +25,8 @@ namespace Cmcoder.Core.Tests
             public void ToPanel(string json) { lock (Panel) Panel.Add(json); }
             public void ToNavigator(string json) { lock (Navigator) Navigator.Add(json); }
             public void OpenNavigator() { lock (Calls) Calls.Add("openNavigator"); }
+            public void ToTasks(string json) { lock (Tasks) Tasks.Add(json); }
+            public void OpenTasks() { lock (Calls) Calls.Add("openTasks"); }
             public void FocusChat() { lock (Calls) Calls.Add("focusChat"); }
             public void RequestWaiting(string what) { lock (Calls) Calls.Add("waiting " + what); }
             public JObject? EditorContext() => Context;
@@ -162,6 +165,45 @@ namespace Cmcoder.Core.Tests
             // 6. Closing the solution stops cmcoder.
             host.Dispose();
             Assert.False(host.Running);
+        }
+
+        [SkippableFact]
+        public void TheTasksTabFollowsTheTodoListAndOpensFromTheChat()
+        {
+            var plan = "[{\"content\":\"Fix it\",\"status\":\"in_progress\"},{\"content\":\"Test it\",\"status\":\"pending\"}]";
+            using var server = new MockServer(
+                "[{\"tool_calls\":[{\"name\":\"write_todos\",\"arguments\":{\"todos\":" + plan + "}}]},{\"content\":\"Planned.\"}]");
+            var project = Fixtures.Project();
+            var ide = new FakeIde();
+            var host = new Host(ide, Config(project, server.Url));
+            host.OnPanelMessage("{\"kind\":\"ready\"}");
+            Fixtures.Until("ready", () => host.State == "ready", ide.LogText);
+            host.OnPanelMessage("{\"kind\":\"send\",\"text\":\"plan it\",\"includeContext\":false}");
+            Fixtures.Until("the turn", () => ide.Events("result").Count == 1, ide.LogText);
+            // The list reached the Tasks page (open or not: the host keeps it).
+            JObject Last(string kind)
+            {
+                lock (ide.Tasks) return ide.Tasks.Select(j => Json.ParseObject(j)!).Last(m => Json.Str(m, "kind") == kind);
+            }
+            var todos = Json.List(Last("todos"), "todos");
+            Assert.Equal(2, todos.Count);
+            Assert.Equal("Fix it", (string?)todos[0]["content"]);
+            // A Tasks tab opened later is told everything so far when its page says ready.
+            lock (ide.Tasks) ide.Tasks.Clear();
+            host.OnTasksMessage("{\"kind\":\"ready\"}");
+            Assert.Equal(2, Json.List(Last("todos"), "todos").Count);
+            // The chat's compact bar opens the tab; the tab's Chat button goes back.
+            host.OnPanelMessage("{\"kind\":\"openTasks\"}");
+            host.OnTasksMessage("{\"kind\":\"openChat\"}");
+            lock (ide.Calls)
+            {
+                Assert.Contains("openTasks", ide.Calls);
+                Assert.Contains("focusChat", ide.Calls);
+            }
+            // A new conversation has no tasks.
+            host.NewConversation(new string[0]);
+            Assert.Equal("reset", Json.Str(Last("reset"), "kind"));
+            host.Dispose();
         }
 
         [SkippableFact]

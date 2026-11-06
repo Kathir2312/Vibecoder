@@ -19,7 +19,7 @@ if (-not (Test-Path $vsix)) { throw "no .vsix at $vsix" }
 # What's inside: the panel, the package, and (gate only) the test driver.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $entries = [IO.Compression.ZipFile]::OpenRead($vsix).Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
-foreach ($f in 'panel/chat.js', 'panel/navigator.js', 'panel/theme.json', 'panel/brand.json', 'Cmcoder.VisualStudio.dll', 'Cmcoder.Core.dll', 'Cmcoder.VisualStudio.pkgdef', 'extension.vsixmanifest') {
+foreach ($f in 'panel/chat.js', 'panel/navigator.js', 'panel/tasks.js', 'panel/tasks.css', 'panel/theme.json', 'panel/brand.json', 'Cmcoder.VisualStudio.dll', 'Cmcoder.Core.dll', 'Cmcoder.VisualStudio.pkgdef', 'extension.vsixmanifest') {
     if ($entries -notcontains $f) { throw "$f is missing from the .vsix" }
 }
 if (-not $Gate -and ($entries -contains 'panel/test-driver.js')) { throw 'the test driver must not ship' }

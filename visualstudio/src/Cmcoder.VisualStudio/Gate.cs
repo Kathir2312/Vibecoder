@@ -187,6 +187,12 @@ namespace Cmcoder.VisualStudio
                 (await navigator.Panel.EvaluateAsync("document.body.textContent")).Contains("create other.txt"));
             await ShotAsync("3-navigator");
 
+            // The Tasks tab opens and its page runs (this conversation has no todo list).
+            var tasks = (TasksWindow)(await package.ShowToolWindowAsync(typeof(TasksWindow), 0, true, package.DisposalToken))!;
+            await UntilAsync("the Tasks tab's page", async () =>
+                (await tasks.Panel.EvaluateAsync("document.body.textContent")).Contains("No tasks yet"));
+            await ShotAsync("4-tasks");
+
             // H19: the page can't navigate away.
             var url = chat.View.Source?.ToString();
             await chat.EvaluateAsync("location.href='https://example.com/'");

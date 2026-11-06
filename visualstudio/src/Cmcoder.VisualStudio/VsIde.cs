@@ -65,6 +65,10 @@ namespace Cmcoder.VisualStudio
 
         public void OpenNavigator() => Later(() => CmcoderPackage.Instance?.ShowNavigator());
 
+        public void ToTasks(string json) => session.Tasks?.Post(json);
+
+        public void OpenTasks() => Later(() => CmcoderPackage.Instance?.ShowTasks());
+
         public void FocusChat() => Later(() => CmcoderPackage.Instance?.ShowChat(true));
 
         /// <summary>
