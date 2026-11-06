@@ -65,6 +65,40 @@ namespace Cmcoder.VisualStudio
         }
     }
 
+    /// <summary>The Tasks tab, a document tab: the agent's whole todo list (the chat shows one compact line).</summary>
+    [Guid("bc8cb086-689a-455e-abdb-1d2ae651a535")]
+    public sealed class TasksWindow : ToolWindowPane
+    {
+        private readonly Panel panel;
+
+        public TasksWindow() : base(null)
+        {
+            Caption = Brand.Product + ": Tasks";
+            var session = Session.Get();
+            panel = new Panel("tasks", json => session.Run(h => h.OnTasksMessage(json)));
+            Content = panel;
+        }
+
+        protected override void Initialize()
+        {
+            base.Initialize();
+            Session.Get().TasksOpened(panel);
+            Ui.Later(() => panel.LoadAsync());
+        }
+
+        internal Panel Panel => panel;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Session.Get().TasksClosed(panel);
+                panel.Close();
+            }
+            base.Dispose(disposing);
+        }
+    }
+
     /// <summary>The Agent Navigator (H15), a document tab: the current turn's agents.</summary>
     [Guid("5c8e1a3b-7d4f-4b2e-9a6c-3e7f1d9b5a28")]
     public sealed class NavigatorWindow : ToolWindowPane

@@ -45,15 +45,19 @@
         <Parent guid="guidCmcoderCmdSet" id="MenuGroup" />
         <Strings><ButtonText>Open Agent Navigator</ButtonText><CommandName>cmcoder.OpenNavigator</CommandName></Strings>
       </Button>
-      <Button guid="guidCmcoderCmdSet" id="cmdCodeSearch" priority="0x0105" type="Button">
+      <Button guid="guidCmcoderCmdSet" id="cmdOpenTasks" priority="0x0105" type="Button">
+        <Parent guid="guidCmcoderCmdSet" id="MenuGroup" />
+        <Strings><ButtonText>Open Tasks</ButtonText><CommandName>cmcoder.OpenTasks</CommandName></Strings>
+      </Button>
+      <Button guid="guidCmcoderCmdSet" id="cmdCodeSearch" priority="0x0106" type="Button">
         <Parent guid="guidCmcoderCmdSet" id="MenuGroup" />
         <Strings><ButtonText>Code Search…</ButtonText><CommandName>cmcoder.CodeSearch</CommandName></Strings>
       </Button>
-      <Button guid="guidCmcoderCmdSet" id="cmdShowLog" priority="0x0106" type="Button">
+      <Button guid="guidCmcoderCmdSet" id="cmdShowLog" priority="0x0107" type="Button">
         <Parent guid="guidCmcoderCmdSet" id="MenuGroup" />
         <Strings><ButtonText>Show Log</ButtonText><CommandName>cmcoder.ShowLog</CommandName></Strings>
       </Button>
-      <Button guid="guidCmcoderCmdSet" id="cmdCopyDiagnostics" priority="0x0107" type="Button">
+      <Button guid="guidCmcoderCmdSet" id="cmdCopyDiagnostics" priority="0x0108" type="Button">
         <Parent guid="guidCmcoderCmdSet" id="MenuGroup" />
         <Strings><ButtonText>Copy Diagnostics</ButtonText><CommandName>cmcoder.CopyDiagnostics</CommandName></Strings>
       </Button>
@@ -85,6 +89,7 @@
       <IDSymbol name="cmdShowLog" value="0x0106" />
       <IDSymbol name="cmdCopyDiagnostics" value="0x0107" />
       <IDSymbol name="cmdAskFromEditor" value="0x0108" />
+      <IDSymbol name="cmdOpenTasks" value="0x0109" />
     </GuidSymbol>
   </Symbols>
 </CommandTable>

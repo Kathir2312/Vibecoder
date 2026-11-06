@@ -23,6 +23,7 @@ namespace Cmcoder.VisualStudio
         public const int ShowLog = 0x0106;
         public const int CopyDiagnostics = 0x0107;
         public const int AskFromEditor = 0x0108;
+        public const int OpenTasks = 0x0109;
     }
 
     /// <summary>
@@ -34,6 +35,7 @@ namespace Cmcoder.VisualStudio
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideToolWindow(typeof(ChatWindow), Style = VsDockStyle.Tabbed, Window = "3ae79031-e1bc-11d0-8f78-00a0c9110057")]
     [ProvideToolWindow(typeof(NavigatorWindow), Style = VsDockStyle.MDI, MultiInstances = false)]
+    [ProvideToolWindow(typeof(TasksWindow), Style = VsDockStyle.MDI, MultiInstances = false)]
     [ProvideOptionPage(typeof(Options), "cmcoder", "General", 0, 0, true)]
 #if CMCODER_GATE
     [ProvideAutoLoad(Microsoft.VisualStudio.VSConstants.UICONTEXT.ShellInitialized_string, PackageAutoLoadFlags.BackgroundLoad)]
@@ -63,6 +65,7 @@ namespace Cmcoder.VisualStudio
                 });
                 Add(commands, Ids.Stop, () => Session.Get().Run(h => h.Interrupt()));
                 Add(commands, Ids.OpenNavigator, () => ShowNavigator());
+                Add(commands, Ids.OpenTasks, () => ShowTasks());
                 Add(commands, Ids.CodeSearch, () => CodeSearchUi.Menu(Session.Get().CodeSearch));
                 Add(commands, Ids.ShowLog, () => Session.Get().Log.Show());
                 Add(commands, Ids.CopyDiagnostics, () => Session.Get().CopyDiagnostics());
@@ -117,6 +120,11 @@ namespace Cmcoder.VisualStudio
         internal void ShowNavigator()
         {
             JoinableTaskFactory.RunAsync(async () => await ShowToolWindowAsync(typeof(NavigatorWindow), 0, true, DisposalToken));
+        }
+
+        internal void ShowTasks()
+        {
+            JoinableTaskFactory.RunAsync(async () => await ShowToolWindowAsync(typeof(TasksWindow), 0, true, DisposalToken));
         }
 
         protected override void Dispose(bool disposing)

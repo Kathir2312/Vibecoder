@@ -22,6 +22,12 @@ namespace Cmcoder.Core
         /// <summary>Open (or show) the Agent Navigator (H15).</summary>
         void OpenNavigator();
 
+        /// <summary>Deliver a message to the Tasks page (the agent's whole todo list), if it is open.</summary>
+        void ToTasks(string json);
+
+        /// <summary>Open (or show) the Tasks tab: a long todo list is one line in the chat, the whole list is here.</summary>
+        void OpenTasks();
+
         /// <summary>Bring the chat to the front.</summary>
         void FocusChat();
 

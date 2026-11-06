@@ -22,6 +22,7 @@ copies `dist/` into the extension.)
 |---|---|
 | `chat.js`, `chat.css` | the chat panel (a tool window / side panel) |
 | `navigator.js`, `navigator.css` | the Agent Navigator (an editor tab) |
+| `tasks.js`, `tasks.css` | the Tasks tab (an editor tab): the agent's whole todo list |
 | `test-driver.js` | **tests only, never shipped**: see below |
 
 Each page is this HTML, served from the plugin itself (never `file://` from a

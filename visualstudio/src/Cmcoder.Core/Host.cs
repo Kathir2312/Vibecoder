@@ -55,6 +55,7 @@ namespace Cmcoder.Core
         private readonly Config config;
         private readonly object gate = new object();
         private readonly Navigator navigator;
+        private readonly Tasks tasks;
         private readonly HashSet<string> openDiffs = new HashSet<string>();
         private readonly Dictionary<string, Protocol.FileChange> changes = new Dictionary<string, Protocol.FileChange>();
         private readonly List<Action<Protocol.Event>> listeners = new List<Action<Protocol.Event>>();
@@ -68,6 +69,7 @@ namespace Cmcoder.Core
             this.ide = ide;
             this.config = config;
             navigator = new Navigator(ide);
+            tasks = new Tasks(ide);
         }
 
         /// <summary>
@@ -194,6 +196,7 @@ namespace Cmcoder.Core
                 // The panel sees every event first and in order; side effects come after.
                 ide.ToPanel("{\"kind\":\"event\",\"event\":" + e.Raw + "}");
                 navigator.OnEvent(e);
+                tasks.OnEvent(e);
                 Action<Protocol.Event>[] ls;
                 lock (listeners) ls = listeners.ToArray();
                 foreach (var l in ls)
@@ -317,6 +320,9 @@ namespace Cmcoder.Core
                     case "openNavigator":
                         ide.OpenNavigator();
                         break;
+                    case "openTasks":
+                        ide.OpenTasks();
+                        break;
                     case "permission":
                     {
                         var id = Json.Str(m, "requestId");
@@ -426,6 +432,7 @@ namespace Cmcoder.Core
                 StopAgent();
                 ide.ToPanel("{\"kind\":\"reset\"}");
                 navigator.Reset();
+                tasks.Reset();
                 Start(extraArgs);
             }
         }
@@ -506,6 +513,53 @@ namespace Cmcoder.Core
                         break;
                 }
             }
+        }
+
+        // -- the Tasks tab ---------------------------------------------------------------------------
+
+        /// <summary>A message from the Tasks page.</summary>
+        public void OnTasksMessage(string json)
+        {
+            lock (gate)
+            {
+                var m = Json.ParseObject(json);
+                switch (Json.Str(m, "kind"))
+                {
+                    case "ready":
+                        tasks.Replay();
+                        break;
+                    case "openChat":
+                        ide.FocusChat();
+                        break;
+                }
+            }
+        }
+
+        /// <summary>Keeps the latest todo list, so a Tasks tab opened mid-job shows everything so far.</summary>
+        private sealed class Tasks
+        {
+            private readonly IIde ide;
+            private JArray todos = new JArray();
+
+            public Tasks(IIde ide) => this.ide = ide;
+
+            public void OnEvent(Protocol.Event e)
+            {
+                if (e.Type != "todo_update") return;
+                todos = e.Fields["todos"] as JArray ?? new JArray();
+                ide.ToTasks(TodosMessage());
+            }
+
+            public void Reset()
+            {
+                todos = new JArray();
+                ide.ToTasks("{\"kind\":\"reset\"}");
+            }
+
+            public void Replay() => ide.ToTasks(TodosMessage());
+
+            private string TodosMessage() =>
+                new JObject { ["kind"] = "todos", ["todos"] = todos }.ToString(Newtonsoft.Json.Formatting.None);
         }
 
         /// <summary>Keeps the current turn's map events, so a navigator opened mid-turn shows everything so far.</summary>
