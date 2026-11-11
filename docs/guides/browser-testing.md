@@ -50,6 +50,39 @@ reading a page or taking a screenshot does not. Screenshots appear in the chat a
 - The tool names and inputs are VS Code's, and VS Code may change them: cmcoder passes on
   whatever the tools say about themselves.
 
+## `/pick`: point at an element and talk about it
+
+VS Code's Integrated Browser has a "select element" button, but it attaches the element to
+**Copilot's** chat, and an extension can't change that. cmcoder has its own: the **Pick element**
+button in the cmcoder chat (VS Code, Visual Studio, Eclipse, NetBeans, IntelliJ), or `/pick` in
+any chat or the terminal.
+
+```
+/pick                          point at an element on the page that is open in the browser
+/pick http://localhost:5080    open that page in cmcoder's browser window first
+/pick clear                    drop what is waiting for your next message
+```
+
+A highlight follows your mouse over the page (and a bar at the bottom says what to do). **Click
+the element**: the click is swallowed, so the page doesn't act on it. Esc on the page cancels;
+**Stop** in the chat ends the wait; two minutes without a click ends it too. The chat says what
+you picked, and the element goes to cmcoder **with your next message**: its page, a CSS selector,
+its text, its position and its HTML (cut at 6,000 characters), sent as a note the model reads
+before your words, so you can type "make this button red" or "why is this link wrong?". Pick
+more than one (up to five) before you write. They are sent once; the message after has none.
+
+- **Where it picks.** In VS Code, in the Integrated Browser tab, when the IDE offers a "run
+  Playwright code" tool (see the section above; **cmcoder: Show the IDE's Browser Tools** lists
+  it). Otherwise in cmcoder's own browser window: `/pick <address>` opens the page there (a
+  browser running without a window is restarted with one; its earlier pages are gone). Only
+  addresses cmcoder opens by itself work with `/pick <address>` (your own machine, a file in the
+  project, a host you already approved); for another site, ask cmcoder to open it, which asks you first.
+- **Secrets.** The HTML of the picked element has the values of password and hidden fields
+  (login tokens, anti-forgery tokens) replaced by `[hidden]`. Anything else on the element is sent
+  as it is, so pick the element, not the whole form, when a field holds something private.
+- **Limits.** Only the top page: not inside an iframe, and not in a closed shadow root. The page's
+  words go to the model as data: it is told they are not instructions.
+
 ## `/webtest`: test the app in one command
 
 ```

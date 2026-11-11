@@ -47,6 +47,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     (
+        "pick",
+        "[url|clear]",
+        "Point at an element on the page in the browser; it goes with your next message",
+    ),
+    (
         "playwright",
         "[setup|map|plan|generate|run|heal|all|agents] [area]",
         "Playwright tests for the web app: set up, plan, write, run, heal",
@@ -390,6 +395,10 @@ async def run_command(
         return webtest_command(session, arg)
     if name == "playwright":
         return playwright_command(session, arg)
+    if name == "pick":
+        from .pick import pick_lines
+
+        return CommandResult(await pick_lines(session, arg))
     if name == "index":
         from ..rag.session import index_command
 

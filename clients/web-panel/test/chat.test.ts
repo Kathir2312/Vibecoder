@@ -648,6 +648,26 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
+  test(`${flavour}: Pick element sends /pick, only when this cmcoder has it, and not during a request`, async () => {
+    const { page, ev, sent } = await panel(flavour);
+    const command = (name: string) => ({ name, description: "", argument_hint: "", origin: "built-in" as const });
+    assert.equal(await page.isVisible(".pick"), false, "nothing to pick with before the commands are listed");
+    await ev({ type: "command_list", commands: [command("help"), command("model")] });
+    assert.equal(await page.isVisible(".pick"), false, "an older cmcoder without /pick: no button");
+    await ev({ type: "command_list", commands: [command("help"), command("pick")] });
+    assert.equal(await page.isVisible(".pick"), true);
+    assert.equal(await page.textContent(".pick"), "Pick element");
+    await page.fill("textarea", "half a message");
+    await page.click(".pick");
+    assert.deepEqual((await sent()).at(-1), { kind: "send", text: "/pick", includeContext: false });
+    assert.equal(await page.inputValue("textarea"), "half a message", "what was being typed stays");
+    assert.match((await page.locator(".note.info").last().textContent()) ?? "", /Pick mode: click an element on the page in the browser/);
+    assert.equal(await page.locator(".pick").isDisabled(), true, "picking is a request: it is busy until it ends");
+    await ev(result);
+    assert.equal(await page.locator(".pick").isDisabled(), false);
+    await page.close();
+  });
+
   test(`${flavour}: an empty conversation offers ready-made commands once cmcoder lists them`, async () => {
     const { page, ev, send, sent } = await panel(flavour);
     const command = (name: string) => ({ name, description: "", argument_hint: "", origin: "built-in" as const });
