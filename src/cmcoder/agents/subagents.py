@@ -174,7 +174,10 @@ def _load_dir(
 
 def load_agents(project_root: Path, project_trusted: bool) -> dict[str, AgentDefinition]:
     """Built-in agents, a trusted project's, then yours (yours win on a name clash)."""
+    from .playwright_roles import ROLES  # not at the top: that module imports this one
+
     agents = dict(BUILT_IN_AGENTS)
+    agents.update(ROLES)  # built in, but a file of the same name (yours, a trusted project's) wins
     if project_trusted:
         agents.update(_load_dir(project_root / ".cmcoder" / "agents", "project", project_root))
     agents.update(_load_dir(config_dir() / "agents", "user"))
@@ -201,11 +204,13 @@ def model_ref(settings: Settings, definition: AgentDefinition) -> str | None:
 
 def listed(name: str, wanted: list[str] | None) -> bool:
     """Is tool `name` in an agent's `tools` list (None: every tool)? `mcp__server` means all
-    the tools of that MCP server."""
+    the tools of that MCP server, and a name ending in `*` (`ide_*`) every tool that starts so."""
     if wanted is None:
         return True
     return name in wanted or any(
-        w.startswith("mcp__") and name.startswith(w + "__") for w in wanted
+        (w.startswith("mcp__") and name.startswith(w + "__"))
+        or (w.endswith("*") and name.startswith(w[:-1]))  # `ide_*`: all the IDE's browser tools
+        for w in wanted
     )
 
 
@@ -232,8 +237,15 @@ def agent_infos(root: Path, project_trusted: bool) -> list[ev.AgentInfo]:
     built-in ones. The critic is an agent of its own and is left out."""
     found = load_agents(root, project_trusted)
     found.pop(CRITIC_NAME, None)
+    from .playwright_roles import ROLE_NAMES
+
     infos = [
-        ev.AgentInfo(name=d.name, description=short_description(d.description), origin=d.origin)
+        ev.AgentInfo(
+            name=d.name,
+            description=short_description(d.description),
+            origin=d.origin,
+            group="Playwright" if d.name in ROLE_NAMES else "",
+        )
         for d in found.values()
     ]
     if not project_trusted:
@@ -476,7 +488,14 @@ class TaskInput(BaseModel):
 
 
 def task_description(rt: SubagentRuntime) -> str:
-    agents = "\n".join(f"- {d.name}: {d.description}" for d in rt.definitions().values())
+    from .playwright_roles import ROLE_NAMES
+
+    # The Playwright roles are for /playwright and the Agent list, not for the model to pick here.
+    agents = "\n".join(
+        f"- {d.name}: {d.description}"
+        for d in rt.definitions().values()
+        if d.name not in ROLE_NAMES
+    )
     text = (
         "Hand a self-contained task to a subagent with its own fresh conversation; it "
         "works on its own and returns one report. Use it for broad searches and research "

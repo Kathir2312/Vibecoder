@@ -52,71 +52,12 @@ from ..playwright_tests import prompts, status
 from ..playwright_tests.command import WEB_SERVER, app_url, config_text
 from ..playwright_tests.probe import probe
 from ..protocol import events as ev
+from .playwright_roles import ROLES
 from .subagents import AgentDefinition, SubagentResult, SubagentRuntime, Writer, _emit, run_agent
 
 REPORT_CHARS = 1_500
 
-MAPPER_PROMPT = """\
-You are a careful web tester. You look at a web app in a browser and describe what is there. You \
-change only the file you are asked to write."""
-
-PLANNER_PROMPT = """\
-You are a test planner for a web app. You use the app like a person to find what is worth testing, \
-and you write test plans. You change only the plan file you are asked to write."""
-
-GENERATOR_PROMPT = """\
-You write Playwright tests in TypeScript that pass on the first run. You find elements the way a \
-user does (by role, label and text), you never guess a label, and you change only the test files \
-you are asked to write."""
-
-RUNNER_PROMPT = """\
-You run Playwright tests and say, for every failure, whether the test or the app is wrong. You \
-change no file."""
-
-HEALER_PROMPT = """\
-You fix failing Playwright tests. You change only test files. A failure that is the app's own \
-(an error page, a broken link, wrong data) is never hidden: you mark that test test.fixme with a \
-comment and report it."""
-
-# What each role may use (the IDE's browser tools are added when it has some).
-_FILES = ["Read", "Glob", "Grep"]
-ROLES = {
-    "playwright-mapper": AgentDefinition(
-        "playwright-mapper",
-        "Browses the app and lists its pages by area.",
-        MAPPER_PROMPT,
-        "built-in",
-        tools=[*_FILES, "Write", "Browser"],
-    ),
-    "playwright-planner": AgentDefinition(
-        "playwright-planner",
-        "Writes the test plan of an area of the app.",
-        PLANNER_PROMPT,
-        "built-in",
-        tools=[*_FILES, "Write", "Browser"],
-    ),
-    "playwright-generator": AgentDefinition(
-        "playwright-generator",
-        "Writes Playwright tests from a plan.",
-        GENERATOR_PROMPT,
-        "built-in",
-        tools=[*_FILES, "Write", "Edit", "Bash", "Browser"],
-    ),
-    "playwright-runner": AgentDefinition(
-        "playwright-runner",
-        "Runs the tests and says who is wrong for each failure.",
-        RUNNER_PROMPT,
-        "built-in",
-        tools=[*_FILES, "Bash", "Browser"],
-    ),
-    "playwright-healer": AgentDefinition(
-        "playwright-healer",
-        "Fixes the tests that are wrong; marks the app's own problems.",
-        HEALER_PROMPT,
-        "built-in",
-        tools=[*_FILES, "Write", "Edit", "Bash", "Browser"],
-    ),
-}
+# The roles (who does each stage) are in playwright_roles.py: the chat's Agent list offers them too.
 
 
 # --- What the roles hand back (structured output) ---------------------------------------------
@@ -184,17 +125,9 @@ def _ide_tools(rt: SubagentRuntime) -> list[str]:
 
 
 def role_definition(rt: SubagentRuntime, name: str) -> AgentDefinition:
-    """Your `.cmcoder/agents/<name>.md` if you defined one, else the built-in (with the IDE's
-    browser tools added to its list when it has some)."""
-    mine = rt.definitions().get(name)
-    if mine is not None:
-        return mine
-    role = ROLES[name]
-    if role.tools is None:
-        return role
-    return AgentDefinition(
-        role.name, role.description, role.prompt, role.origin, tools=[*role.tools, *_ide_tools(rt)]
-    )
+    """Your `.cmcoder/agents/<name>.md` if you defined one, else the built-in role (its tool list
+    names `ide_*`, so the IDE's own browser tools are in it when the IDE has some)."""
+    return rt.definitions().get(name) or ROLES[name]
 
 
 async def run_stage(

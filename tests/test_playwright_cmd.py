@@ -461,3 +461,25 @@ def test_run_does_not_ask_for_the_app_when_playwright_starts_it(tmp_path: Path) 
     add_tests(tmp_path, "orders")
     out = run(tmp_path, "run")
     assert out.prompt and "Playwright starts the app by itself" in out.prompt
+
+
+# --- who does each step -------------------------------------------------------------------------
+
+
+def test_each_step_names_the_agent_that_does_it(tmp_path: Path) -> None:
+    project(tmp_path)
+    add_map(tmp_path)
+    add_plan(tmp_path, "orders")
+    add_tests(tmp_path, "orders")
+    assert run(tmp_path, "map").agent == "playwright-mapper"
+    assert run(tmp_path, "plan Orders").agent == "playwright-planner"
+    assert run(tmp_path, "generate Orders").agent == "playwright-generator"
+    assert run(tmp_path, "run").agent == "playwright-runner"
+    assert run(tmp_path, "heal").agent == "playwright-healer"
+    # Setup writes and installs, `all` starts the roles itself, the rest answers in lines.
+    assert run(tmp_path, f"setup {URL}").agent is None
+    assert run(tmp_path, "all").agent is None
+    assert run(tmp_path, "").agent is None and run(tmp_path, "agents").agent is None
+    from cmcoder.agents.playwright_roles import ROLE_NAMES
+
+    assert set(cmd.STEP_AGENTS.values()) <= ROLE_NAMES  # every agent a step names exists

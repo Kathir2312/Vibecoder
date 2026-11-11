@@ -680,9 +680,9 @@ for (const flavour of FLAVOURS) {
   });
 
   const AGENTS = [
-    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "" },
-    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`." },
-    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "" },
+    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "", group: "" },
+    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`.", group: "" },
+    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "", group: "" },
   ];
   const HOST = "stopTool sessionRules agents";
 
@@ -713,7 +713,7 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator('.agent option[value="planner"]').getAttribute("title"), "Plans tests for a web app.");
     await page.selectOption(".agent", "planner");
     assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: "planner" });
-    await ev({ type: "agent_changed", agent: "planner" });
+    await ev({ type: "agent_changed", agent: "planner", reason: "" });
     await ev({ type: "agent_list", agents: AGENTS, current: "planner" });
     assert.equal(await page.locator(".agent").inputValue(), "planner");
     assert.match((await page.textContent(".note.info")) ?? "", /Now talking to the planner agent/);
@@ -721,10 +721,37 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.getAttribute(".agent", "title"), "Plans tests for a web app.");
     await page.selectOption(".agent", "");
     assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: null });
-    await ev({ type: "agent_changed", agent: null });
+    await ev({ type: "agent_changed", agent: null, reason: "" });
     assert.equal(await page.locator(".agent").inputValue(), "");
     assert.match((await page.locator(".note.info").last().textContent()) ?? "", /Back to cmcoder's default agent/);
     assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask cmcoder…/);
+    await page.close();
+  });
+
+  test(`${flavour}: the Playwright agents get their own heading and a step moves the dropdown there and back`, async () => {
+    const { page, ev } = await panel(flavour, undefined, true, HOST);
+    const roles = [
+      { name: "playwright-planner", description: "Plans the tests.", origin: "built-in" as const, usable: true, hint: "", group: "Playwright" },
+      { name: "playwright-healer", description: "Fixes tests.", origin: "built-in" as const, usable: true, hint: "", group: "Playwright" },
+    ];
+    const all = [...AGENTS, ...roles];
+    await ev({ type: "agent_list", agents: all, current: "explore" });
+    assert.deepEqual(await page.locator(".agent optgroup").evaluateAll((g) => g.map((x) => (x as HTMLOptGroupElement).label)), ["This project", "Built in", "Playwright"]);
+    assert.deepEqual(await page.locator('.agent optgroup[label="Playwright"] option').allTextContents(), ["playwright-planner", "playwright-healer"]);
+    assert.equal(await page.locator(".agent").inputValue(), "explore");
+    const notes = () => page.locator(".note.info").allTextContents();
+    const before = (await notes()).length;
+    // `/playwright plan` runs as the planner: the list shows it, with a note that says why.
+    await ev({ type: "agent_changed", agent: "playwright-planner", reason: "step" });
+    await ev({ type: "agent_list", agents: all, current: "playwright-planner" });
+    assert.equal(await page.locator(".agent").inputValue(), "playwright-planner");
+    assert.match((await notes()).at(-1) ?? "", /This step runs as the playwright-planner agent/);
+    // Afterwards the agent from before comes back, and that says nothing: it was not the user's doing.
+    await ev({ type: "agent_changed", agent: "explore", reason: "restore" });
+    await ev({ type: "agent_list", agents: all, current: "explore" });
+    assert.equal(await page.locator(".agent").inputValue(), "explore");
+    assert.equal((await notes()).length, before + 1, "only the step announced itself");
+    assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask explore…/);
     await page.close();
   });
 

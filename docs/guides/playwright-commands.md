@@ -34,6 +34,27 @@ or tests doesn't get them again. Check the result with `/playwright run`.
 To have Playwright start the app for you: `/playwright setup http://localhost:5080 -- npm run dev`
 (write the command as you would type it in the project folder).
 
+## Which agent does each step
+
+The chat's **Agent** dropdown has a **Playwright** heading with one agent per job, and each
+`/playwright` step switches to the right one by itself, then puts your own choice back:
+
+| Step | Runs as | Tools it gets |
+|---|---|---|
+| `map` | `playwright-mapper` | read, browse the app, write the site map |
+| `plan` | `playwright-planner` | read, browse the app, write plans |
+| `generate` | `playwright-generator` | read, browse, write and edit tests, list them |
+| `run` | `playwright-runner` | read, browse, run the tests |
+| `heal` | `playwright-healer` | read, browse, edit tests, run them |
+
+While a step runs you see its agent in the dropdown (and a note, "This step runs as the
+playwright-planner agent"); when it ends the agent you had before is back, so the next question
+isn't answered by a planner that can't edit your files. `setup` and `all` stay on the agent you
+chose (`all` starts the five roles itself, each with its own budget). The choice follows the
+command you type, not the words of a free-text question: to ask something of one of these agents
+yourself, pick it in the dropdown. A file of your own with the same name in `.cmcoder/agents/`
+replaces the built-in role (below).
+
 ## You need
 
 - **Node.js** on this PC (the people who use the app don't need it). `/playwright` says so if it

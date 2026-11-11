@@ -403,6 +403,26 @@ class StdioServer:
         self.emit(ev.ModelChanged(model=b.name, context_window=b.profile.context_window))
         self.emit(self._agent_list())
 
+    async def _switch_for_step(self, name: str) -> bool:
+        """A command's request runs as this agent (`/playwright plan` as the planner): the list in
+        the chat shows it. False if it can't (then the request runs as the agent in use)."""
+        try:
+            await self._rebuild(agent=name)
+        except (SettingsError, ValueError):
+            return False
+        self.emit(ev.AgentChanged(agent=self.agent.persona, reason="step"))
+        self.emit(self._agent_list())
+        return True
+
+    async def _switch_back(self, name: str | None) -> None:
+        """The agent from before the step is back (quietly: the chat only moves its list)."""
+        try:
+            await self._rebuild(agent=name)
+        except (SettingsError, ValueError):
+            await self._rebuild(agent=None)
+        self.emit(ev.AgentChanged(agent=self.agent.persona, reason="restore"))
+        self.emit(self._agent_list())
+
     async def _rebuild(self, model: str | None = None, **more: Any) -> None:
         """A new graph (another model, IDE tools, MCP tools, a code index) on the
         same checkpointer and thread."""
@@ -532,16 +552,31 @@ class StdioServer:
             else:
                 await self._start_mcp()
                 allow: list[str] = []
+                step_agent: str | None = None
                 if name:  # maybe a custom command or an MCP prompt; else a plain prompt
                     result = await run_command(session, text)
                     if result.send is not None:
-                        text, allow = result.send, result.allow
+                        text, allow, step_agent = result.send, result.allow, result.agent
                     elif name in PROMPT_COMMANDS:  # its usage or "it is off": no model turn
                         self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
                         self.emit(self._result("success", "", False, started))
                         return
-                async for event in session.run(text, note=note, images=images, allow=allow):
-                    self.emit(event)
+                before = self.agent.persona
+                switched = False
+                if step_agent is not None and step_agent != before:
+                    switched = await self._switch_for_step(step_agent)
+                held: ev.Result | None = None
+                try:
+                    async for event in session.run(text, note=note, images=images, allow=allow):
+                        if isinstance(event, ev.Result) and switched:
+                            held = event  # after the agent is back: the chat is free again then
+                        else:
+                            self.emit(event)
+                finally:
+                    if switched:
+                        await asyncio.shield(self._switch_back(before))
+                if held is not None:
+                    self.emit(held)
         except asyncio.CancelledError:
             self.emit(self._result("interrupted", "Interrupted by the user.", False, started))
             raise

@@ -21,6 +21,16 @@ if TYPE_CHECKING:
     from ..config.settings import Settings
 
 STEPS = "setup | map | plan | generate | run | heal | all | agents"
+# Who does each step: the chat talks to this agent (agents/playwright_roles.py) for that one
+# request, so the Agent list shows it and the step has only the tools its job needs. `setup` and
+# `all` stay with the default agent (setup writes and installs; `all` starts the roles itself).
+STEP_AGENTS = {
+    "map": "playwright-mapper",
+    "plan": "playwright-planner",
+    "generate": "playwright-generator",
+    "run": "playwright-runner",
+    "heal": "playwright-healer",
+}
 BASE_URL = re.compile(r"baseURL:\s*\"([^\"]+)\"")
 WEB_SERVER = re.compile(r"^\s*webServer\s*:", re.M)
 
@@ -33,6 +43,7 @@ class Stage:
     lines: list[str] = field(default_factory=list)  # shown to the user, no model turn
     prompt: str | None = None  # sent to the model
     allow: list[str] = field(default_factory=list)  # permission rules for that request
+    agent: str | None = None  # the agent that does it (None: whoever is in use)
 
 
 def config_text(p: Probe) -> str:
@@ -70,7 +81,11 @@ def command(
     url = app_url(p, settings)
 
     def go(stage: str, text: str, address: str | None = url) -> Stage:
-        return Stage(prompt=text, allow=prompts.allow_rules(stage, p, address, trusted=trusted))
+        return Stage(
+            prompt=text,
+            allow=prompts.allow_rules(stage, p, address, trusted=trusted),
+            agent=STEP_AGENTS.get(stage),
+        )
 
     if step in ("", "status"):
         return Stage(status.lines(s, url))

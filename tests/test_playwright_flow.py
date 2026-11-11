@@ -394,21 +394,61 @@ async def test_the_model_calls_the_tool_and_gets_the_report(
 
 
 def test_roles_have_their_own_tools_and_can_be_overridden(tmp_path: Path) -> None:
-    for name in ("playwright-mapper", "playwright-planner", "playwright-generator",
-                 "playwright-runner", "playwright-healer"):  # fmt: skip
-        assert flow.ROLES[name].tools and "Browser" in flow.ROLES[name].tools
+    from cmcoder.agents.subagents import listed
+
+    for name in (
+        "playwright-mapper",
+        "playwright-planner",
+        "playwright-generator",
+        "playwright-runner",
+        "playwright-healer",
+    ):
+        tools = flow.ROLES[name].tools
+        assert tools and "Browser" in tools and "ide_*" in tools, name
+        assert listed("ide_open_browser_page", tools)  # the IDE's own browser, when it has one
+        assert not listed("WebFetch", tools)  # and nothing a stage doesn't need
     assert "Write" not in flow.ROLES["playwright-runner"].tools  # it changes no file
     assert "Bash" not in flow.ROLES["playwright-planner"].tools  # it only looks and writes the plan
-    ide = SimpleNamespace(
-        langchain_tools=[
-            SimpleNamespace(name="ide_open_browser_page"),
-            SimpleNamespace(name="Read"),
-        ],
-        definitions=lambda: {},
-    )
-    with_ide = flow.role_definition(ide, "playwright-planner")  # type: ignore[arg-type]
-    assert with_ide.tools and "ide_open_browser_page" in with_ide.tools
-    assert "Read" in with_ide.tools and with_ide.tools.count("Read") == 1
     mine = SimpleNamespace(name="mine")
     custom = SimpleNamespace(definitions=lambda: {"playwright-healer": mine}, langchain_tools=[])
     assert flow.role_definition(custom, "playwright-healer") is mine  # type: ignore[arg-type]
+    plain = SimpleNamespace(definitions=lambda: {}, langchain_tools=[])
+    assert flow.role_definition(plain, "playwright-planner") is flow.ROLES["playwright-planner"]  # type: ignore[arg-type]
+
+
+def test_the_roles_are_in_the_agent_list_and_a_file_of_your_own_replaces_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cmcoder.agents.playwright_roles import ROLE_NAMES
+    from cmcoder.agents.subagents import agent_infos, load_agents
+
+    monkeypatch.setenv("CMCODER_CONFIG_DIR", str(tmp_path / "home"))
+    root = tmp_path / "proj"
+    (root / ".cmcoder" / "agents").mkdir(parents=True)
+    plain = load_agents(root, True)
+    assert set(plain) >= ROLE_NAMES and all(plain[n].origin == "built-in" for n in ROLE_NAMES)
+    (root / ".cmcoder" / "agents" / "playwright-planner.md").write_text(
+        "---\nname: playwright-planner\ndescription: My planner.\ntools: Read, Write\n---\nPlan my way.\n"
+    )
+    mine = load_agents(root, True)["playwright-planner"]
+    assert mine.origin == "project" and mine.prompt.startswith("Plan my way")
+    assert (
+        load_agents(root, False)["playwright-planner"].origin == "built-in"
+    )  # untrusted: not used
+    listed_roles = {i.name for i in agent_infos(root, True) if i.group == "Playwright"}
+    assert listed_roles == ROLE_NAMES  # still one heading, whoever wrote the file
+
+
+def test_the_task_tool_does_not_offer_the_playwright_roles(tmp_path: Path) -> None:
+    from cmcoder.agents.subagents import task_description
+
+    rt = SimpleNamespace(
+        definitions=lambda: {
+            "explore": SimpleNamespace(name="explore", description="Search."),
+            "playwright-planner": SimpleNamespace(name="playwright-planner", description="Plans."),
+        },
+        main=SimpleNamespace(profile=SimpleNamespace(parallel_tool_calls=False)),
+        settings=Settings.model_validate({}),
+    )
+    text = task_description(rt)  # type: ignore[arg-type]
+    assert "- explore: Search." in text and "playwright-planner" not in text
