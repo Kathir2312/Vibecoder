@@ -213,14 +213,15 @@ async def prepare_agent(settings: Settings, opts: AgentOptions) -> None:
 
 
 async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
-    """The same agent with changes (`model=`, `extra_tools=`, `mcp=`).
+    """The same agent with changes (`model=`, `agent=`, `max_turns=`, `extra_tools=`, `mcp=`).
 
     `create_agent` compiles a fixed model and tool list into the graph, so a
     change means a new graph. Built on the *same checkpointer*, it continues
     the same threads: callers keep their thread id and the conversation goes
     on. The permission mode and the "always allow" answers carry over.
     """
-    spec = {**old.spec, **{k: v for k, v in changes.items() if k not in ("model", "agent")}}
+    options = ("model", "agent", "max_turns")  # AgentOptions fields; the rest go to build_agent
+    spec = {**old.spec, **{k: v for k, v in changes.items() if k not in options}}
     opts: AgentOptions = spec.pop("opts")
     settings: Settings = spec.pop("settings")
     if "model" in changes:
@@ -228,6 +229,8 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
         await prepare_agent(settings, opts)
     if "agent" in changes:  # None: back to the default agent
         opts = AgentOptions(**{**opts.__dict__, "agent": changes["agent"]})
+    if "max_turns" in changes:  # the limit, its reminder at 80% and the step budget follow it
+        opts = AgentOptions(**{**opts.__dict__, "max_turns": changes["max_turns"]})
     # The sandbox (its proxy, its temp folder) carries over too.
     spec.setdefault("code_index", old.code_index)
     new = build_agent(

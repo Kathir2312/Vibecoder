@@ -101,6 +101,21 @@ def _text(message: AnyMessage) -> str:
 # only when this list and the IDE's own (data-features) both have it.
 FEATURES = ("images", "stopTool", "sessionRules", "agents")
 
+# What LangChain's ModelCallLimitMiddleware (exit_behavior="end") says as the turn's last message
+# when `maxTurns` is used up. It reads like an answer, so the turn is reported as a stop instead
+# (`limit_stop`), with what to do about it.
+MODEL_LIMIT_TEXT = "Model call limits exceeded"
+
+
+def limit_stop(calls: int, max_turns: int) -> str:
+    """What the user is told when a request used all of its model calls."""
+    more = min(max(max_turns * 2, 100), 1000)
+    return (
+        f"Stopped after {calls or max_turns} model calls, the limit for one request (maxTurns). "
+        f'The work so far is kept: say "continue" to go on with a fresh budget, or raise the '
+        f"limit now with /turns {more} (maxTurns in your settings changes it for good)."
+    )
+
 
 class Session:
     """One conversation (= one LangGraph thread) with the agent."""
@@ -369,20 +384,25 @@ class Session:
             self.usage[key] += usage[key]
         # A user's "Deny" ended the turn (middleware/permission.py).
         denied = error is None and stopped(await self.messages())
+        calls_limit = (
+            error is None and not step_limit and state.final_text.startswith(MODEL_LIMIT_TEXT)
+        )
         await self._after_turn(prompt)
         yield ev.Result(
             subtype="error"
             if error
             else "max_turns"
-            if step_limit
+            if step_limit or calls_limit
             else "interrupted"
             if denied
             else "success",
-            is_error=error is not None or step_limit,
+            is_error=error is not None or step_limit or calls_limit,
             result=error.message
             if error
             else "Stopped at the step limit."
             if step_limit
+            else limit_stop(state.model_calls, self.agent.max_turns)
+            if calls_limit
             else STOPPED
             if denied
             else state.final_text,

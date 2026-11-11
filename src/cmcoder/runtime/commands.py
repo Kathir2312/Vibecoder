@@ -38,6 +38,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("rewind", "[turn] [code|conversation|both]", "Go back to before an earlier message"),
     ("mode", "[mode]", "Show or change the permission mode (also Shift+Tab)"),
     ("model", "[provider:model]", "Show or switch the model"),
+    ("turns", "[number]", "Show or change how many model calls one request may use (maxTurns)"),
     ("todos", "", "Show the todo list"),
     ("mcp", "", "MCP servers: status and tools"),
     ("agents", "", "Subagent types, and this session's subagent runs"),
@@ -55,6 +56,10 @@ BUILT_IN: list[tuple[str, str, str]] = [
 
 # Rebuilds the agent with another model, keeping the same checkpointer.
 SwitchModel = Callable[[str], Awaitable[None]]
+# The same, with another limit on the model calls one request may use.
+SetMaxTurns = Callable[[int], Awaitable[None]]
+# What /turns accepts: more is a sign of a typo, and a request that long is a runaway.
+MAX_TURNS_CEILING = 1000
 
 
 @dataclass
@@ -116,6 +121,40 @@ def session_lines(sessions: list[SessionInfo], now: float) -> list[str]:
         f"  {s.thread_id[:8]}  {age(now - s.updated):>8}  {s.turns:>3} turns  {s.title or '(untitled)'}"
         for s in sessions[:20]
     ]
+
+
+async def turns_command(
+    session: Session, arg: str, set_max_turns: SetMaxTurns | None
+) -> CommandResult:
+    """`/turns [N]`: how many model calls one request may use, changed while it runs.
+
+    The limit is ModelCallLimitMiddleware's, fixed when the graph is compiled, so a change is a
+    new graph on the same checkpointer (as for /model): the conversation goes on unchanged."""
+    a = session.agent
+    settings = a.spec.get("settings")
+    subagents = settings.subagent_max_turns if settings is not None else None
+    sub = f"; a subagent {subagents} (subagentMaxTurns in your settings)" if subagents else ""
+    if not arg:
+        return CommandResult(
+            [
+                f"Model calls one request may use: {a.max_turns}{sub}.",
+                "Change it for this conversation window with /turns <number>, e.g. /turns 200;",
+                "set maxTurns in your settings to change it for good.",
+            ]
+        )
+    if not arg.isdigit() or not 1 <= int(arg) <= MAX_TURNS_CEILING:
+        return CommandResult(
+            [f"Give a whole number from 1 to {MAX_TURNS_CEILING}, e.g. /turns 200."]
+        )
+    if set_max_turns is None:
+        return CommandResult(["Changing it isn't available here."])
+    await set_max_turns(int(arg))
+    return CommandResult(
+        [
+            f"Model calls one request may use: {session.agent.max_turns}{sub}.",
+            "It holds until you close this window (maxTurns in your settings keeps it for good).",
+        ]
+    )
 
 
 def add_memory(project_root: Path, note: str) -> Path:
@@ -201,7 +240,11 @@ async def review_command(session: Session, target: str) -> CommandResult:
 
 
 async def run_command(
-    session: Session, line: str, *, switch_model: SwitchModel | None = None
+    session: Session,
+    line: str,
+    *,
+    switch_model: SwitchModel | None = None,
+    set_max_turns: SetMaxTurns | None = None,
 ) -> CommandResult:
     name, _, arg = line.lstrip("/").partition(" ")
     arg = arg.strip()
@@ -285,6 +328,8 @@ async def run_command(
             return CommandResult(["Switching models isn't available here."])
         await switch_model(arg)
         return CommandResult([f"Model: {session.agent.bundle.ref}"])
+    if name == "turns":
+        return await turns_command(session, arg, set_max_turns)
     if name == "mcp":
         from ..mcp import status_lines
 

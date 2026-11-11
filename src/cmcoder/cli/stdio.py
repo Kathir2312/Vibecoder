@@ -88,8 +88,8 @@ IMAGE_DATA_URL = re.compile(
 # Built-in commands that work in an IDE panel; the others (/clear, /resume,
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
-    "help", "compact", "rewind", "model", "cost", "todos", "context", "mcp", "agents", "critic",
-    "index", "memory",
+    "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
+    "critic", "index", "memory",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
@@ -520,7 +520,12 @@ class StdioServer:
                     points = await session.rewind_points()
                     self.emit(ev.RewindPoints(points=points[-20:]))
                 else:
-                    result = await run_command(session, text, switch_model=self._switch_model)
+                    result = await run_command(
+                        session,
+                        text,
+                        switch_model=self._switch_model,
+                        set_max_turns=self._set_max_turns,
+                    )
                     body = "\n".join(result.lines)
                     self.emit(ev.AssistantMessage(text=f"```text\n{body}\n```"))
                 self.emit(self._result("success", "", False, started))
@@ -667,6 +672,10 @@ class StdioServer:
         await self._rebuild(model=ref)
         b = self.agent.bundle
         self.emit(ev.ModelChanged(model=b.name, context_window=b.profile.context_window))
+
+    async def _set_max_turns(self, n: int) -> None:
+        self.opts.max_turns = n  # a later rebuild (an agent, MCP tools) keeps it
+        await self._rebuild(max_turns=n)
 
     async def _stop_turn(self) -> None:
         for future in [*self.pending.values(), *self.ide_pending.values()]:

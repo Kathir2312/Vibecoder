@@ -632,6 +632,22 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
+  test(`${flavour}: a request that used all its model calls says so, and Continue goes on`, async () => {
+    const { page, ev, sent } = await panel(flavour);
+    await page.fill("textarea", "refactor everything");
+    await page.press("textarea", "Enter");
+    await ev({ ...result, subtype: "max_turns", is_error: true, result: 'Stopped after 50 model calls, the limit for one request (maxTurns). The work so far is kept: say "continue" to go on with a fresh budget, or raise the limit now with /turns 100 (maxTurns in your settings changes it for good).' });
+    const note = (await page.textContent(".stop-note")) ?? "";
+    assert.match(note, /Stopped after 50 model calls/);
+    assert.match(note, /\/turns 100/);
+    assert.equal(await page.isVisible("footer .send"), true, "the turn is over");
+    await page.click(".stop-note .continue");
+    assert.deepEqual((await sent()).at(-1), { kind: "send", text: "continue", includeContext: false });
+    assert.equal(await page.locator(".stop-note .continue").count(), 0, "one click, one message");
+    assert.equal(await page.isVisible("footer .stop"), true, "it is working again");
+    await page.close();
+  });
+
   const AGENTS = [
     { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "" },
     { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`." },

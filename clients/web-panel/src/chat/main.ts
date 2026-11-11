@@ -926,7 +926,19 @@ function onEvent(ev: AgentEvent): void {
       endBashRuns();
       endAgents();
       if (ev.subtype === "interrupted") note(`Interrupted. What should ${PRODUCT} do instead?`, "warn");
-      else if (ev.subtype === "max_turns") note(`Stopped: ${ev.result}`, "warn");
+      else if (ev.subtype === "max_turns") {
+        // The limit on a request's model calls (or the step budget): the work is kept, so one
+        // click goes on with a fresh budget; /turns raises the limit (the text says how).
+        const box = append(el("div", "note warn stop-note", `Stopped: ${ev.result}`));
+        const go = el("button", "continue", "Continue") as HTMLButtonElement;
+        go.title = "Go on with a fresh budget of model calls";
+        go.onclick = () => {
+          if (busy) return; // a message was sent meanwhile: it carries on already
+          go.remove();
+          submit("continue", false);
+        };
+        box.append(document.createElement("br"), go);
+      }
       setBusy(false);
       input.focus();
       flushQueue(ev.subtype === "interrupted");

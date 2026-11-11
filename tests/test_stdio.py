@@ -381,3 +381,36 @@ async def test_stop_subagent_for_one_that_is_not_running(mock_server, project: P
         assert err["kind"] == "not_running" and "call_nope" in err["message"]
     finally:
         await agent.close()
+
+
+async def test_turns_command_changes_the_limit_while_the_ide_runs(
+    mock_server: Any, project: Path
+) -> None:
+    """`/turns N` typed in an IDE chat is answered by cmcoder (not sent to the model) and the next
+    request is allowed that many model calls; a request that uses them all says so, with the way on."""
+    glob_call = {"tool_calls": [{"name": "Glob", "arguments": {"pattern": "*.py"}}]}
+    server = mock_server([glob_call] * 12 + [{"content": "done"}])
+    agent = await Agent.start(project, server, "--max-turns", "3")
+    try:
+        await agent.until("agent_list")
+        await agent.send(type="user_message", text="/turns")
+        shown = await agent.until("assistant_message")
+        assert "Model calls one request may use: 3" in shown["text"]
+        assert (await agent.until("result"))["subtype"] == "success"
+        assert len(server.requests) == 0  # answered here, never sent to the model
+
+        await agent.send(type="user_message", text="/turns 5")
+        assert (
+            "Model calls one request may use: 5" in (await agent.until("assistant_message"))["text"]
+        )
+        await agent.until("result")
+
+        await agent.send(type="user_message", text="look around")
+        result = await agent.until("result")
+        assert result["subtype"] == "max_turns" and result["is_error"]
+        assert (
+            "Stopped after 5 model calls" in result["result"] and "/turns 100" in result["result"]
+        )
+        assert len(server.requests) == 5
+    finally:
+        assert await agent.close() == 0

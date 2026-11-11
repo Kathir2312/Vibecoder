@@ -47,10 +47,10 @@ async def test_a_task_runs_to_max_turns_without_a_recursion_error(
         await session.agent.close()
     assert not of_type(events, ev.Error), of_type(events, ev.Error)
     (result,) = of_type(events, ev.Result)
-    assert result.subtype == "success" and not result.is_error
-    assert (
-        len(server.requests) == 30
-    )  # stopped by maxTurns (ModelCallLimitMiddleware), not by a crash
+    # Stopped by maxTurns (ModelCallLimitMiddleware), not by a crash, and said so: not "success".
+    assert result.subtype == "max_turns" and result.is_error
+    assert "Stopped after 30 model calls" in result.result and "/turns 100" in result.result
+    assert len(server.requests) == 30
     # The real graph is bigger than 2 or 4 steps per turn, which is why the old budget failed.
     assert session.agent.recursion_limit > session.agent.max_turns * 4 + 20
 
@@ -142,3 +142,60 @@ def build_agent_as(session: Any, name: str, project: Path) -> Any:
     settings = session.agent.spec["settings"]
     settings.project_trusted = True
     return build_agent(settings, AgentOptions(cwd=project, agent=name, max_turns=30))
+
+
+async def test_turns_changes_the_limit_while_running_and_the_conversation_goes_on(
+    mock_server, project: Path
+) -> None:
+    """`/turns N` rebuilds the agent with another maxTurns on the same thread: the request that
+    stopped at the old limit can go on ("continue") with the new one."""
+    from cmcoder.agents.main import rebuild_agent
+    from cmcoder.runtime.commands import run_command
+
+    server = mock_server([glob(i) for i in range(60)] + [{"content": "done"}])
+    session = make_session(server.base_url, project, settings={"maxTurns": 10})
+    changed: list[int] = []
+
+    async def set_max_turns(n: int) -> None:
+        changed.append(n)
+        session.agent = await rebuild_agent(session.agent, max_turns=n)
+
+    try:
+        shown = (await run_command(session, "/turns")).lines
+        assert "10" in shown[0] and "subagent 100" in shown[0] and "/turns" in shown[1]
+        events = await run_turn(session, "look around a lot")
+        (result,) = of_type(events, ev.Result)
+        assert result.subtype == "max_turns" and "/turns 100" in result.result
+        assert len(server.requests) == 10
+        thread = session.session_id
+        recursion = session.agent.recursion_limit
+
+        said = await run_command(session, "/turns 25", set_max_turns=set_max_turns)
+        assert changed == [25] and "25" in said.lines[0]
+        assert session.agent.max_turns == 25 and session.session_id == thread
+        assert session.agent.recursion_limit > recursion  # the step budget follows the limit
+        assert session.agent.spec["opts"].max_turns == 25  # a later rebuild keeps it
+
+        events = await run_turn(session, "continue")  # the same conversation, a bigger budget
+        (again,) = of_type(events, ev.Result)
+        assert again.subtype == "max_turns" and "Stopped after 25 model calls" in again.result
+        assert len(server.requests) == 35
+    finally:
+        await session.agent.close()
+
+
+async def test_turns_refuses_what_is_not_a_sensible_number(mock_server, project: Path) -> None:
+    from cmcoder.runtime.commands import run_command
+
+    server = mock_server([{"content": "hi"}])
+    session = make_session(server.base_url, project, settings={"maxTurns": 10})
+    try:
+        for bad in ("0", "-5", "many", "5000", "2.5"):
+            lines = (await run_command(session, f"/turns {bad}")).lines
+            assert "whole number from 1 to 1000" in lines[0], bad
+        assert session.agent.max_turns == 10
+        # Without a way to rebuild (a caller that has none) it says so and changes nothing.
+        assert "isn't available" in (await run_command(session, "/turns 20")).lines[0]
+        assert session.agent.max_turns == 10
+    finally:
+        await session.agent.close()

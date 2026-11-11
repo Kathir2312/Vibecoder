@@ -256,6 +256,7 @@ line opens the Agent Navigator the same way.
 | Ask about code | select it, then **Ctrl+Alt+L** (or right-click → **Ask cmcoder About Selection**) |
 | Mention a file | the **@** button |
 | Stop | **Esc** or **Stop** |
+| A long job stopped with "Stopped after 50 model calls" | click **Continue**, or type `/turns 200` to allow more calls per request from now on (until you close the window; `maxTurns` in `~/.cmcoder/settings.json` keeps it) |
 | Earlier conversations | **History** at the top; **Continue Last Conversation** in the view's `…` menu |
 | Safer or freer | the mode picker at the top (`default` asks before edits and commands) |
 | A second opinion | the **Critique** box makes a reviewer check each answer first |
