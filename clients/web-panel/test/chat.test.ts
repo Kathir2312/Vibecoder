@@ -124,7 +124,8 @@ for (const flavour of FLAVOURS) {
     await ev({ type: "tool_result", id: "1", name: "Bash", content: "a\nb\nc\nd\ne", is_error: false, summary: "exit 0", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     await ev(result);
 
-    assert.equal(await page.textContent(".todos"), "0/2► 1. Fix");
+    assert.equal(await page.textContent(".todos .dock-title"), "Tasks");
+    assert.equal(await page.textContent(".todos .dock-summary"), "0/2► 1. Fix");
     assert.equal(await page.innerHTML(".msg.assistant strong"), "now");
     assert.equal(await page.locator(".msg.assistant img").count(), 0, "raw HTML from the model is not rendered");
     assert.equal(await page.textContent(".tool.bash .bash-cmd"), "pytest -q");
@@ -387,12 +388,13 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
-  test(`${flavour}: a long todo list is one compact bar; the chat keeps its room`, async () => {
+  test(`${flavour}: a long todo list is one line of the dock; the chat keeps its room`, async () => {
     const { page, ev } = await panel(flavour);
     const todos = Array.from({ length: 20 }, (_, i) => ({
       content: `Generate test: ${i + 1}.1 A rather long task title that would fill the line`,
       status: i === 0 ? "in_progress" : "pending",
     }));
+    assert.equal(await page.isVisible(".dock"), false, "no dock until there is something to track");
     await ev({ type: "todo_update", todos });
     assert.equal(await page.textContent(".todo-count"), "0/20");
     assert.match((await page.textContent(".todo-now")) ?? "", /^► 1\. Generate test: 1\.1 /);
@@ -401,19 +403,21 @@ for (const flavour of FLAVOURS) {
     const log = (await page.locator(".log").boundingBox())!;
     assert.ok(log.height > 300, `the chat keeps its room (${log.height}px)`);
     assert.equal(await page.locator(".todo").count(), 0, "the rows are not drawn until asked for");
-    // Without a Tasks tab in this IDE a click opens the list here, in a box of limited height.
-    await page.click(".todo-bar");
+    // A click on the line opens the list under it, in a box of limited height.
+    await page.click(".todos .dock-toggle");
+    assert.equal(await page.getAttribute(".todos .dock-toggle", "aria-expanded"), "true");
     assert.equal(await page.locator(".todo").count(), 20);
-    const list = (await page.locator(".todo-list").boundingBox())!;
-    assert.ok(list.height <= 720 * 0.3, `the list scrolls inside ${list.height}px`);
+    const list = (await page.locator(".todos .dock-body").boundingBox())!;
+    assert.ok(list.height <= 720 * 0.33 + 1, `the list scrolls inside ${list.height}px`);
     assert.match((await page.locator(".todo").first().textContent()) ?? "", /^► 1\. Generate test/);
-    await page.click(".todo-bar");
-    assert.equal(await page.locator(".todo-list").count(), 0);
-    assert.equal(await page.locator(".todo-toggle").count(), 0, "no second button without a tab");
+    await page.click(".todos .dock-toggle");
+    assert.equal(await page.locator(".todo").count(), 0);
+    assert.equal(await page.getAttribute(".todos .dock-toggle", "aria-expanded"), "false");
+    assert.equal(await page.locator(".todo-open").count(), 0, "no button for a tab this IDE doesn't have");
     await page.close();
   });
 
-  test(`${flavour}: the todo bar counts what is done and ends with All tasks done`, async () => {
+  test(`${flavour}: the Tasks line counts what is done and ends with All tasks done`, async () => {
     const { page, ev } = await panel(flavour);
     const make = (done: number, total: number) =>
       Array.from({ length: total }, (_, i) => ({
@@ -424,16 +428,17 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.textContent(".todo-count"), "3/20");
     assert.equal(await page.locator(".todo-fill").evaluate((e) => (e as HTMLElement).style.width), "15%");
     assert.match((await page.textContent(".todo-now")) ?? "", /^► 4\. Task 4$/);
-    assert.match((await page.getAttribute(".todo-bar", "title")) ?? "", /3 done · 1 in progress · 16 to do/);
+    assert.match((await page.getAttribute(".todos .dock-toggle", "title")) ?? "", /3 done · 1 in progress · 16 to do/);
     await ev({ type: "todo_update", todos: make(20, 20).map((t) => ({ ...t, status: "completed" })) });
     assert.equal(await page.textContent(".todo-count"), "20/20");
     assert.equal(await page.textContent(".todo-now"), "✓ All tasks done");
     await ev({ type: "todo_update", todos: [] });
     assert.equal(await page.isVisible(".todos"), false);
+    assert.equal(await page.isVisible(".dock"), false);
     await page.close();
   });
 
-  test(`${flavour}: with a Tasks tab the bar opens it, and a small button shows the list here`, async () => {
+  test(`${flavour}: with a Tasks tab ↗ opens it, and the line still opens the list here`, async () => {
     const { page, ev, sent } = await panel(flavour, undefined, true, "stopTool sessionRules tasksTab");
     const todos = [
       { content: "Plan", status: "completed" },
@@ -441,17 +446,189 @@ for (const flavour of FLAVOURS) {
       { content: "Test", status: "pending" },
     ];
     await ev({ type: "todo_update", todos });
-    assert.equal(await page.locator(".todo-open").count(), 1, "the ↗ says it opens elsewhere");
-    await page.click(".todo-bar");
+    await page.click(".todos .todo-open");
     assert.deepEqual((await sent()).at(-1), { kind: "openTasks" });
-    assert.equal(await page.locator(".todo-list").count(), 0, "the list stays closed");
-    await page.click(".todo-toggle");
+    assert.equal(await page.locator(".todo").count(), 0, "the list stays closed");
+    await page.click(".todos .dock-toggle");
     assert.equal(await page.locator(".todo").count(), 3);
-    assert.equal(await page.getAttribute(".todo-toggle", "aria-expanded"), "true");
     await ev({ type: "todo_update", todos: [...todos, { content: "Ship", status: "pending" }] });
     assert.equal(await page.locator(".todo").count(), 4, "an open list stays open as the agent works");
-    await page.click(".todo-toggle");
-    assert.equal(await page.locator(".todo-list").count(), 0);
+    await page.click(".todos .dock-toggle");
+    assert.equal(await page.locator(".todo").count(), 0);
+    await page.close();
+  });
+
+  // What the photo of a cramped Visual Studio panel showed: a docked tool window with a task list
+  // open, subagents running and a long message being typed.
+  const crowd = async (flavour: Flavour) => {
+    const view = await panel(flavour, undefined, true, "stopTool sessionRules agents tasksTab");
+    const { page, ev } = view;
+    await page.setViewportSize({ width: 470, height: 620 });
+    await page.fill("textarea", "go");
+    await page.press("textarea", "Enter");
+    await ev({
+      type: "todo_update",
+      todos: Array.from({ length: 22 }, (_, i) => ({ content: `Generate test ${i + 1} for the dashboard`, status: i < 7 ? "completed" : i === 7 ? "in_progress" : "pending" })),
+    });
+    for (let i = 1; i <= 30; i++) {
+      await ev({ type: "tool_use", id: `r${i}`, name: "Read", input: {}, label: `Read(src/file${i}.cs)`, parent_tool_use_id: null });
+      await ev({ type: "tool_result", id: `r${i}`, name: "Read", content: "", is_error: false, summary: "40 lines", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
+    }
+    for (let i = 1; i <= 5; i++) {
+      await ev({ type: "tool_use", id: `a${i}`, name: "Task", input: {}, label: `Task(Review part ${i})`, parent_tool_use_id: null });
+      await ev({
+        type: "subagent_status", id: `a${i}`, number: i, description: `Review part ${i}`, agent_type: "explore", model: "m",
+        state: "running", steps: i, max_steps: 100, tool_uses: i, tokens: 1000 * i, elapsed_ms: 1000 * i, activity: `Read(part${i}.cs)`,
+      });
+    }
+    return view;
+  };
+  const height = (page: Page, sel: string) => page.locator(sel).evaluate((e) => e.getBoundingClientRect().height);
+  const pageFits = (page: Page) => page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight);
+
+  test(`${flavour}: open lists share a part of the window; the conversation keeps its share and the page never scrolls`, async () => {
+    const { page } = await crowd(flavour);
+    // The subagents opened by themselves; the tasks are one line until asked for.
+    assert.equal(await page.getAttribute(".agents .dock-toggle", "aria-expanded"), "true");
+    assert.equal(await page.getAttribute(".todos .dock-toggle", "aria-expanded"), "false");
+    await page.click(".todos .dock-toggle");
+    assert.equal(await page.locator(".todo").count(), 22);
+    assert.ok((await height(page, ".dock")) <= 620 * 0.38 + 1, "the dock is at most its part of the window");
+    assert.ok((await height(page, ".log")) >= 620 * 0.28 - 1, `the conversation keeps its share (${await height(page, ".log")}px)`);
+    assert.equal(await pageFits(page), true, "one scrollbar per list, none for the page");
+    const [tasks, agents] = [await height(page, ".todos .dock-body"), await height(page, ".agents .dock-body")];
+    assert.ok(tasks > 40 && agents > 40, `both lists show rows (${tasks}px, ${agents}px)`);
+    assert.ok(Math.abs(tasks - agents) < 30, `two long lists get equal parts (${tasks}px, ${agents}px)`);
+    assert.equal(await page.isVisible(".todo.in_progress"), true, "the task in progress is in view");
+    // A long message being typed: the input grows, the dock gives way, the conversation doesn't.
+    await page.fill("textarea", Array.from({ length: 14 }, (_, i) => `line ${i + 1}`).join("\n"));
+    assert.ok((await height(page, "textarea")) <= 620 * 0.26 + 1, "the input stops growing at its part of the window");
+    assert.ok((await height(page, ".log")) >= 620 * 0.28 - 1);
+    assert.equal(await pageFits(page), true);
+    // A low window: still no page scrollbar, both lines and the input stay.
+    await page.fill("textarea", "");
+    await page.setViewportSize({ width: 470, height: 420 });
+    assert.equal(await pageFits(page), true);
+    assert.equal(await page.isVisible(".todos .dock-toggle"), true);
+    assert.equal(await page.isVisible(".agents .dock-toggle"), true);
+    assert.equal(await page.isVisible("footer .stop"), true);
+    await page.close();
+  });
+
+  test(`${flavour}: scrolling the conversation down folds the dock; output that scrolls by itself doesn't`, async () => {
+    const { page, ev } = await crowd(flavour);
+    await page.click(".todos .dock-toggle");
+    const open = () => page.locator(".dock-panel.open").count();
+    assert.equal(await open(), 2);
+    const before = await height(page, ".log");
+    // New output moves the view by itself: the lists the user opened stay.
+    await ev({ type: "assistant_delta", text: "Working on it.\n\n".repeat(20) });
+    await page.waitForTimeout(80);
+    assert.equal(await open(), 2);
+    // The wheel, down, over the conversation: every panel back to its line.
+    const box = (await page.locator(".log").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, -200); // up first: reading back doesn't fold anything
+    await page.waitForTimeout(50);
+    assert.equal(await open(), 2);
+    await page.mouse.wheel(0, 120);
+    await page.waitForFunction(() => document.querySelectorAll(".dock-panel.open").length === 0);
+    assert.ok((await height(page, ".dock")) < 80, `two lines (${await height(page, ".dock")}px)`);
+    assert.ok((await height(page, ".log")) > before + 100, "the conversation got the room");
+    assert.match((await page.textContent(".agents .dock-now")) ?? "", /^◐ \d\. Review part \d · Read\(part\d\.cs\)$/);
+    // A click opens one again; the keys fold it too (not while typing).
+    await page.click(".agents .dock-toggle");
+    assert.equal(await open(), 1);
+    await page.focus("textarea");
+    await page.keyboard.press("PageDown");
+    assert.equal(await open(), 1, "PageDown in the input is typing");
+    await page.locator(".log").click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press("PageDown");
+    assert.equal(await open(), 0);
+    await page.close();
+  });
+
+  test(`${flavour}: a panel the user folded stays folded; a new conversation forgets that`, async () => {
+    const { page, ev, send } = await panel(flavour);
+    await page.fill("textarea", "go");
+    await page.press("textarea", "Enter");
+    const start = (id: string, number: number) =>
+      ev({ type: "subagent_status", id, number, description: `Part ${number}`, agent_type: "explore", model: "m", state: "running", steps: 1, max_steps: 100, tool_uses: 1, tokens: 10, elapsed_ms: 10, activity: "" });
+    await start("a", 1);
+    assert.equal(await page.getAttribute(".agents .dock-toggle", "aria-expanded"), "true");
+    await page.click(".agents .dock-toggle"); // the user folds it
+    await ev(result);
+    await page.fill("textarea", "again");
+    await page.press("textarea", "Enter");
+    await start("b", 1);
+    assert.equal(await page.isVisible(".agents"), true);
+    assert.equal(await page.getAttribute(".agents .dock-toggle", "aria-expanded"), "false", "it doesn't open by itself again");
+    await send({ kind: "reset" });
+    await page.fill("textarea", "new");
+    await page.press("textarea", "Enter");
+    await start("c", 1);
+    assert.equal(await page.getAttribute(".agents .dock-toggle", "aria-expanded"), "true");
+    await page.close();
+  });
+
+  test(`${flavour}: scrolling up stops following the output; ↓ Latest follows it again`, async () => {
+    const { page, ev } = await panel(flavour);
+    await page.setViewportSize({ width: 470, height: 620 });
+    await page.fill("textarea", "go");
+    await page.press("textarea", "Enter");
+    await ev({ type: "assistant_delta", text: Array.from({ length: 80 }, (_, i) => `Paragraph ${i + 1}.`).join("\n\n") });
+    const atEnd = () => page.locator(".log").evaluate((l) => l.scrollHeight - l.scrollTop - l.clientHeight < 40);
+    await page.waitForFunction(() => { const l = document.querySelector(".log")!; return l.scrollHeight - l.scrollTop - l.clientHeight < 40; });
+    assert.equal(await page.isVisible(".to-end"), false);
+    const box = (await page.locator(".log").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    // Even a small step up, with output still coming in, isn't pulled back to the end.
+    await page.mouse.wheel(0, -30);
+    await ev({ type: "assistant_delta", text: "\n\nStill writing." });
+    await page.waitForTimeout(80);
+    assert.equal(await atEnd(), false, "a small step up holds while output arrives");
+    await page.mouse.wheel(0, -600);
+    await page.waitForFunction(() => !(document.querySelector(".to-end") as HTMLElement).hidden);
+    // A wheel's scroll is animated: wait until the view stands still.
+    const scrollTop = () => page.locator(".log").evaluate((l) => l.scrollTop);
+    let top = await scrollTop();
+    for (let last = -1; last !== top; top = await scrollTop()) {
+      last = top;
+      await page.waitForTimeout(120);
+    }
+    await ev({ type: "assistant_delta", text: "\n\nMore output while reading back." });
+    await page.waitForTimeout(80);
+    assert.equal(await scrollTop(), top, "the view stays where the user reads");
+    await page.click(".to-end");
+    assert.equal(await atEnd(), true);
+    assert.equal(await page.isVisible(".to-end"), false);
+    await ev({ type: "assistant_delta", text: "\n\nAnd more." });
+    await page.waitForTimeout(80);
+    assert.equal(await atEnd(), true, "following again");
+    await page.close();
+  });
+
+  test(`${flavour}: the input is as tall as its text and goes back after sending`, async () => {
+    const { page } = await panel(flavour);
+    await page.setViewportSize({ width: 470, height: 620 });
+    const empty = await height(page, "textarea");
+    assert.ok(empty < 60, `two lines when empty (${empty}px)`);
+    assert.equal(await page.locator("textarea").evaluate((t) => getComputedStyle(t).resize), "none");
+    await page.fill("textarea", "one\ntwo\nthree\nfour\nfive");
+    const five = await height(page, "textarea");
+    assert.ok(five > empty + 30, `it grew with the text (${five}px)`);
+    await page.fill("textarea", Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"));
+    assert.ok((await height(page, "textarea")) <= 620 * 0.26 + 1, "up to a part of the window, then it scrolls");
+    await page.press("textarea", "Enter");
+    assert.equal(await height(page, "textarea"), empty);
+    // Measured while the panel is hidden (an IDE resizes a hidden view), it keeps its two lines.
+    await page.evaluate(() => {
+      const app = document.getElementById("app")!;
+      app.style.display = "none";
+      window.dispatchEvent(new Event("resize"));
+      app.style.display = "";
+    });
+    assert.ok(Math.abs((await height(page, "textarea")) - empty) < 2, "still two lines, not none");
     await page.close();
   });
 
@@ -666,7 +843,7 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
-  test(`${flavour}: the agent map: live subagent rows, Stop sends stop_subagent, cards show the status`, async () => {
+  test(`${flavour}: the Subagents panel: live rows, Stop sends stop_subagent, cards show the status`, async () => {
     const { page, ev, sent } = await panel(flavour);
     await page.fill("textarea", "one subagent per project");
     await page.press("textarea", "Enter");
@@ -683,10 +860,20 @@ for (const flavour of FLAVOURS) {
     await status("c", 3, "Analyse TW.Web", "queued");
     assert.equal(await page.isVisible(".agents"), true);
     const rows = await page.locator(".agents .agent .name").allTextContents();
-    assert.deepEqual(rows, ["├─ ◐ 1. Analyse TW.Core", "├─ ◐ 2. Analyse TW.Api", "└─ ○ 3. Analyse TW.Web"]);
+    assert.deepEqual(rows, ["◐ 1. Analyse TW.Core", "◐ 2. Analyse TW.Api", "○ 3. Analyse TW.Web"]);
+    assert.equal(await page.getAttribute(".agents .dock-toggle", "aria-expanded"), "true", "a turn's first subagent opens the list");
     assert.match((await page.textContent(".agents .agent.running .detail")) ?? "", /explore · 3\/100 steps · 4 tools · 31\.4k tokens · 1m1[23]s/);
     assert.equal(await page.locator(".agents .activity").count(), 2);
-    assert.match((await page.textContent(".agents .title")) ?? "", /3 active · 0 finished/);
+    assert.equal(await page.textContent(".agents .dock-title"), "Subagents");
+    assert.equal(await page.textContent(".agents .dock-count"), "3 active");
+    // The line says what the subagent heard from last is doing (shown when the list is folded).
+    assert.equal(await page.textContent(".agents .dock-now"), "◐ 2. Analyse TW.Api · Read(Program.cs)");
+
+    // A redraw (every second, and on every status) keeps the row's elements: a click is never lost to it.
+    await page.locator(".agents .agent").nth(1).locator(".stop-one").evaluate((b) => ((b as HTMLElement).dataset.same = "yes"));
+    await status("b", 2, "Analyse TW.Api", "running", { activity: "Grep(Main)", steps: 4 });
+    assert.equal(await page.locator(".agents .agent").nth(1).locator(".stop-one").getAttribute("data-same"), "yes");
+    assert.match((await page.locator(".agents .agent").nth(1).locator(".detail").textContent()) ?? "", /4\/100 steps/);
 
     await page.click(".agents .open-map");
     assert.deepEqual((await sent()).filter((m) => m.kind === "openNavigator"), [{ kind: "openNavigator" }]);
@@ -696,8 +883,8 @@ for (const flavour of FLAVOURS) {
     await status("b", 2, "Analyse TW.Api", "stopped");
     await ev({ type: "tool_result", id: "b", name: "Task", content: "(stopped) partial", is_error: false, summary: "4 tool uses", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] });
     assert.match((await page.locator(".tool").nth(1).textContent()) ?? "", /■ stopped · explore · 3\/100 steps/);
-    assert.equal(await page.locator(".agents .agent.stopped .stop-one").count(), 0);
-    assert.match((await page.textContent(".agents .title")) ?? "", /2 active · 1 finished/);
+    assert.equal(await page.isVisible(".agents .agent.stopped .stop-one"), false);
+    assert.equal(await page.textContent(".agents .dock-count"), "2 active · 1 finished");
 
     await ev(result); // the turn ended: the rest count as stopped, the map goes
     assert.equal(await page.isVisible(".agents"), false);

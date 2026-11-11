@@ -181,16 +181,22 @@ namespace Cmcoder.VisualStudio
             await UntilAsync("the second diff closed", () => session.Ide.Diffs.OpenRequests.Count == 0);
             if (File.Exists(Path.Combine(folder!, "other.txt"))) throw new Exception("other.txt was written after Reject");
 
-            // H15: the navigator, opened now, shows the turn.
-            var navigator = (NavigatorWindow)(await package.ShowToolWindowAsync(typeof(NavigatorWindow), 0, true, package.DisposalToken))!;
+            // H15: the navigator, opened now with the chat window's own button, shows the turn.
+            if (!window.ClickStrip("Agent Navigator"))
+                throw new Exception("the chat window has no Agent Navigator button, only: " + string.Join(", ", window.StripTexts));
+            NavigatorWindow? navigator = null;
+            await UntilAsync("the Agent Navigator's tab", () => (navigator = package.FindToolWindow(typeof(NavigatorWindow), 0, false) as NavigatorWindow) != null);
             await UntilAsync("the navigator's turn", async () =>
-                (await navigator.Panel.EvaluateAsync("document.body.textContent")).Contains("create other.txt"));
+                (await navigator!.Panel.EvaluateAsync("document.body.textContent")).Contains("create other.txt"));
             await ShotAsync("3-navigator");
 
-            // The Tasks tab opens and its page runs (this conversation has no todo list).
-            var tasks = (TasksWindow)(await package.ShowToolWindowAsync(typeof(TasksWindow), 0, true, package.DisposalToken))!;
+            // The Tasks tab opens the same way and its page runs (this conversation has no todo list).
+            if (!window.ClickStrip("Tasks"))
+                throw new Exception("the chat window has no Tasks button, only: " + string.Join(", ", window.StripTexts));
+            TasksWindow? tasks = null;
+            await UntilAsync("the Tasks tab", () => (tasks = package.FindToolWindow(typeof(TasksWindow), 0, false) as TasksWindow) != null);
             await UntilAsync("the Tasks tab's page", async () =>
-                (await tasks.Panel.EvaluateAsync("document.body.textContent")).Contains("No tasks yet"));
+                (await tasks!.Panel.EvaluateAsync("document.body.textContent")).Contains("No tasks yet"));
             await ShotAsync("4-tasks");
 
             // H19: the page can't navigate away.

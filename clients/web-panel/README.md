@@ -55,10 +55,29 @@ spaces; an IDE that leaves it out gets the base panel:
 | `stopTool` | `{"kind": "stopTool", "toolUseId"}` as a `stop_tool` message | **Stop this command** on a running Bash card |
 | `sessionRules` | `rememberSession: true` of a `permission` message as `remember_session` | **For this session** under **Always allow…** |
 | `agents` | `{"kind": "setAgent", "agent": name \| null}` as a `set_agent` message | the **Agent** dropdown above the input: the agents in `agent_list`, a project's untrusted ones greyed out; choosing one makes the whole conversation that agent |
-| `tasksTab` | `{"kind": "openTasks"}`: open an editor tab with the page `tasks.js`/`tasks.css`, send it `{"kind": "todos", "todos": [...]}` on every `todo_update` event (and again when it says `ready`), `{"kind": "reset"}` for a new conversation; `{"kind": "openChat"}` from it means "show the chat" | the compact todo bar opens the tab (↗); without the feature the bar opens the list inside the chat, in a box of limited height |
+| `tasksTab` | `{"kind": "openTasks"}`: open an editor tab with the page `tasks.js`/`tasks.css`, send it `{"kind": "todos", "todos": [...]}` on every `todo_update` event (and again when it says `ready`), `{"kind": "reset"}` for a new conversation; `{"kind": "openChat"}` from it means "show the chat" | **↗** at the end of the Tasks line, which opens the tab (the line itself opens the list inside the chat, with or without the feature) |
 
 A control also needs cmcoder to have the feature (`system_init.features`), so an
 older cmcoder with a newer IDE, or the other way round, just shows less.
+
+## The chat's layout
+
+From top to bottom: the header, **the dock**, the conversation, the progress line, the input.
+Nothing scrolls the page: the conversation and each open list have their own scrollbar.
+
+- **The dock** (`src/chat/dock.ts`) holds what the agent keeps track of: its tasks, its
+  subagents. Each panel is one line (a title, a summary, buttons) that opens to a list. Open lists
+  take what their content needs, up to a third of the window between them (`chat.css`), and the
+  conversation keeps at least 28% of it. Scrolling the conversation down folds every panel
+  (the wheel, the keys, the scrollbar; output that scrolls by itself doesn't count); a panel the
+  user folded doesn't open by itself again in that conversation.
+- **A new kind of information** goes into the dock as one more panel, not into a new strip of
+  its own: `const p = dock.add("id", "Title", { onChange, hint })` in `src/chat/main.ts`, then
+  fill `p.summary` (the line), `p.actions` (buttons) and `p.body` (the list), `p.show(true)`
+  when there is something to show, and `p.autoOpen()` if it should open by itself. Sharing the
+  height and folding on scroll then work for it too.
+- **The conversation** follows new output until the user scrolls up; **↓ Latest** resumes it.
+- **The input** is as tall as its text, from two lines to about a quarter of the window.
 
 ## Messages
 

@@ -19,8 +19,9 @@ of Microsoft Edge); without it the chat says what to install.
 |---|---|
 | The chat | **Tools → cmcoder → Open Chat** (docks next to Solution Explorer) |
 | Ask about the selection | the editor's context menu, or **Ctrl+Shift+Alt+K** |
-| Agent Navigator | the chat's button, or **Tools → cmcoder → Open Agent Navigator** |
-| Tasks | a long todo list is one line in the chat (done/total, a meter, the task in progress); click it, or use **Tools → cmcoder → Open Tasks**, for a document tab with the whole list, numbered and grouped, following the agent live |
+| Agent Navigator | the **Agent Navigator** button above the chat (always there), **Map** on the chat's Subagents line, or **Tools → cmcoder → Open Agent Navigator** |
+| Tasks | a long todo list is one line in the chat (done/total, a meter, the task in progress); click it for the list under it. The **Tasks** button above the chat, the line's **↗**, or **Tools → cmcoder → Open Tasks** open a document tab with the whole list, numbered and grouped, following the agent live |
+| Tasks and subagents in the chat | one line each above the conversation; open lists share about a third of the tool window, the conversation always keeps its part, and scrolling the conversation down folds them (see [the guide](../docs/guides/vscode.md#what-the-agent-is-tracking-tasks-and-subagents)) |
 | Proposed changes | the diff window, with **Accept**, **Accept Always**, **Reject** above it |
 | Code search | the button above the chat, or **Tools → cmcoder → Code Search…** |
 | Settings | **Tools → Options → cmcoder** |
