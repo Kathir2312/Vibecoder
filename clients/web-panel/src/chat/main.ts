@@ -130,6 +130,7 @@ app.innerHTML = `
     <main class="log" aria-live="polite"></main>
     <button class="to-end secondary" type="button" hidden title="Go to the newest output and follow it again">↓ Latest</button>
   </div>
+  <section class="starters" hidden aria-label="Ways to start"></section>
   <div class="progress" hidden role="status"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
   <footer>
@@ -166,6 +167,7 @@ const statusLine = $<HTMLElement>(".status");
 const progressLine = $<HTMLElement>(".progress");
 const queuedBox = $<HTMLElement>(".queued");
 const toEndButton = $<HTMLButtonElement>(".to-end");
+const startersBar = $<HTMLElement>(".starters");
 // The dock's panels, in the order they are shown (their content: further down).
 const dock = new Dock($<HTMLElement>(".dock"));
 const tasksDock = dock.add("tasks", "Tasks", {
@@ -262,6 +264,7 @@ agentSelect.onchange = () => post({ kind: "setAgent", agent: agentSelect.value |
 function setBusy(value: boolean): void {
   const was = busy;
   busy = value;
+  updateStarters();
   sendButton.hidden = value;
   stopButton.hidden = !value;
   input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
@@ -536,7 +539,10 @@ toEndButton.onclick = () => toEnd(true);
 // Output that grows in place (a command's live output, a card that opens) and a box that
 // changes size: the end stays in view. (An embedded browser without ResizeObserver still
 // follows new output.)
-new MutationObserver(queueToEnd).observe(log, { childList: true, subtree: true, characterData: true });
+new MutationObserver(() => {
+  queueToEnd();
+  updateStarters();
+}).observe(log, { childList: true, subtree: true, characterData: true });
 if (typeof ResizeObserver === "function") new ResizeObserver(queueToEnd).observe(log);
 
 function append(node: HTMLElement): HTMLElement {
@@ -769,6 +775,10 @@ function onEvent(ev: AgentEvent): void {
       modeSelect.value = ev.permission_mode;
       critiqueBox.checked = ev.critique ?? false;
       critiqueBox.disabled = false;
+      if (!commandsAsked) {
+        commandsAsked = true;
+        post({ kind: "listCommands" }); // the starters need to know the commands before "/" is typed
+      }
       break;
     case "critique_changed":
       critiqueBox.checked = ev.enabled;
@@ -913,6 +923,7 @@ function onEvent(ev: AgentEvent): void {
     case "command_list":
       commands = ev.commands;
       updateCommands();
+      updateStarters();
       break;
     case "model_changed":
       modelLabel.textContent = ev.model;
@@ -1640,6 +1651,87 @@ function renderSessions(sessions: { id: string; title: string; updated: number; 
     sessionsPanel.append(row);
   }
   sessionsPanel.hidden = false;
+}
+
+// --- starters: ready-made commands on an empty conversation -----------------------------------
+//
+// A new user doesn't know the slash commands, so an empty conversation offers the ones that walk
+// through a job. A click puts the command in the input (the user adds what is missing, such as the
+// app's address, and presses Enter), or sends it when it needs nothing ("What's next?").
+// Shown only when this cmcoder lists the command (an older one doesn't, so nothing dangles).
+
+interface Starter {
+  command: string; // the slash command the chip belongs to
+  label: string;
+  title: string;
+  text: string; // what goes in the input
+  send?: boolean; // and is sent at once
+}
+
+const STARTERS: { heading: string; items: Starter[] }[] = [
+  {
+    heading: "Test your web app with Playwright:",
+    items: [
+      {
+        command: "playwright",
+        label: "What's next?",
+        title: "Shows where your Playwright tests stand and the command to type next",
+        text: "/playwright",
+        send: true,
+      },
+      {
+        command: "playwright",
+        label: "Set up",
+        title: "Creates the Playwright folder for your app: add its address, e.g. http://localhost:5080",
+        text: "/playwright setup http://localhost:",
+      },
+      {
+        command: "playwright",
+        label: "Plan the tests",
+        title: "Browses the app and writes a test plan, one area at a time",
+        text: "/playwright plan",
+      },
+      {
+        command: "playwright",
+        label: "Do it all",
+        title: "Plans, writes, runs and fixes the tests for every area, in one go",
+        text: "/playwright all",
+      },
+    ],
+  },
+];
+let commandsAsked = false;
+
+/** Show the starters while the conversation is empty and this cmcoder knows their commands. */
+function updateStarters(): void {
+  const known = new Set(commands.map((c) => c.name));
+  const groups = STARTERS.map((g) => ({ ...g, items: g.items.filter((i) => known.has(i.command)) })).filter(
+    (g) => g.items.length > 0,
+  );
+  const show = groups.length > 0 && ready && !busy && log.childElementCount === 0;
+  startersBar.hidden = !show;
+  if (!show) return;
+  startersBar.replaceChildren(
+    ...groups.flatMap((g) => [
+      el("span", "starters-heading", g.heading),
+      ...g.items.map((i) => {
+        const chip = el("button", "secondary starter", i.label) as HTMLButtonElement;
+        chip.type = "button";
+        chip.title = i.title;
+        chip.onclick = () => {
+          if (i.send) {
+            setInput(i.text);
+            send();
+          } else {
+            setInput(i.text);
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          }
+        };
+        return chip;
+      }),
+    ]),
+  );
 }
 
 // --- slash-command completion ---------------------------------------------------

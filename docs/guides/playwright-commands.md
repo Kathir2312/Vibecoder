@@ -7,6 +7,10 @@ where you are.
 
 ## Start in five commands
 
+In the VS Code and Visual Studio chats an empty conversation shows buttons for the first steps
+(**What's next?**, **Set up**, **Plan the tests**, **Do it all**): a button puts the command in the
+message box for you to finish, so you don't have to remember it.
+
 Start your app first (or give its start command, below), then in the chat:
 
 | # | Type | What happens |
@@ -16,6 +20,13 @@ Start your app first (or give its start command, below), then in the chat:
 | 3 | `/playwright plan` | writes a test plan for the next area (repeat for each area) |
 | 4 | `/playwright generate` | writes the Playwright tests for that plan |
 | 5 | `/playwright run`, then `/playwright heal` | runs them; `heal` fixes the tests that are wrong |
+| or | `/playwright all` | steps 2 to 5 for every area, in one go |
+
+**All of it in one go:** after `setup`, type `/playwright all` (or `/playwright all Orders` for one
+area). It maps the app if needed, then area by area plans, writes, runs and heals the tests, each
+part as its own helper (you see them in the Subagents line) with its own budget of model calls, and
+ends with a report. Run it again after a stop and it carries on where it stopped: an area with a plan
+or tests doesn't get them again. Check the result with `/playwright run`.
 
 `plan` and `generate` without a name take the next area themselves; give a name to redo one
 (`/playwright plan Orders`). `/playwright run Orders` runs one area.
@@ -70,4 +81,8 @@ Commit the folder; `node_modules/` and the reports are ignored. Run the tests yo
 - **Settings** (`playwright` in `~/.cmcoder/settings.json`): `dir` (folder name), `appUrl`,
   `maxHealRounds` (3), `enabled`.
 - **Playwright's own agents** (planner, generator, healer from `npx playwright init-agents`) still
-  work, if you prefer them: see [playwright-agents.md](playwright-agents.md).
+  work, if you prefer them: `/playwright agents` copies them from `.claude/agents` to
+  `.cmcoder/agents` with `model: inherit`, and [playwright-agents.md](playwright-agents.md) says
+  the rest. Your own `.cmcoder/agents/playwright-planner.md`, `playwright-generator.md`,
+  `playwright-runner.md`, `playwright-mapper.md` or `playwright-healer.md` replace the built-in
+  helper of that name in `/playwright all`.

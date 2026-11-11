@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import prompts, status
+from .agents_import import copy_agents
 from .probe import Probe, probe, split_setup
 
 if TYPE_CHECKING:
     from ..config.settings import Settings
 
-STEPS = "setup | map | plan | generate | run | heal"
+STEPS = "setup | map | plan | generate | run | heal | all | agents"
 BASE_URL = re.compile(r"baseURL:\s*\"([^\"]+)\"")
 WEB_SERVER = re.compile(r"^\s*webServer\s*:", re.M)
 
@@ -75,7 +76,9 @@ def command(
         return Stage(status.lines(s, url))
     if step == "setup":
         return _setup(p, settings, rest, trusted)
-    if step not in ("map", "plan", "generate", "run", "heal"):
+    if step == "agents":
+        return Stage(copy_agents(root))
+    if step not in ("map", "plan", "generate", "run", "heal", "all"):
         return Stage(
             [f'Unknown step "{step}". Steps: {STEPS}. Plain /playwright shows where you are.']
         )
@@ -91,6 +94,8 @@ def command(
         )
     starts_app = bool(WEB_SERVER.search(config_text(p)))
 
+    if step == "all":
+        return _all(p, s, rest, go)
     if step == "map":
         return go("map", prompts.map_prompt(p, url, ide_tools))
     if step == "plan":
@@ -103,6 +108,17 @@ def command(
     if step == "run":
         return go("run", prompts.run_prompt(p, url, area, starts_app, ide_tools))
     return go("heal", prompts.heal_prompt(p, area, cfg.max_heal_rounds, ide_tools))
+
+
+def _all(p: Probe, s: status.State, rest: str, go: Go) -> Stage:
+    """`/playwright all [area]`: the PlaywrightTests tool does map, plan, generate, run and heal."""
+    area = None
+    if rest:
+        found = s.find(rest)
+        if found is None:
+            return Stage(_unknown_area(s, rest))
+        area = found.name
+    return go("all", prompts.all_prompt(area))
 
 
 def _setup(p: Probe, settings: Settings, rest: str, trusted: bool) -> Stage:

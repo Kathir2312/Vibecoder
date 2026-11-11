@@ -118,6 +118,8 @@ def lines(s: State, url: str | None) -> list[str]:
     out.append("")
     out.append("Next: " + next_step(s, url))
     out.append("All steps: /playwright setup | map | plan | generate | run | heal")
+    if p.ready:
+        out.append("Or all of it in one go: /playwright all   (then /playwright run to check)")
     return out
 
 

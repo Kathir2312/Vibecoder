@@ -109,6 +109,7 @@ from ..tools.registry import default_tools
 from .context import RunContext
 from .limits import recursion_limit_for
 from .notes_tools import build_notes_tools
+from .playwright_tests import build_playwright_tool
 from .subagents import (
     CRITIC_NAME,
     SubagentRuntime,
@@ -524,6 +525,10 @@ def build_agent(
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
     if settings.team.enabled and keep("Team"):
         lc_tools.append(build_team_tool(subagents, settings.team.max_rounds))
+    # `/playwright all`: map, plan, write, run and heal Playwright tests, area by area, as a
+    # StateGraph behind one tool.
+    if settings.playwright.enabled and keep("PlaywrightTests"):
+        lc_tools.append(build_playwright_tool(subagents))
     # The critic (after_agent): reviews the final answer when switched on.
     critic = CriticMiddleware(
         subagents,

@@ -48,7 +48,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     (
         "playwright",
-        "[setup|map|plan|generate|run|heal] [area]",
+        "[setup|map|plan|generate|run|heal|all|agents] [area]",
         "Playwright tests for the web app: set up, plan, write, run, heal",
     ),
     ("init", "[focus]", "Learn this project and save notes about it for future sessions"),

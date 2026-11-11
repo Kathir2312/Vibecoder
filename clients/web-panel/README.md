@@ -77,6 +77,10 @@ Nothing scrolls the page: the conversation and each open list have their own scr
   when there is something to show, and `p.autoOpen()` if it should open by itself. Sharing the
   height and folding on scroll then work for it too.
 - **The conversation** follows new output until the user scrolls up; **↓ Latest** resumes it.
+- **Starters** (`updateStarters` in `src/chat/main.ts`): on an empty conversation, a row of buttons for
+  ready-made commands (now the `/playwright` ones), shown only when `command_list` has the command; the
+  panel asks for the list once after `system_init` (`listCommands`). A button fills the input, or sends
+  the command when it needs nothing.
 - **The input** is as tall as its text, from two lines to about a quarter of the window.
 
 ## Messages
