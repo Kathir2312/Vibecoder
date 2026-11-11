@@ -136,6 +136,9 @@ async def run_repl(
             # conversation (thread) carries on unchanged.
             session.agent = await rebuild_agent(session.agent, model=ref)
 
+        async def set_max_turns(n: int) -> None:
+            session.agent = await rebuild_agent(session.agent, max_turns=n)
+
         if resume or continue_session:
             found = await (store.find(resume) if resume else store.latest())
             if found is None:
@@ -185,7 +188,9 @@ async def run_repl(
                     continue
                 allow: list[str] = []
                 if prompt.startswith("/"):
-                    result = await run_command(session, prompt, switch_model=switch_model)
+                    result = await run_command(
+                        session, prompt, switch_model=switch_model, set_max_turns=set_max_turns
+                    )
                     for line in result.lines:
                         console.print(line, markup=False, highlight=False)
                     if result.exit:

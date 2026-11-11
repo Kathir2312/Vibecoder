@@ -109,6 +109,7 @@ from ..tools.registry import default_tools
 from .context import RunContext
 from .limits import recursion_limit_for
 from .notes_tools import build_notes_tools
+from .playwright_tests import build_playwright_tool
 from .subagents import (
     CRITIC_NAME,
     SubagentRuntime,
@@ -213,14 +214,15 @@ async def prepare_agent(settings: Settings, opts: AgentOptions) -> None:
 
 
 async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
-    """The same agent with changes (`model=`, `extra_tools=`, `mcp=`).
+    """The same agent with changes (`model=`, `agent=`, `max_turns=`, `extra_tools=`, `mcp=`).
 
     `create_agent` compiles a fixed model and tool list into the graph, so a
     change means a new graph. Built on the *same checkpointer*, it continues
     the same threads: callers keep their thread id and the conversation goes
     on. The permission mode and the "always allow" answers carry over.
     """
-    spec = {**old.spec, **{k: v for k, v in changes.items() if k not in ("model", "agent")}}
+    options = ("model", "agent", "max_turns")  # AgentOptions fields; the rest go to build_agent
+    spec = {**old.spec, **{k: v for k, v in changes.items() if k not in options}}
     opts: AgentOptions = spec.pop("opts")
     settings: Settings = spec.pop("settings")
     if "model" in changes:
@@ -228,6 +230,8 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
         await prepare_agent(settings, opts)
     if "agent" in changes:  # None: back to the default agent
         opts = AgentOptions(**{**opts.__dict__, "agent": changes["agent"]})
+    if "max_turns" in changes:  # the limit, its reminder at 80% and the step budget follow it
+        opts = AgentOptions(**{**opts.__dict__, "max_turns": changes["max_turns"]})
     # The sandbox (its proxy, its temp folder) carries over too.
     spec.setdefault("code_index", old.code_index)
     new = build_agent(
@@ -521,6 +525,10 @@ def build_agent(
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
     if settings.team.enabled and keep("Team"):
         lc_tools.append(build_team_tool(subagents, settings.team.max_rounds))
+    # `/playwright all`: map, plan, write, run and heal Playwright tests, area by area, as a
+    # StateGraph behind one tool.
+    if settings.playwright.enabled and keep("PlaywrightTests"):
+        lc_tools.append(build_playwright_tool(subagents))
     # The critic (after_agent): reviews the final answer when switched on.
     critic = CriticMiddleware(
         subagents,

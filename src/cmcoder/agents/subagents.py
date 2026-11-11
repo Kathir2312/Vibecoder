@@ -83,7 +83,12 @@ if TYPE_CHECKING:
     from .main import AgentOptions
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-NOT_FOR_SUBAGENTS = {"Task", "Team", "write_todos"}  # no nesting; the todos are the main agent's
+NOT_FOR_SUBAGENTS = {
+    "Task",
+    "Team",
+    "PlaywrightTests",
+    "write_todos",
+}  # no nesting; the todos are the main agent's
 CRITIC_NAME = "critic"  # reviews answers (middleware/critic.py); not offered to the Task tool
 MAX_REPORT_CHARS = 30_000
 

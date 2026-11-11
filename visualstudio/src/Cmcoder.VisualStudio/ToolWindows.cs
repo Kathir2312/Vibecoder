@@ -1,18 +1,35 @@
 using Microsoft.VisualStudio.Shell;
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 
 namespace Cmcoder.VisualStudio
 {
-    /// <summary>The chat (H5): the shared chat page, with code search's state above it (H16).</summary>
+    /// <summary>
+    /// The chat (H5): the shared chat page. Above it, a strip with code search's state (H16) and
+    /// buttons for the Agent Navigator and the Tasks tab: a tool window has no title-bar buttons
+    /// of its own (VS Code shows the same two there), and Tools > cmcoder is easy to miss.
+    /// </summary>
     [Guid("e2a9c4f7-1b6d-4e3a-8c5f-9d2b7a1e4c36")]
     public sealed class ChatWindow : ToolWindowPane
     {
         private readonly Panel panel;
-        private readonly Button codeSearch = new Button { HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(2) };
+        private readonly Button codeSearch = StripButton();
+        private readonly WrapPanel strip = new WrapPanel();
         private IDisposable? stopCodeSearch;
+
+        /// <summary>A button of the strip, in Visual Studio's own style (it follows the theme).</summary>
+        private static Button StripButton(string? text = null, string? tip = null, Action? click = null)
+        {
+            var button = new Button { HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(6, 1, 6, 1), Margin = new Thickness(2) };
+            button.SetResourceReference(Control.StyleProperty, Microsoft.VisualStudio.Shell.VsResourceKeys.ButtonStyleKey);
+            if (text != null) button.Content = text;
+            if (tip != null) button.ToolTip = tip;
+            if (click != null) button.Click += (_, __) => click();
+            return button;
+        }
 
         public ChatWindow() : base(null)
         {
@@ -20,8 +37,12 @@ namespace Cmcoder.VisualStudio
             var session = Session.Get();
             panel = new Panel("chat", json => session.Run(h => h.OnPanelMessage(json)));
             codeSearch.Click += (_, __) => CodeSearchUi.Menu(session.CodeSearch);
-            codeSearch.SetResourceReference(Control.StyleProperty, Microsoft.VisualStudio.Shell.VsResourceKeys.ButtonStyleKey);
-            panel.AddTop(codeSearch);
+            strip.Children.Add(codeSearch);
+            strip.Children.Add(StripButton("Agent Navigator", "Open the Agent Navigator: this turn's agents as a mind map, in a tab",
+                () => CmcoderPackage.Instance?.ShowNavigator()));
+            strip.Children.Add(StripButton("Tasks", "Open the agent's whole task list in a tab",
+                () => CmcoderPackage.Instance?.ShowTasks()));
+            panel.AddTop(strip);
             Content = panel;
             ShowCodeSearch();
         }
@@ -52,6 +73,18 @@ namespace Cmcoder.VisualStudio
 
         /// <summary>For tests: the code search item's text.</summary>
         internal string CodeSearchText => codeSearch.Content as string ?? "";
+
+        /// <summary>For tests: what the strip's buttons say, in order.</summary>
+        internal string[] StripTexts => strip.Children.OfType<Button>().Select(b => b.Content as string ?? "").ToArray();
+
+        /// <summary>For tests: a click on the strip's button with this text; false if there is none.</summary>
+        internal bool ClickStrip(string text)
+        {
+            var button = strip.Children.OfType<Button>().FirstOrDefault(b => (b.Content as string) == text);
+            if (button == null) return false;
+            button.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+            return true;
+        }
 
         protected override void Dispose(bool disposing)
         {

@@ -18,6 +18,7 @@ import type {
 import { bridge, fromHost, hostSettings } from "../bridge";
 import { summarizeTodos, TODO_MARKS } from "../todos";
 import { lineDiff } from "./diff";
+import { Dock } from "./dock";
 import { dangerousParts, renderShell } from "./shell";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
 
@@ -124,9 +125,12 @@ app.innerHTML = `
     <select class="mode" title="Permission mode (Shift+Tab in the CLI)"></select>
   </header>
   <section class="sessions" hidden></section>
-  <section class="todos" hidden></section>
-  <main class="log" aria-live="polite"></main>
-  <section class="agents" hidden></section>
+  <section class="dock" aria-label="What the agent is keeping track of"></section>
+  <div class="log-wrap">
+    <main class="log" aria-live="polite"></main>
+    <button class="to-end secondary" type="button" hidden title="Go to the newest output and follow it again">↓ Latest</button>
+  </div>
+  <section class="starters" hidden aria-label="Ways to start"></section>
   <div class="progress" hidden role="status"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
   <footer>
@@ -136,7 +140,7 @@ app.innerHTML = `
     </label>
     <div class="commands" role="listbox" hidden></div>
     <div class="images" hidden></div>
-    <textarea rows="3"></textarea>
+    <textarea rows="2"></textarea>
     <div class="actions">
       <button class="attach secondary" title="Attach a file (@)">@</button>
       <button class="image secondary" title="Attach an image (or paste one with Ctrl+V, or drop it here)">Image</button>
@@ -162,8 +166,19 @@ const usageLabel = $<HTMLElement>(".usage");
 const statusLine = $<HTMLElement>(".status");
 const progressLine = $<HTMLElement>(".progress");
 const queuedBox = $<HTMLElement>(".queued");
-const todosPanel = $<HTMLElement>(".todos");
-const agentsPanel = $<HTMLElement>(".agents");
+const toEndButton = $<HTMLButtonElement>(".to-end");
+const startersBar = $<HTMLElement>(".starters");
+// The dock's panels, in the order they are shown (their content: further down).
+const dock = new Dock($<HTMLElement>(".dock"));
+const tasksDock = dock.add("tasks", "Tasks", {
+  onChange: () => renderTodos(lastTodos),
+  hint: (open) => `${todoCounts}\n${open ? "Click to hide the list" : "Click to show the list"}`,
+});
+tasksDock.el.classList.add("todos");
+const agentsDock = dock.add("agents", "Subagents", {
+  hint: (open) => (open ? "Click to hide the list of subagents" : "Click to show every subagent of this turn"),
+});
+agentsDock.el.classList.add("agents");
 const sessionsPanel = $<HTMLElement>(".sessions");
 const historyButton = $<HTMLButtonElement>(".history");
 const attachButton = $<HTMLButtonElement>(".attach");
@@ -249,6 +264,7 @@ agentSelect.onchange = () => post({ kind: "setAgent", agent: agentSelect.value |
 function setBusy(value: boolean): void {
   const was = busy;
   busy = value;
+  updateStarters();
   sendButton.hidden = value;
   stopButton.hidden = !value;
   input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
@@ -445,7 +461,7 @@ function flushQueue(interrupted: boolean): void {
   const text = items.map((q) => q.text).filter(Boolean).join("\n\n");
   const images = items.flatMap((q) => q.images).slice(0, MAX_IMAGES);
   if (interrupted) {
-    input.value = text + (input.value ? `\n\n${input.value}` : "");
+    setInput(text + (input.value ? `\n\n${input.value}` : ""));
     pendingImages = [...images, ...pendingImages].slice(0, MAX_IMAGES);
     renderImages();
     input.focus();
@@ -488,10 +504,50 @@ function el(tag: string, cls: string, text?: string): HTMLElement {
   return e;
 }
 
+// --- the conversation follows the newest output until the user scrolls up ------------------------
+//
+// New output keeps the end in view while `following`; scrolling up stops that (so earlier text
+// can be read while the agent works) and shows "↓ Latest", which resumes it, as does scrolling
+// back down to the end. The same holds when the conversation's box changes size (a dock panel
+// opens, the input grows). What counts as the user scrolling: further down, "how the user
+// scrolls the conversation".
+
+let following = true;
+
+function nearEnd(): boolean {
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+}
+
+/** Keeps the end in view while following; `resume` goes there whatever the user did before. */
+function toEnd(resume = false): void {
+  if (resume) following = true;
+  if (following) log.scrollTop = log.scrollHeight;
+  toEndButton.hidden = following || log.scrollHeight <= log.clientHeight;
+}
+
+let endQueued = false;
+function queueToEnd(): void {
+  if (endQueued) return;
+  endQueued = true;
+  requestAnimationFrame(() => {
+    endQueued = false;
+    toEnd();
+  });
+}
+
+toEndButton.onclick = () => toEnd(true);
+// Output that grows in place (a command's live output, a card that opens) and a box that
+// changes size: the end stays in view. (An embedded browser without ResizeObserver still
+// follows new output.)
+new MutationObserver(() => {
+  queueToEnd();
+  updateStarters();
+}).observe(log, { childList: true, subtree: true, characterData: true });
+if (typeof ResizeObserver === "function") new ResizeObserver(queueToEnd).observe(log);
+
 function append(node: HTMLElement): HTMLElement {
-  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   log.append(node);
-  if (atBottom) node.scrollIntoView({ block: "end" });
+  toEnd();
   return node;
 }
 
@@ -503,7 +559,7 @@ function renderReply(): void {
   renderQueued = false;
   if (reply) {
     setMarkdown(reply.el, reply.text);
-    log.scrollTop = log.scrollHeight;
+    toEnd();
   }
 }
 
@@ -551,7 +607,11 @@ function subagentStep(ev: ToolUse | ToolResult | PermissionDenied, parentId: str
   }
 }
 
-// --- the agent map: this turn's subagents, above the input ----------------------
+// --- the Subagents panel of the dock: this turn's subagents ----------------------
+//
+// Its line says how many are active and what the one heard from last is doing; open, it lists
+// them all (a click shows a subagent's card, Stop ends one). It opens by itself when a turn's
+// first subagent starts, and "Map" opens the Agent Navigator.
 
 const STATE_MARKS: Record<string, string> = {
   queued: "○", running: "◐", waiting: "⏸", stopping: "◑",
@@ -564,7 +624,8 @@ const STATE_WORDS: Record<string, string> = {
 };
 const ACTIVE = new Set(["queued", "running", "waiting", "stopping"]);
 const TICKING = new Set(["running", "waiting", "stopping"]);
-const agentRuns = new Map<string, { status: SubagentStatus; seen: number }>();
+const agentRuns = new Map<string, { status: SubagentStatus; seen: number; order: number }>();
+let agentOrder = 0; // which subagent was heard from last
 let agentTimer: number | undefined;
 
 function shortCount(n: number): string {
@@ -590,7 +651,8 @@ function agentDetail(s: SubagentStatus): string {
 }
 
 function subagentStatus(s: SubagentStatus): void {
-  agentRuns.set(s.id, { status: s, seen: Date.now() });
+  if (agentRuns.size === 0) agentsDock.autoOpen(); // a turn's first subagent
+  agentRuns.set(s.id, { status: s, seen: Date.now(), order: ++agentOrder });
   const card = toolCards.get(s.id) ?? document.querySelector<HTMLElement>(`.tool[data-task="${CSS.escape(s.id)}"]`);
   if (card) {
     card.dataset.task = s.id;
@@ -603,43 +665,91 @@ function subagentStatus(s: SubagentStatus): void {
   if (agentTimer === undefined) agentTimer = window.setInterval(renderAgents, 1000);
 }
 
+const agentsCount = el("span", "dock-count");
+const agentsNow = el("span", "dock-now");
+agentsDock.summary.append(agentsCount, agentsNow);
+const mapButton = el("button", "secondary dock-action open-map", "Map") as HTMLButtonElement;
+mapButton.type = "button";
+mapButton.title = "Open the Agent Navigator: this turn's agents as a mind map";
+mapButton.onclick = () => post({ kind: "openNavigator" });
+agentsDock.actions.append(mapButton);
+
+interface AgentRow {
+  row: HTMLElement;
+  name: HTMLElement;
+  detail: HTMLElement;
+  stop: HTMLButtonElement;
+  activity: HTMLElement;
+}
+// One row per subagent, made once and updated in place (a redraw every second must not
+// swallow a click on Stop).
+const agentRows = new Map<string, AgentRow>();
+
+function agentRow(id: string): AgentRow {
+  let r = agentRows.get(id);
+  if (r) return r;
+  const row = el("div", "agent");
+  const line = el("div", "agent-line");
+  line.title = "Show its card";
+  line.onclick = () => document.querySelector(`.tool[data-task="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" });
+  const name = el("span", "name");
+  const detail = el("span", "detail");
+  const stop = el("button", "secondary stop-one", "Stop") as HTMLButtonElement;
+  stop.type = "button";
+  stop.title = "Stop this subagent: it reports what it has found so far; the others go on";
+  stop.onclick = (e) => {
+    e.stopPropagation();
+    stop.disabled = true;
+    post({ kind: "stopSubagent", id });
+  };
+  line.append(name, detail, stop);
+  row.append(line);
+  r = { row, name, detail, stop, activity: el("div", "activity") };
+  agentRows.set(id, r);
+  return r;
+}
+
 function renderAgents(): void {
-  const runs = Array.from(agentRuns.values()).map((r) => r.status);
+  const entries = Array.from(agentRuns.values());
+  const runs = entries.map((r) => r.status);
   const active = runs.filter((s) => ACTIVE.has(s.state));
-  agentsPanel.hidden = runs.length === 0;
+  agentsDock.show(runs.length > 0);
   if (!active.length && agentTimer !== undefined) {
     window.clearInterval(agentTimer);
     agentTimer = undefined;
   }
-  if (!runs.length) return;
-  const done = runs.length - active.length;
-  const title = el("div", "title", `Subagents · ${active.length} active · ${done} finished `);
-  const map = el("button", "secondary open-map", "Map");
-  map.title = "Open the Agent Navigator: this turn's agents as a mind map";
-  map.onclick = () => post({ kind: "openNavigator" });
-  title.append(map);
-  const rows = runs.map((s, i) => {
-    const row = el("div", `agent ${s.state}`);
-    row.title = "Show its card";
-    row.onclick = () => document.querySelector(`.tool[data-task="${CSS.escape(s.id)}"]`)?.scrollIntoView({ block: "center" });
-    const branch = i === runs.length - 1 ? "└─" : "├─";
-    row.append(el("span", "name", `${branch} ${STATE_MARKS[s.state]} ${s.number}. ${s.description}`));
-    row.append(el("span", "detail", agentDetail(s)));
-    if (ACTIVE.has(s.state) && s.state !== "stopping") {
-      const stop = el("button", "secondary stop-one", "Stop");
-      stop.title = "Stop this subagent: it reports what it has found so far; the others go on";
-      stop.onclick = (e) => {
-        e.stopPropagation();
-        stop.setAttribute("disabled", "");
-        post({ kind: "stopSubagent", id: s.id });
-      };
-      row.append(stop);
+  for (const [id, r] of agentRows) {
+    if (!agentRuns.has(id)) {
+      r.row.remove();
+      agentRows.delete(id);
     }
-    const parts = [row];
-    if (s.activity && TICKING.has(s.state)) parts.push(el("div", "activity", `└ ${s.activity}`));
-    return parts;
-  });
-  agentsPanel.replaceChildren(title, ...rows.flat());
+  }
+  if (!runs.length) return;
+
+  // The line: the counts, and what the subagent heard from last is doing.
+  const finished = runs.length - active.length;
+  agentsCount.textContent = `${active.length} active${finished ? ` · ${finished} finished` : ""}`;
+  const heard = (states: Set<string>) => entries.filter((r) => states.has(r.status.state)).sort((a, b) => b.order - a.order)[0]?.status;
+  const latest = heard(TICKING) ?? heard(ACTIVE); // one that is working, before one that waits its turn
+  agentsNow.className = `dock-now ${latest?.state ?? ""}`;
+  agentsNow.textContent = latest
+    ? `${STATE_MARKS[latest.state]} ${latest.number}. ${latest.description}${latest.activity && TICKING.has(latest.state) ? ` · ${latest.activity}` : ""}`
+    : "";
+
+  // The list.
+  for (const s of runs) {
+    const r = agentRow(s.id);
+    r.row.className = `agent ${s.state}`;
+    r.name.textContent = `${STATE_MARKS[s.state]} ${s.number}. ${s.description}`;
+    r.detail.textContent = agentDetail(s);
+    r.stop.hidden = !(ACTIVE.has(s.state) && s.state !== "stopping");
+    const doing = s.activity && TICKING.has(s.state) ? `└ ${s.activity}` : "";
+    if (doing) {
+      r.activity.textContent = doing;
+      if (!r.activity.isConnected) r.row.append(r.activity);
+    } else r.activity.remove();
+    if (r.row.parentElement !== agentsDock.body) agentsDock.body.append(r.row);
+  }
 }
 
 function endAgents(): void {
@@ -665,6 +775,10 @@ function onEvent(ev: AgentEvent): void {
       modeSelect.value = ev.permission_mode;
       critiqueBox.checked = ev.critique ?? false;
       critiqueBox.disabled = false;
+      if (!commandsAsked) {
+        commandsAsked = true;
+        post({ kind: "listCommands" }); // the starters need to know the commands before "/" is typed
+      }
       break;
     case "critique_changed":
       critiqueBox.checked = ev.enabled;
@@ -773,7 +887,7 @@ function onEvent(ev: AgentEvent): void {
     case "history":
       for (const item of ev.messages) {
         if (item.role === "user") append(el("div", "msg user", item.text));
-        else if (item.role === "tool") append(el("div", "tool")).append(el("div", "label", `● ${item.text}`));
+        else if (item.role === "tool") append(el("div", "tool")).append(toolLabel(item.text));
         else setMarkdown(append(el("div", "msg assistant")), item.text);
       }
       if (rewound) note(rewound, "info");
@@ -789,12 +903,13 @@ function onEvent(ev: AgentEvent): void {
       const files = ev.code ? ` Files: ${restored} restored, ${deleted} deleted (changes made by Bash commands are not undone).` : "";
       if (ev.conversation) {
         log.replaceChildren(); // the history that follows redraws it
+        following = true;
         toolCards.clear();
         bashRuns.clear();
         permissionCards.clear();
         rewound = `Rewound the conversation.${files}`;
         if (ev.prompt) {
-          input.value = ev.prompt;
+          setInput(ev.prompt);
           input.focus();
         }
       } else {
@@ -808,6 +923,7 @@ function onEvent(ev: AgentEvent): void {
     case "command_list":
       commands = ev.commands;
       updateCommands();
+      updateStarters();
       break;
     case "model_changed":
       modelLabel.textContent = ev.model;
@@ -821,7 +937,19 @@ function onEvent(ev: AgentEvent): void {
       endBashRuns();
       endAgents();
       if (ev.subtype === "interrupted") note(`Interrupted. What should ${PRODUCT} do instead?`, "warn");
-      else if (ev.subtype === "max_turns") note(`Stopped: ${ev.result}`, "warn");
+      else if (ev.subtype === "max_turns") {
+        // The limit on a request's model calls (or the step budget): the work is kept, so one
+        // click goes on with a fresh budget; /turns raises the limit (the text says how).
+        const box = append(el("div", "note warn stop-note", `Stopped: ${ev.result}`));
+        const go = el("button", "continue", "Continue") as HTMLButtonElement;
+        go.title = "Go on with a fresh budget of model calls";
+        go.onclick = () => {
+          if (busy) return; // a message was sent meanwhile: it carries on already
+          go.remove();
+          submit("continue", false);
+        };
+        box.append(document.createElement("br"), go);
+      }
       setBusy(false);
       input.focus();
       flushQueue(ev.subtype === "interrupted");
@@ -857,13 +985,24 @@ function reviewNote(ev: ReviewResult): void {
 
 // --- tool cards ------------------------------------------------------------------
 
+/** "● Read(src/app.py)": the tool's name stands out, what it was given reads as plain text. */
+function toolLabel(label: string): HTMLElement {
+  const box = el("div", "label");
+  const m = /^([A-Za-z_][\w.-]*)(\([\s\S]*\))$/.exec(label);
+  const call = el("span", "tool-call");
+  call.append(el("span", "tool-name", m ? m[1] : label));
+  if (m) call.append(el("span", "tool-args", m[2]));
+  box.append(el("span", "tool-dot", "● "), call);
+  return box;
+}
+
 function toolCard(ev: ToolUse): void {
   if (ev.name === "Bash") {
     bashRun(ev.id, commandOf(ev));
     return;
   }
   const card = el("div", "tool");
-  card.append(el("div", "label", `● ${ev.label}`));
+  card.append(toolLabel(ev.label));
   toolCards.set(ev.id, append(card));
 }
 
@@ -1377,60 +1516,79 @@ function answered(card: HTMLElement, text: string): void {
   updateAskQueue();
 }
 
-// --- the todo list: one compact bar, so a long list never pushes the chat out of view ------------
+// --- the Tasks panel of the dock: the agent's todo list ------------------------------------------
 //
-// "3/20", a meter and the task in progress. A click opens the Tasks tab with the whole list
-// (an IDE that has one says so: data-features "tasksTab"); where there is none, it opens the
-// list here, in a scrolling box of limited height.
+// Its line: "3/20", a meter and the task in progress, however long the list. A click opens the
+// list under it (it scrolls inside the dock's part of the window); ↗ opens the Tasks tab with the
+// whole list, in an IDE that has one (data-features "tasksTab").
 
-let todosOpen = false; // the list is shown under the bar
 let lastTodos: Record<string, unknown>[] = [];
+let todoCounts = "";
+const todoCount = el("span", "dock-count todo-count");
+const todoMeter = el("span", "todo-meter");
+const todoFill = el("span", "todo-fill");
+todoMeter.append(todoFill);
+const todoNow = el("span", "dock-now todo-now");
+tasksDock.summary.append(todoCount, todoMeter, todoNow);
+if (HOST_FEATURES.includes("tasksTab")) {
+  const openTab = el("button", "secondary dock-action todo-open", "↗") as HTMLButtonElement;
+  openTab.type = "button";
+  openTab.title = "Open all tasks in a tab";
+  openTab.setAttribute("aria-label", "Open all tasks in a tab");
+  openTab.onclick = () => post({ kind: "openTasks" });
+  tasksDock.actions.append(openTab);
+}
 
 function renderTodos(todos: Record<string, unknown>[]): void {
   lastTodos = todos;
-  todosPanel.replaceChildren();
-  todosPanel.hidden = todos.length === 0;
-  if (!todos.length) return;
-  const s = summarizeTodos(todos);
-  const tab = HOST_FEATURES.includes("tasksTab");
-  const toggle = () => {
-    todosOpen = !todosOpen;
-    renderTodos(lastTodos);
-  };
-
-  const bar = el("button", "todo-bar") as HTMLButtonElement;
-  bar.append(el("span", "todo-count", `${s.done}/${s.total}`));
-  const meter = el("span", "todo-meter");
-  const fill = el("span", "todo-fill");
-  fill.style.width = `${s.percent}%`;
-  meter.append(fill);
-  bar.append(meter);
-  const now = s.current ? `${TODO_MARKS[s.current.status]} ${s.current.no}. ${s.current.text}` : "✓ All tasks done";
-  bar.append(el("span", "todo-now", now));
-  if (tab) bar.append(el("span", "todo-open", "↗"));
-  const counts = `${s.done} done · ${s.active} in progress · ${s.pending} to do`;
-  bar.title = `${counts}\n${tab ? "Click to open all tasks in a tab" : todosOpen ? "Click to hide the list" : "Click to show the list"}`;
-  bar.setAttribute("aria-label", `Tasks: ${counts}`);
-  bar.onclick = () => (tab ? post({ kind: "openTasks" }) : toggle());
-  const row = el("div", "todo-row");
-  row.append(bar);
-  if (tab) {
-    const chevron = el("button", "todo-toggle secondary", todosOpen ? "▴" : "▾") as HTMLButtonElement;
-    chevron.title = todosOpen ? "Hide the list here" : "Show the list here";
-    chevron.setAttribute("aria-expanded", String(todosOpen));
-    chevron.onclick = toggle;
-    row.append(chevron);
+  tasksDock.show(todos.length > 0);
+  if (!todos.length) {
+    tasksDock.body.replaceChildren();
+    return;
   }
-  todosPanel.append(row);
-
-  if (!todosOpen) return;
+  const s = summarizeTodos(todos);
+  todoCount.textContent = `${s.done}/${s.total}`;
+  todoFill.style.width = `${s.percent}%`;
+  todoNow.textContent = s.current ? `${TODO_MARKS[s.current.status]} ${s.current.no}. ${s.current.text}` : "✓ All tasks done";
+  todoCounts = `${s.done} done · ${s.active} in progress · ${s.pending} to do`;
+  tasksDock.refreshHint();
+  if (!tasksDock.open) {
+    tasksDock.body.replaceChildren();
+    return;
+  }
   const list = el("div", "todo-list");
   for (const r of s.rows) list.append(el("div", `todo ${r.status}`, `${TODO_MARKS[r.status]} ${r.no}. ${r.text}`));
-  todosPanel.append(list);
-  list.querySelector(".in_progress")?.scrollIntoView({ block: "nearest" });
+  const top = tasksDock.body.scrollTop;
+  tasksDock.body.replaceChildren(list);
+  tasksDock.body.scrollTop = top;
+  // The task in progress is in view, without moving anything else.
+  const current = list.querySelector<HTMLElement>(".in_progress");
+  if (current) {
+    const box = tasksDock.body.getBoundingClientRect();
+    const row = current.getBoundingClientRect();
+    if (row.top < box.top || row.bottom > box.bottom) tasksDock.body.scrollTop += row.top - box.top - box.height / 3;
+  }
 }
 
 // --- input ---------------------------------------------------------------------
+
+/** The input is as tall as its text: two lines when empty, up to about a quarter of the window. */
+function fitInput(): void {
+  input.style.height = "auto";
+  if (!input.scrollHeight) return; // not on screen yet (a hidden panel): its two lines until it is
+  const max = Math.max(44, Math.round(window.innerHeight * 0.26));
+  const want = input.scrollHeight + (input.offsetHeight - input.clientHeight); // with its border
+  input.style.height = `${Math.min(want, max)}px`;
+  input.style.overflowY = want > max ? "auto" : "hidden";
+}
+
+/** Text put into the input by the panel (a queued message given back, a prefill, a command). */
+function setInput(text: string): void {
+  input.value = text;
+  fitInput();
+}
+
+window.addEventListener("resize", fitInput);
 
 function send(): void {
   const text = input.value.trim();
@@ -1455,7 +1613,7 @@ function send(): void {
   pendingImages = [];
   renderImages();
   const includeContext = !contextChip.hidden && contextBox.checked;
-  input.value = "";
+  setInput("");
   commandsPopup.hidden = true;
   contextBox.checked = true; // turning it off counts for one message
   if (busy) {
@@ -1474,6 +1632,7 @@ function submit(text: string, includeContext: boolean, images: ImageAttachment[]
     bubble.append(thumbs);
   }
   if (includeContext) bubble.append(el("div", "attached", `📎 ${contextText.textContent}`));
+  toEnd(true); // what was just sent is in view, and the answer is followed
   setBusy(true);
   post(images.length ? { kind: "send", text, includeContext, images } : { kind: "send", text, includeContext });
 }
@@ -1492,6 +1651,87 @@ function renderSessions(sessions: { id: string; title: string; updated: number; 
     sessionsPanel.append(row);
   }
   sessionsPanel.hidden = false;
+}
+
+// --- starters: ready-made commands on an empty conversation -----------------------------------
+//
+// A new user doesn't know the slash commands, so an empty conversation offers the ones that walk
+// through a job. A click puts the command in the input (the user adds what is missing, such as the
+// app's address, and presses Enter), or sends it when it needs nothing ("What's next?").
+// Shown only when this cmcoder lists the command (an older one doesn't, so nothing dangles).
+
+interface Starter {
+  command: string; // the slash command the chip belongs to
+  label: string;
+  title: string;
+  text: string; // what goes in the input
+  send?: boolean; // and is sent at once
+}
+
+const STARTERS: { heading: string; items: Starter[] }[] = [
+  {
+    heading: "Test your web app with Playwright:",
+    items: [
+      {
+        command: "playwright",
+        label: "What's next?",
+        title: "Shows where your Playwright tests stand and the command to type next",
+        text: "/playwright",
+        send: true,
+      },
+      {
+        command: "playwright",
+        label: "Set up",
+        title: "Creates the Playwright folder for your app: add its address, e.g. http://localhost:5080",
+        text: "/playwright setup http://localhost:",
+      },
+      {
+        command: "playwright",
+        label: "Plan the tests",
+        title: "Browses the app and writes a test plan, one area at a time",
+        text: "/playwright plan",
+      },
+      {
+        command: "playwright",
+        label: "Do it all",
+        title: "Plans, writes, runs and fixes the tests for every area, in one go",
+        text: "/playwright all",
+      },
+    ],
+  },
+];
+let commandsAsked = false;
+
+/** Show the starters while the conversation is empty and this cmcoder knows their commands. */
+function updateStarters(): void {
+  const known = new Set(commands.map((c) => c.name));
+  const groups = STARTERS.map((g) => ({ ...g, items: g.items.filter((i) => known.has(i.command)) })).filter(
+    (g) => g.items.length > 0,
+  );
+  const show = groups.length > 0 && ready && !busy && log.childElementCount === 0;
+  startersBar.hidden = !show;
+  if (!show) return;
+  startersBar.replaceChildren(
+    ...groups.flatMap((g) => [
+      el("span", "starters-heading", g.heading),
+      ...g.items.map((i) => {
+        const chip = el("button", "secondary starter", i.label) as HTMLButtonElement;
+        chip.type = "button";
+        chip.title = i.title;
+        chip.onclick = () => {
+          if (i.send) {
+            setInput(i.text);
+            send();
+          } else {
+            setInput(i.text);
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          }
+        };
+        return chip;
+      }),
+    ]),
+  );
 }
 
 // --- slash-command completion ---------------------------------------------------
@@ -1531,13 +1771,14 @@ function updateCommands(): void {
 function acceptCommand(i: number): void {
   const c = matches[i];
   if (!c) return;
-  input.value = `/${c.name} `;
+  setInput(`/${c.name} `);
   matches = [];
   commandsPopup.hidden = true;
   input.focus();
 }
 
 input.addEventListener("input", () => {
+  fitInput();
   if (input.value === "/") post({ kind: "listCommands" }); // fresh: files may have changed
   updateCommands();
 });
@@ -1587,6 +1828,56 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// --- how the user scrolls the conversation ---------------------------------------
+//
+// Down (the wheel, the keys, its scrollbar, a finger): reading on, so every dock panel goes back
+// to one line and the conversation gets the room. Up: reading back, so the view stops following
+// new output until the user returns to the end. Output that moves the view by itself is neither:
+// a list the user opened stays open while the agent works.
+
+let dragging = false; // the user holds the conversation's scrollbar, or a finger is on it
+let upUntil = 0; // a move upwards before this time is the user's (a wheel's scroll is animated)
+let lastTop = 0;
+
+function userScrolls(down: boolean): void {
+  if (down) dock.minimize();
+  else if (log.scrollHeight > log.clientHeight) {
+    upUntil = Date.now() + 500;
+    following = false; // at once: new output mustn't pull the view back while it starts to move
+    toEndButton.hidden = false;
+  }
+}
+
+log.addEventListener("wheel", (e) => {
+  if (e.deltaY) userScrolls(e.deltaY > 0);
+}, { passive: true });
+log.addEventListener("mousedown", (e) => {
+  dragging = e.target === log && e.offsetX >= log.clientWidth; // on the scrollbar, not the text
+});
+window.addEventListener("mouseup", () => (dragging = false));
+window.addEventListener("mousemove", (e) => {
+  if (e.buttons === 0) dragging = false; // a scrollbar's release isn't always reported
+});
+log.addEventListener("touchmove", () => (dragging = true), { passive: true });
+log.addEventListener("touchend", () => (dragging = false), { passive: true });
+log.addEventListener("scroll", () => {
+  const top = log.scrollTop;
+  if (top > lastTop) {
+    if (dragging) dock.minimize();
+    if (nearEnd()) following = true; // back at the end: follow again
+  } else if (top < lastTop && (dragging || Date.now() < upUntil)) following = false;
+  lastTop = top;
+  toEndButton.hidden = following || log.scrollHeight <= log.clientHeight;
+});
+const DOWN_KEYS = ["PageDown", "ArrowDown", "End", " "];
+const UP_KEYS = ["PageUp", "ArrowUp", "Home"];
+document.addEventListener("keydown", (e) => {
+  const down = DOWN_KEYS.includes(e.key);
+  if (!down && !UP_KEYS.includes(e.key)) return;
+  if ((e.target as HTMLElement).closest?.("textarea, input, select, button")) return; // typing, not reading
+  userScrolls(down);
+});
+
 // --- messages from the extension ----------------------------------------------
 
 window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
@@ -1631,6 +1922,8 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
     case "reset":
       sessionsPanel.hidden = true;
       log.replaceChildren();
+      following = true;
+      dock.reset();
       renderTodos([]);
       toolCards.clear();
       bashRuns.clear();
@@ -1651,7 +1944,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       input.focus();
       break;
     case "prefill":
-      input.value = m.text + input.value;
+      setInput(m.text + input.value);
       input.focus();
       break;
     case "context":
@@ -1672,4 +1965,5 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
 });
 
 post({ kind: "ready" });
+fitInput();
 input.focus();

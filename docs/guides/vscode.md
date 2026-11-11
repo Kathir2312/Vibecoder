@@ -219,13 +219,33 @@ instructions, the tools its file lists and its model replace the default's, unti
 run `cmcoder trust`; the dropdown is disabled while a turn runs. Playwright's planner, generator and
 healer work this way: see [playwright-agents.md](playwright-agents.md).
 
-### A long task list
+### What the agent is tracking: tasks and subagents
 
-When cmcoder plans a job with many steps, the chat shows **one line**: how many are done
-(`3/20`), a small meter and the task it is on. Click it (or the **Tasks** button in the
-chat's title bar, or **cmcoder: Open Tasks**) to open a **Tasks** tab beside the chat with the
-whole list, numbered and grouped as *In progress*, *To do* and *Done*, following the agent
-live. A filter box appears for a long list: type words, or a task's number.
+Above the conversation, cmcoder keeps one line for each thing it is tracking:
+
+- **Tasks**: how many are done (`3/20`), a small meter and the task it is on.
+- **Subagents**: how many are active, and what the one heard from last is doing.
+
+Click a line to open its list under it, and again to fold it. A turn's first subagent opens the
+Subagents list by itself; the task list stays one line until you open it.
+
+- **The conversation always keeps its room.** Open lists take what they need, up to about a
+  third of the window; two long lists share that equally, and each scrolls inside its part. A
+  taller window gives the lists and the conversation more, in the same proportion.
+- **Scroll the conversation down** (the wheel, **Page Down**, its scrollbar) and every list folds
+  back to its line, so you read with the whole window. Output that scrolls by itself doesn't
+  fold anything. A list you folded yourself doesn't open by itself again in that conversation.
+- **Scroll up** to read back while cmcoder works: the view stays where you are, and **↓ Latest**
+  takes you back to the newest output.
+- The message box is as tall as your text, up to about a quarter of the window.
+
+![Lists open, and folded after scrolling down](img/15-dock.png)
+
+**The whole task list in a tab:** the **↗** at the end of the Tasks line (or the **Tasks**
+button in the chat's title bar, or **cmcoder: Open Tasks**) opens a **Tasks** tab beside the
+chat, numbered and grouped as *In progress*, *To do* and *Done*, following the agent live. A
+filter box appears for a long list: type words, or a task's number. **Map** on the Subagents
+line opens the Agent Navigator the same way.
 
 ![One line in the chat, the whole list in a tab](img/14-tasks.png)
 
@@ -236,6 +256,7 @@ live. A filter box appears for a long list: type words, or a task's number.
 | Ask about code | select it, then **Ctrl+Alt+L** (or right-click → **Ask cmcoder About Selection**) |
 | Mention a file | the **@** button |
 | Stop | **Esc** or **Stop** |
+| A long job stopped with "Stopped after 50 model calls" | click **Continue**, or type `/turns 200` to allow more calls per request from now on (until you close the window; `maxTurns` in `~/.cmcoder/settings.json` keeps it) |
 | Earlier conversations | **History** at the top; **Continue Last Conversation** in the view's `…` menu |
 | Safer or freer | the mode picker at the top (`default` asks before edits and commands) |
 | A second opinion | the **Critique** box makes a reviewer check each answer first |

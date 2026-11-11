@@ -37,7 +37,8 @@ builds a development `cmcoder.vsix` **without** the program, which needs
 |---|---|
 | Permission prompts | In the chat: why it is asked, the command or a diff of the change; **Allow**, **Always allow…** (shows the rule; for this session or saved for this project), **Deny** (with an optional note for cmcoder); a notification when the chat is out of view |
 | Agents | The **Agent** dropdown above the input: the default agent, or one of your agents (`.cmcoder/agents/*.md` of a trusted project, `~/.cmcoder/agents`, or a built-in one). Choosing one makes the whole conversation that agent: its instructions, tools and model; a project's agents are greyed out until you run `cmcoder trust` |
-| Todo list | One compact bar in the chat (done/total, a meter, the task in progress); click it, or use **cmcoder: Open Tasks**, for an editor tab with the whole list, numbered and grouped, so a long list never takes the chat's room |
+| Todo list | One line above the conversation (done/total, a meter, the task in progress); click it for the list under it, or **↗** / **cmcoder: Open Tasks** for an editor tab with the whole list, numbered and grouped |
+| Tasks and subagents | One line each above the conversation; open lists share about a third of the panel, the conversation always keeps its part, and scrolling the conversation down folds them. **↓ Latest** returns to the newest output after scrolling up |
 | Commands | A card per command: exit code, time, live output, **Stop this command**, **Show all**, **Copy output** |
 | Review edits | A proposed Write/Edit opens in the diff editor; **✓ Accept** / **✕ Reject** in its title bar (or on the chat card) |
 | Editor context | The active file, selection and its problems go with each message; the 📎 line shows what, and its checkbox leaves it out once |
