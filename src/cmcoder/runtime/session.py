@@ -783,6 +783,9 @@ class _TurnState:
 def _label(call: ToolCall) -> str:
     args = call.get("args") or {}
     target = args.get("file_path") or args.get("command") or args.get("pattern") or ""
+    if not target and call["name"] == "Browser":  # "Browser(open http://localhost:5080)"
+        detail = args.get("url") or args.get("ref") or args.get("text") or args.get("key") or ""
+        target = f"{args.get('action', '')} {detail}".strip()
     target = str(target).splitlines()[0][:80] if target else ""
     return f"{call['name']}({target})" if target else call["name"]
 
