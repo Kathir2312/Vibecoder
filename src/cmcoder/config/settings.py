@@ -252,6 +252,19 @@ class BrowserConfig(_Model):
     use_ide_browser: bool = Field(True, alias="useIdeBrowser")
 
 
+class PlaywrightConfig(_Model):
+    """The /playwright commands (playwright_tests/): set up Playwright tests for a web app, plan,
+    generate, run and heal them. Nothing here is specific to a framework."""
+
+    enabled: bool = True
+    # The folder (in the project) that holds the Playwright project: its config, plans and tests.
+    dir: str = "playwright-tests"
+    # The address the app under test answers at (else: `/playwright setup <address>`).
+    app_url: str | None = Field(None, alias="appUrl")
+    # Failing tests the healer works through, then it stops and reports what is left.
+    max_heal_rounds: int = Field(3, alias="maxHealRounds", ge=1, le=10)
+
+
 class RethinkConfig(_Model):
     """Stuck detection (middleware/rethink.py): after `afterFailures` failed tool calls in a
     row the agent is told to stop, say what went wrong and try something different; still
@@ -331,6 +344,9 @@ class Settings(_Model):
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
+    playwright: PlaywrightConfig = Field(
+        default_factory=lambda: PlaywrightConfig.model_validate({})
+    )
     rethink: RethinkConfig = Field(default_factory=lambda: RethinkConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")

@@ -1,5 +1,9 @@
 # Playwright's test agents in cmcoder
 
+> **Most people don't need this page.** cmcoder's own `/playwright` commands do the same job with
+> no files to copy and no approvals: see [playwright-commands.md](playwright-commands.md). Use the
+> steps below if you want Playwright's own planner, generator and healer.
+
 Playwright can write three agents for your project: a **planner** (explores the app and writes a
 test plan), a **generator** (turns the plan into Playwright tests) and a **healer** (runs the tests
 and fixes the ones that fail). They are ordinary agent files, and cmcoder can use them: you pick one

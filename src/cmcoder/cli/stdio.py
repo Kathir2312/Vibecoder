@@ -93,7 +93,7 @@ PANEL_COMMANDS = {
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
-PROMPT_COMMANDS = ("team", "init", "review", "webtest")
+PROMPT_COMMANDS = ("team", "init", "review", "webtest", "playwright")
 _READ = ReadTool()
 
 
@@ -759,10 +759,12 @@ class StdioServer:
 
 
 def command_list() -> list[ev.CommandInfo]:
+    """The built-in commands an IDE's chat offers when "/" is typed: the ones answered here and the
+    ones that send a request to the model (/webtest, /review, /init, /team, /playwright)."""
     return [
         ev.CommandInfo(name=n, description=d, argument_hint=h, origin="built-in")
         for n, h, d in BUILT_IN
-        if n in PANEL_COMMANDS
+        if n in PANEL_COMMANDS or n in PROMPT_COMMANDS
     ]
 
 

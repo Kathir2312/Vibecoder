@@ -46,6 +46,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
+    (
+        "playwright",
+        "[setup|map|plan|generate|run|heal] [area]",
+        "Playwright tests for the web app: set up, plan, write, run, heal",
+    ),
     ("init", "[focus]", "Learn this project and save notes about it for future sessions"),
     ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
     ("index", "[status|rebuild|clear]", "Build or update the code index (code search)"),
@@ -228,6 +233,24 @@ def webtest_command(session: Session, arg: str) -> CommandResult:
     return CommandResult(send=webtest_prompt(a.ctx.project_root, arg, a.ide_tool_names))
 
 
+def playwright_command(session: Session, arg: str) -> CommandResult:
+    """/playwright: set up, plan, write, run and heal Playwright tests (playwright_tests/)."""
+    from ..playwright_tests.command import command
+
+    a = session.agent
+    settings = a.spec.get("settings")
+    if settings is None:
+        return CommandResult(["The /playwright commands need the settings; none here."])
+    stage = command(
+        arg,
+        root=a.ctx.project_root,
+        settings=settings,
+        ide_tools=a.ide_tool_names,
+        trusted=bool(settings.project_trusted),
+    )
+    return CommandResult(stage.lines, send=stage.prompt, allow=stage.allow)
+
+
 async def review_command(session: Session, target: str) -> CommandResult:
     """/review: collect the change, then the model reviews it (read-only)."""
     from ..review import ReviewError, collect, review_prompt
@@ -362,6 +385,8 @@ async def run_command(
         return await review_command(session, arg)
     if name == "webtest":
         return webtest_command(session, arg)
+    if name == "playwright":
+        return playwright_command(session, arg)
     if name == "index":
         from ..rag.session import index_command
 
