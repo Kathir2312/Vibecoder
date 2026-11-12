@@ -107,3 +107,10 @@ export function ask(over: Partial<PermissionRequest> & Pick<PermissionRequest, "
   };
 }
 
+const theme = JSON.parse(readFileSync(join(root, "theme.json"), "utf8")).variables as Record<string, { dark: string; light: string }>;
+
+/** The IDE's colours: VS Code sets these itself; here they are the values theme.json lists. */
+export async function themed(page: Page, mode: "dark" | "light"): Promise<void> {
+  const vars = Object.entries(theme).map(([name, v]) => `${name}:${v[mode]}`).join(";");
+  await page.addStyleTag({ content: `:root{${vars}}body{background:var(--vscode-sideBar-background);color:var(--vscode-foreground)}` });
+}

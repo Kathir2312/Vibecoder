@@ -18,8 +18,11 @@ import type {
 import { bridge, fromHost, hostSettings } from "../bridge";
 import { summarizeTodos, TODO_MARKS } from "../todos";
 import { lineDiff } from "./diff";
+import { copyText } from "./clipboard";
+import { enhanceCodeBlocks } from "./codeblock";
 import { Dock } from "./dock";
 import { dangerousParts, renderShell } from "./shell";
+import { watchTheme } from "./theme";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
 
 const host = bridge<FromWebview>();
@@ -107,6 +110,8 @@ function setMarkdown(target: HTMLElement, markdown: string): void {
   const doc = new DOMParser().parseFromString(html, "text/html");
   sanitize(doc.body);
   target.replaceChildren(...Array.from(doc.body.childNodes));
+  // After the cleaning, so the colours and buttons added here are ours and not the reply's.
+  enhanceCodeBlocks(target, { insert: HOST_FEATURES.includes("insertCode") ? (text) => post({ kind: "insertCode", text }) : undefined });
 }
 
 // --- layout ------------------------------------------------------------------
@@ -1318,34 +1323,6 @@ function endBashRuns(): void {
   }
 }
 
-/** Copy to the clipboard: the browser's API where the page may use it, else the old way. */
-function copyText(text: string, button: HTMLElement): void {
-  const said = (ok: boolean) => {
-    const was = button.dataset.label ?? button.textContent ?? "";
-    button.dataset.label = was;
-    button.textContent = ok ? "Copied" : "Could not copy";
-    window.setTimeout(() => (button.textContent = was), 1500);
-  };
-  const fallback = () => {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.append(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    said(ok);
-  };
-  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => said(true), fallback);
-  else fallback();
-}
-
 // --- the consent card: what is asked, why, where, and the ways to answer ---------------
 
 /** The last part of a path, for a headline. */
@@ -2023,6 +2000,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
   }
 });
 
+watchTheme(); // light or dark, for the colours of code
 post({ kind: "ready" });
 fitInput();
 input.focus();

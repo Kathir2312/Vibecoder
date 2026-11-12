@@ -56,6 +56,7 @@ spaces; an IDE that leaves it out gets the base panel:
 | `sessionRules` | `rememberSession: true` of a `permission` message as `remember_session` | **For this session** under **Always allow…** |
 | `agents` | `{"kind": "setAgent", "agent": name \| null}` as a `set_agent` message | the **Agent** dropdown above the input: the agents in `agent_list`, a project's untrusted ones greyed out; choosing one makes the whole conversation that agent |
 | `tasksTab` | `{"kind": "openTasks"}`: open an editor tab with the page `tasks.js`/`tasks.css`, send it `{"kind": "todos", "todos": [...]}` on every `todo_update` event (and again when it says `ready`), `{"kind": "reset"}` for a new conversation; `{"kind": "openChat"}` from it means "show the chat" | **↗** at the end of the Tasks line, which opens the tab (the line itself opens the list inside the chat, with or without the feature) |
+| `insertCode` | `{"kind": "insertCode", "text"}`: put the text into the file being edited, at the cursor (over the selection) | **Insert** next to **Copy** on every code block in a reply |
 
 A control also needs cmcoder to have the feature (`system_init.features`), so an
 older cmcoder with a newer IDE, or the other way round, just shows less.
@@ -88,6 +89,13 @@ Nothing scrolls the page: the conversation and each open list have their own scr
 - **Pick element** (`updatePick`): the button next to Image sends `/pick` as a message (the engine does the
   rest: `src/cmcoder/runtime/pick.py`), shown when `command_list` has `pick`, disabled during a request. The
   element is not a panel concept: it waits in the engine's session and joins the next message as a note.
+- **Code blocks** (`codeblock.ts`, `highlight.ts`, `theme.ts`): after a reply's Markdown is cleaned, every `pre > code` is
+  wrapped with a header (the language, **Copy**, and **Insert** where the host says `insertCode`) and coloured by language.
+  The highlighter is our own, small and regular-expression based (C#, Java, JS/TS, C/C++, Go, Rust, Python, SQL, shell,
+  YAML, CSS, JSON, HTML/XML/Razor, diffs): it needs no dependency, and its spans become DOM with `textContent`, never
+  `innerHTML`, so code in a reply cannot turn into markup. Code over 20,000 characters is left plain. The colours are
+  `--cm-tok-*` in `chat.css`, one set for dark and one for light, picked by `<html data-theme>`, which `theme.ts` sets
+  from the colour the page really has (and again when the IDE changes its theme); the axe test checks every language in both.
 - **Design tokens** (top of `chat.css`): `--cm-space-1…6`, `--cm-radius-s/m/l`, and `--cm-ok` / `--cm-err`, the
   theme's green and red mixed toward the text colour so small text keeps its contrast. Colours otherwise
   stay the IDE's own (`theme.json`). Use a token, not a new pixel value, in new CSS.

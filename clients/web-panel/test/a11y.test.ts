@@ -8,20 +8,13 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import type { Page } from "playwright";
 import type { AgentEvent } from "../src/protocol";
-import { ask, panel, result, root, startBrowser, stopBrowser } from "./harness";
+import { ask, panel, result, root, startBrowser, stopBrowser, themed } from "./harness";
 
 before(startBrowser);
 after(stopBrowser);
 
-const theme = JSON.parse(readFileSync(join(root, "theme.json"), "utf8")).variables as Record<string, { dark: string; light: string }>;
 const axeSource = readFileSync(join(root, "node_modules", "axe-core", "axe.min.js"), "utf8");
-const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-
-/** The IDE's colours: VS Code sets these itself; here they are the values theme.json lists. */
-async function themed(page: Page, mode: "dark" | "light"): Promise<void> {
-  const vars = Object.entries(theme).map(([name, v]) => `${name}:${v[mode]}`).join(";");
-  await page.addStyleTag({ content: `:root{${vars}}body{background:var(--vscode-sideBar-background);color:var(--vscode-foreground)}` });
-}
+const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 interface Violation {
   id: string;
@@ -49,6 +42,27 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>) => Promise<v
     await ev({ type: "tool_use", id: "s1", name: "Browser", input: {}, label: "Browser(screenshot)", parent_tool_use_id: null });
     await ev({ ...toolResult, id: "s1", name: "Browser", summary: "screenshot", images: [PNG] });
     await ev({ type: "todo_update", todos: [{ content: "Fix", status: "in_progress" }, { content: "Test", status: "pending" }] });
+  },
+  "code in every language the highlighter knows": async (ev) => {
+    const fence = (lang: string, code: string) => `\`\`\`${lang}\n${code}\n\`\`\``;
+    await ev({
+      type: "assistant_message",
+      reasoning: "",
+      tool_calls: [],
+      model: null,
+      text: [
+        fence("csharp", 'public async Task<IActionResult> Index(int page = 1) // list\n{ return View(@"x", 42, true, null); }'),
+        fence("ts", 'export function f(a: string): Promise<void> { return g(`t`, 1.5, undefined); } // c'),
+        fence("python", 'def f(self):\n    """doc"""  # c\n    return None'),
+        fence("json", '{"a": "b", "n": 1, "t": true}'),
+        fence("sql", "SELECT Name FROM Orders WHERE Id = 3 -- c"),
+        fence("html", '<div class="x">@Model.Name<!-- c --></div>'),
+        fence("diff", "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new"),
+        fence("bash", 'dotnet test --filter "Name=x" $HOME # go'),
+        fence("yaml", "name: x # c\nok: true"),
+        fence("css", "a { max-width: 12px; color: #fff } /* c */"),
+      ].join("\n\n"),
+    });
   },
   "every kind of todo, and a stop that offers Continue": async (ev) => {
     await ev({ type: "todo_update", todos: [{ content: "Done thing", status: "completed" }, { content: "Doing thing", status: "in_progress" }, { content: "Next thing", status: "pending" }] });

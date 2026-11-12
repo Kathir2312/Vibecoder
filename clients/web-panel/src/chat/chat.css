@@ -24,6 +24,34 @@
   }
 }
 
+/* Colours of code in replies. The IDE does not give a panel its editor's syntax colours, so these are
+   the Dark Modern and Light Modern ones, nudged where they fell below 4.5:1 on the code background
+   (the axe test checks every language in both). theme.ts marks the page light or dark. */
+:root {
+  --cm-tok-keyword: #569cd6;
+  --cm-tok-type: #4ec9b0;
+  --cm-tok-function: #dcdcaa;
+  --cm-tok-literal: #6cb0ea;
+  --cm-tok-string: #ce9178;
+  --cm-tok-number: #b5cea8;
+  --cm-tok-comment: #7fb06a;
+  --cm-tok-attr: #9cdcfe;
+  --cm-tok-tag: #6cb0ea;
+  --cm-tok-meta: #c586c0;
+}
+:root[data-theme="light"] {
+  --cm-tok-keyword: #0000ff;
+  --cm-tok-type: #1f6f86;
+  --cm-tok-function: #795e26;
+  --cm-tok-literal: #0000ff;
+  --cm-tok-string: #a31515;
+  --cm-tok-number: #067050;
+  --cm-tok-comment: #077007;
+  --cm-tok-attr: #0451a5;
+  --cm-tok-tag: #800000;
+  --cm-tok-meta: #a000c8;
+}
+
 /* Read by screen readers only: the page heading and the announcer. */
 .sr-only {
   position: absolute;
@@ -294,6 +322,41 @@ select { padding: 2px 4px; }
 
 .msg pre code { background: none; padding: 0; }
 .msg a { color: var(--vscode-textLink-foreground); }
+
+.tk-keyword { color: var(--cm-tok-keyword); }
+.tk-type { color: var(--cm-tok-type); }
+.tk-function { color: var(--cm-tok-function); }
+.tk-literal { color: var(--cm-tok-literal); }
+.tk-string { color: var(--cm-tok-string); }
+.tk-number { color: var(--cm-tok-number); }
+.tk-comment { color: var(--cm-tok-comment); font-style: italic; }
+.tk-attr { color: var(--cm-tok-attr); }
+.tk-tag { color: var(--cm-tok-tag); }
+.tk-meta { color: var(--cm-tok-meta); }
+.tk-add { color: var(--cm-ok); }
+.tk-del { color: var(--cm-err); }
+
+/* A code block: the language and its buttons above the code. */
+.codeblock {
+  margin: var(--cm-space-3) 0;
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: var(--cm-radius-m);
+  overflow: hidden;
+}
+.codeblock pre { margin: 0; border-radius: 0; }
+.codebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cm-space-4);
+  padding: var(--cm-space-1) var(--cm-space-4);
+  background: var(--vscode-editorWidget-background, var(--vscode-textCodeBlock-background));
+  border-bottom: 1px solid var(--vscode-panel-border, transparent);
+  font-size: 0.9em;
+}
+.codelang { color: var(--vscode-descriptionForeground); }
+.codeactions { display: flex; gap: var(--cm-space-3); }
+.codebtn { padding: var(--cm-space-1) var(--cm-space-4); font-size: 0.95em; }
 
 .tool { margin: 6px 0; font-family: var(--vscode-editor-font-family); }
 .tool .label { display: flex; } /* a long call wraps beside its dot, not under it */

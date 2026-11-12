@@ -61,6 +61,8 @@ export type FromWebview =
   | { kind: "listCommands" }
   | { kind: "resume"; id: string }
   | { kind: "attachFile" }
+  /** Put the code of a reply's code block into the open file at the cursor (data-features "insertCode"). */
+  | { kind: "insertCode"; text: string }
   | { kind: "restart" }
   | { kind: "openLink"; href: string }
   /** The page's script failed: the IDE writes it to its log (the page shows it too). */

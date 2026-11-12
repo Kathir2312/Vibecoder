@@ -257,6 +257,7 @@ line opens the Agent Navigator the same way.
 | Mention a file | the **@** button |
 | Stop | **Esc** or **Stop** |
 | A long job stopped with "Stopped after 50 model calls" | click **Continue**, or type `/turns 200` to allow more calls per request from now on (until you close the window; `maxTurns` in `~/.cmcoder/settings.json` keeps it) |
+| I want a reply's code in my file | every code block has **Copy** and, in VS Code, **Insert**: it puts the code in the file you were editing, at the cursor (over the selection) |
 | I selected an element in VS Code's browser and it went to Copilot, not cmcoder | VS Code's own *select element* button always attaches to Copilot's chat. Use cmcoder's **Pick element** button in the chat (or type `/pick`), click the element, then write your message: [browser-testing.md](browser-testing.md#pick-point-at-an-element-and-talk-about-it) |
 | Earlier conversations | **History** at the top; **Continue Last Conversation** in the view's `…` menu |
 | Safer or freer | the mode picker at the top (`default` asks before edits and commands) |
