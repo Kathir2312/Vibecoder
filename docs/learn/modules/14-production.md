@@ -202,7 +202,8 @@ flowchart TB
   [resumes the graph](../../../src/cmcoder/runtime/session.py#L327) with
   `Command(resume=answers)`.
 * **When *not* to use an interrupt.** IDE tools (`getDiagnostics`,
-  `openFile`) are quick questions to the editor:
+  `openFile`, and the language server's `goToDefinition`, `findReferences`
+  and `workspaceSymbols`) are quick questions to the editor:
   [`ide_call`](../../../src/cmcoder/cli/stdio.py#L609) sends a request and
   awaits the answer inside the tool, with a 30-second timeout. An interrupt is
   for an answer that may take long or must survive a restart: a person's
@@ -346,6 +347,28 @@ another round with the failure in front of it. Three details are worth reading i
 
 Running a command reuses `PersistentShell` (so the sandbox applies); each check runs in a
 subshell so that a command that calls `exit 3` reports 3 instead of ending the shell.
+
+### 6d. Asking the editor: `core/ide.py` and `vscode/src/codeIntel.ts`
+
+A language server knows what `grep` can only guess: which `total` this is, who calls it,
+what a name resolves to through an import. The model gets that through three more of the
+"IDE tools" above. The client announces them in `ide_capabilities.tools`, the engine builds
+a `Tool` for each name it knows (an editor that does not name them just does not offer
+them), and a call travels as an `ide_tool_request`. Two decisions are worth reading:
+
+* the editor answers with **JSON** and the engine writes the text the model reads
+  (`format_locations`), so the rules are the same for every editor: a location in a secret
+  file is not mentioned (`sensitive.is_secret`), a file outside the project is a path
+  without its code (Read would ask before opening it), a line of code cannot close the
+  `<system-reminder>` it sits in, and a long list is cut with a count;
+* the model names a **line and a symbol**, not a column (models count columns badly). The
+  editor finds the name as a whole word on that line, and if it is not there it answers
+  with what *is* on the line, so the model can correct itself.
+
+The VS Code side is [`codeIntel.ts`](../../../vscode/src/codeIntel.ts): the providers are
+commands (`vscode.executeDefinitionProvider`, `executeReferenceProvider`,
+`executeWorkspaceSymbolProvider`), reached through a small structural `CodeApi` so that its
+logic is tested in plain Node, without VS Code.
 
 ### 7. Shipping without Python: the standalone build
 
