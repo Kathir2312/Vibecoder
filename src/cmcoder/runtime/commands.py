@@ -54,6 +54,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("mcp", "", "MCP servers: status and tools"),
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
+    (
+        "verify",
+        "[on|off|setup]",
+        "Run the project's checks (verify.commands) now; on/off: the check after edits",
+    ),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
@@ -425,6 +430,10 @@ async def run_command(
         return CommandResult(
             [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
         )
+    if name == "verify":
+        from .verify import verify_lines
+
+        return await verify_lines(session, arg)
     if name == "memory":
         return CommandResult(memory_command(session, arg))
     if name == "init":

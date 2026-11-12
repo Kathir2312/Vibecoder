@@ -229,6 +229,22 @@ class CriticConfig(_Model):
     max_rounds: int = Field(2, alias="maxRounds", ge=1, le=5)
 
 
+class VerifyConfig(_Model):
+    """Verify: after a request that changed files, run the project's own checks (build, tests,
+    lint) and send the agent back to fix what fails (middleware/verify.py). Nothing runs unless
+    `commands` says what. A project's settings can set them only when the project is trusted."""
+
+    enabled: bool = True
+    # Shell commands, run in the project folder in this order (in the Bash sandbox when there is
+    # one); the first that exits non-zero stops the check. `/verify` suggests some.
+    commands: list[str] = Field(default_factory=list)
+    # How many times the agent is sent back to fix what failed; after that the answer stands,
+    # with a warning that the checks still fail.
+    max_rounds: int = Field(2, alias="maxRounds", ge=1, le=5)
+    # Seconds one command may run.
+    timeout: int = Field(300, ge=10, le=3600)
+
+
 class MemoryConfig(_Model):
     """Auto memory (notes.py): cmcoder keeps short notes about the project between
     sessions, only from what the user says. `/memory` lists and deletes them."""
@@ -344,6 +360,7 @@ class Settings(_Model):
     telemetry: TelemetryConfig = Field(default_factory=lambda: TelemetryConfig.model_validate({}))
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
     critic: CriticConfig = Field(default_factory=lambda: CriticConfig.model_validate({}))
+    verify: VerifyConfig = Field(default_factory=lambda: VerifyConfig.model_validate({}))
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
@@ -730,6 +747,8 @@ def _filter_project_layer(layer: dict[str, Any], trusted: bool) -> tuple[dict[st
         dropped.append(f"hooks ({events})")
     if out.pop("sandbox", None) is not None:
         dropped.append("sandbox settings")
+    if out.pop("verify", None) is not None:  # commands that run on their own after an edit
+        dropped.append("verify (commands run after each change)")
     if out.pop("telemetry", None) is not None:
         dropped.append("telemetry settings")
     rag = out.get("rag")

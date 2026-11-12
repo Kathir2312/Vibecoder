@@ -205,6 +205,17 @@ what the command printed. Long output is folded to its last lines: **Show all** 
 
 ![A failed, a passed and a stopped command](img/13-bash-card.png)
 
+### Checks after an edit
+
+With `verify.commands` in your settings (for example `["npm run build", "npm test"]`), cmcoder
+runs them after a request that changed code and shows each as a card tagged **check**, with its
+output live (no Stop button: it is a check, not a command it chose to run). The first one that
+fails stops the check, and cmcoder is sent back to fix it with that output in front of it, up to
+`verify.maxRounds` times; if it is still failing the answer stands with a warning. `/verify` runs
+the checks now, `/verify off` and `/verify on` switch the step for this conversation, and `/verify setup`
+suggests commands from your project's files. A project's own `verify` setting counts only after
+`cmcoder trust`.
+
 After you allow it, cmcoder finishes and tells you what it did:
 
 ![The change is made and cmcoder reports](img/08-done.png)

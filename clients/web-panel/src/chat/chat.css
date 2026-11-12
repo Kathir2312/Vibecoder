@@ -621,6 +621,14 @@ button.danger:hover { background: transparent; text-decoration: underline; }
 .bash-head .bash-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bash-cmd { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 .bash-badge { flex: none; font-size: 0.9em; }
+.bash-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--vscode-panel-border, currentColor);
+  border-radius: 3px;
+  font-size: 0.8em;
+  color: var(--vscode-foreground); /* on the card's own background: muted text would not be readable */
+}
 .bash-badge.ok { color: var(--cm-ok); }
 .bash-badge.fail, .bash-badge.fail-other { color: var(--cm-err); }
 .bash-badge.stopped, .bash-badge.waiting { color: var(--vscode-editorWarning-foreground); }

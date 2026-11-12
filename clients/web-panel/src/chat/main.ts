@@ -380,7 +380,7 @@ const VERBS = ["Considering", "Pondering", "Thinking", "Working", "Reasoning", "
 const TOOL_VERBS: Record<string, string> = {
   Read: "Reading", Write: "Writing", Edit: "Editing", MultiEdit: "Editing", Bash: "Running",
   Grep: "Searching", Glob: "Searching", CodeSearch: "Searching", WebFetch: "Fetching",
-  Task: "Delegating", Skill: "Using a skill",
+  Task: "Delegating", Skill: "Using a skill", Verify: "Checking",
 };
 const progress = { started: 0, tokens: 0, verb: "Considering", activity: "", detail: "", waiting: false, frame: 0 };
 let progressTimer: number | undefined;
@@ -1291,8 +1291,8 @@ function toolLabel(label: string): HTMLElement {
 }
 
 function toolCard(ev: ToolUse): void {
-  if (ev.name === "Bash") {
-    bashRun(ev.id, commandOf(ev));
+  if (ev.name === "Bash" || ev.name === "Verify") {
+    bashRun(ev.id, commandOf(ev), ev.name === "Verify");
     return;
   }
   const card = el("div", "tool");
@@ -1302,8 +1302,8 @@ function toolCard(ev: ToolUse): void {
 
 function toolResult(ev: ToolResult): void {
   if (ev.name === "TodoWrite") return;
-  if (ev.name === "Bash") {
-    finishBash(bashRuns.get(ev.id) ?? bashRun(ev.id, ""), ev);
+  if (ev.name === "Bash" || ev.name === "Verify") {
+    finishBash(bashRuns.get(ev.id) ?? bashRun(ev.id, "", ev.name === "Verify"), ev);
     return;
   }
   const card = toolCards.get(ev.id) ?? append(el("div", "tool"));
@@ -1351,6 +1351,7 @@ interface BashRun {
   stop: HTMLButtonElement;
   more: HTMLButtonElement;
   copy: HTMLButtonElement;
+  check: boolean; // the project's own check after an edit (`Verify`): not a command to stop
   state: "running" | "waiting" | "stopping" | "done";
   text: string; // the output so far (live), or all of it (done)
   started: number; // Date.now() when it began, as far as we know
@@ -1372,9 +1373,11 @@ function commandOf(ev: ToolUse): string {
   return m ? m[1] : ev.label;
 }
 
-function bashRun(id: string, command: string): BashRun {
+function bashRun(id: string, command: string, check = false): BashRun {
   const card = el("div", "tool bash");
+  if (check) card.classList.add("check");
   const head = el("div", "bash-head");
+  if (check) head.append(el("span", "bash-tag", "check"));
   head.append(el("span", "prompt", "$"));
   const code = el("code", "bash-cmd");
   code.append(renderShell(command.split("\n")[0] + (command.includes("\n") ? " …" : "")));
@@ -1391,7 +1394,7 @@ function bashRun(id: string, command: string): BashRun {
   foot.append(stop, more, copy);
   card.append(head, out, foot);
   const run: BashRun = {
-    id, command, card, badge, out, foot, stop, more, copy,
+    id, command, card, badge, out, foot, stop, more, copy, check,
     state: "running", text: "", started: Date.now(), expanded: false,
   };
   stop.onclick = () => {
@@ -1463,7 +1466,7 @@ function renderBash(run: BashRun): void {
   run.out.classList.toggle("expanded", run.expanded);
   if (run.expanded && state !== "done") run.out.scrollTop = run.out.scrollHeight;
   // The buttons.
-  run.stop.hidden = !(state === "running" && can("stopTool"));
+  run.stop.hidden = !(state === "running" && can("stopTool")) || run.check;
   run.more.hidden = lines.length <= BASH_TAIL;
   run.more.textContent = run.expanded ? "Show less" : `Show all (${total} lines)`;
   run.copy.hidden = lines.length === 0;

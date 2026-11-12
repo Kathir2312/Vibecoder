@@ -89,7 +89,7 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick", "retry", "revert",
+    "critic", "index", "memory", "pick", "retry", "revert", "verify",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.

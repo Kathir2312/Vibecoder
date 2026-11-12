@@ -20,6 +20,10 @@
     "enabled": false,
     "maxRounds": 2
   },
+  "verify": {
+    "commands": [],
+    "maxRounds": 2
+  },
   "browser": {
     "enabled": true,
     "headless": true,

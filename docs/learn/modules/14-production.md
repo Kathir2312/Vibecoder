@@ -326,6 +326,27 @@ request puts the main model back (`_restore_primary`), unless you picked another
 model in between. It is done once per request: a fallback that fails too ends the
 request with the error card.
 
+### 6c. Checking the work: `middleware/verify.py`
+
+The critic (chapter 12) asks another model whether the answer is right. Verify asks the
+project: it runs the commands in `verify.commands` (build, tests, lint) after a request that
+changed code, and the exit status is the verdict, nothing is parsed. It is the same
+`aafter_agent` hook with `@hook_config(can_jump_to=["model"])`: when a command fails, the hook
+returns `{"jump_to": "model", "messages": [HumanMessage(<the output>)]}` and the agent gets
+another round with the failure in front of it. Three details are worth reading in
+[the file](../../../src/cmcoder/middleware/verify.py):
+
+* it sits **last** in the middleware list, because after-agent hooks run in reverse order: it
+  runs before the critic, which then reviews code that already passes;
+* it re-runs only when the files' mtime and size differ from the last check
+  (`fingerprint`), so an agent that answers "I could not fix it" is not sent round in circles;
+* each command is a `ToolUse`/`ToolResult` pair written with `get_stream_writer()`, with the
+  output streamed through the same `LiveOutput` the Bash tool uses, so the chat shows an
+  ordinary run card (tagged "check") with no new event type.
+
+Running a command reuses `PersistentShell` (so the sandbox applies); each check runs in a
+subshell so that a command that calls `exit 3` reports 3 instead of ending the shell.
+
 ### 7. Shipping without Python: the standalone build
 
 Developers' PCs have no Python. PyInstaller bundles the interpreter, cmcoder
