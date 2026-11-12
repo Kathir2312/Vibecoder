@@ -18,8 +18,14 @@ import type {
 import { bridge, fromHost, hostSettings } from "../bridge";
 import { summarizeTodos, TODO_MARKS } from "../todos";
 import { lineDiff } from "./diff";
+import { copyText } from "./clipboard";
+import { enhanceCodeBlocks } from "./codeblock";
 import { Dock } from "./dock";
+import { changesBar, reviewView, updateBar, type ChangesHost, type TurnChanges } from "./changes";
+import { errorCard, retireErrorCards } from "./errorcard";
+import { planCard, planOf } from "./plancard";
 import { dangerousParts, renderShell } from "./shell";
+import { watchTheme } from "./theme";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
 
 const host = bridge<FromWebview>();
@@ -107,6 +113,11 @@ function setMarkdown(target: HTMLElement, markdown: string): void {
   const doc = new DOMParser().parseFromString(html, "text/html");
   sanitize(doc.body);
   target.replaceChildren(...Array.from(doc.body.childNodes));
+  // After the cleaning, so the colours and buttons added here are ours and not the reply's.
+  enhanceCodeBlocks(target, {
+    insert: HOST_FEATURES.includes("insertCode") ? (text) => post({ kind: "insertCode", text }) : undefined,
+    compare: HOST_FEATURES.includes("compareCode") ? (text) => post({ kind: "compareCode", text }) : undefined,
+  });
 }
 
 // --- layout ------------------------------------------------------------------
@@ -115,30 +126,36 @@ function setMarkdown(target: HTMLElement, markdown: string): void {
 const { product: PRODUCT, features: HOST_FEATURES } = hostSettings();
 
 const app = document.getElementById("app")!;
+app.setAttribute("role", "main"); // the one landmark: everything the panel shows is inside it
+app.setAttribute("aria-label", `${PRODUCT} chat`);
 app.innerHTML = `
-  <header>
+  <h1 class="sr-only">${PRODUCT} chat</h1>
+  <div class="sr-only announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+  <header role="group" aria-label="Model and settings">
     <span class="model" title="Model"></span>
     <label class="critique" title="A critic agent reviews each answer before you see it; if it finds problems, the answer is fixed first. Saved in your cmcoder settings: applies to the terminal, the TUI and every VS Code window.">
       <input type="checkbox" disabled> Critique
     </label>
     <button class="history secondary" title="Past conversations in this project">History</button>
-    <select class="mode" title="Permission mode (Shift+Tab in the CLI)"></select>
+    <select class="mode" title="Permission mode (Shift+Tab in the CLI)" aria-label="Permission mode"></select>
   </header>
   <section class="sessions" hidden></section>
   <section class="dock" aria-label="What the agent is keeping track of"></section>
   <div class="log-wrap">
-    <main class="log" aria-live="polite"></main>
+    <div class="log" role="log" aria-live="polite" aria-label="Conversation"></div>
     <button class="to-end secondary" type="button" hidden title="Go to the newest output and follow it again">↓ Latest</button>
   </div>
+  <section class="changes-view" hidden tabindex="-1" aria-label="Changes of a request"></section>
   <section class="starters" hidden aria-label="Ways to start"></section>
-  <div class="progress" hidden role="status"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
+  <div class="progress" hidden aria-hidden="true"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
-  <footer>
+  <footer role="group" aria-label="Message">
     <div class="queued" hidden></div>
     <label class="context" hidden title="Send the active file, selection and problems with this message">
       <input type="checkbox" checked> <span></span>
     </label>
     <div class="commands" role="listbox" hidden></div>
+    <div class="attachments" hidden role="group" aria-label="Waiting to go with your next message"></div>
     <div class="images" hidden></div>
     <textarea rows="2"></textarea>
     <div class="actions">
@@ -155,6 +172,28 @@ app.innerHTML = `
 
 const $ = <T extends HTMLElement>(sel: string) => app.querySelector(sel) as T;
 const log = $<HTMLElement>(".log");
+const logWrap = $<HTMLElement>(".log-wrap");
+const changesView = $<HTMLElement>(".changes-view");
+const announcer = $<HTMLElement>(".announcer");
+
+/** Tell a screen reader something that is not in the conversation (the work started, it needs an answer). */
+function announce(text: string): void {
+  announcer.textContent = "";
+  window.setTimeout(() => (announcer.textContent = text), 50); // a repeat of the same words is read again
+}
+
+/** A clickable thing that is not a <button> (a picture, a name) works from the keyboard too. */
+function activatable(target: HTMLElement, label: string): void {
+  target.tabIndex = 0;
+  target.setAttribute("role", "button");
+  target.setAttribute("aria-label", label);
+  target.addEventListener("keydown", (e) => {
+    if (e.target === target && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      target.click();
+    }
+  });
+}
 log.dataset.product = PRODUCT; // the empty screen shows the logo and this name
 const input = $<HTMLTextAreaElement>("textarea");
 input.placeholder = idlePlaceholder();
@@ -272,6 +311,37 @@ function renderAgentSelect(): void {
 
 agentSelect.onchange = () => post({ kind: "setAgent", agent: agentSelect.value || null });
 
+// --- what waits to go with the next message: picked page elements, as removable chips ---------------
+//
+// The engine keeps them (`/pick`) and says what is waiting (`attachments`); taking one off is
+// `/pick drop <number>`. They are drawn so nothing travels with a message unseen.
+
+const attachmentsBar = $<HTMLElement>(".attachments");
+let chips: { index: number; label: string }[] = [];
+
+function renderChips(): void {
+  attachmentsBar.hidden = chips.length === 0;
+  attachmentsBar.replaceChildren(
+    ...(chips.length ? [el("span", "attachments-title", "With your next message:")] : []),
+    ...chips.map((c) => {
+      const chip = el("span", "chip attached");
+      chip.append(el("span", "chip-text", `⌖ ${c.label}`));
+      const x = el("button", "chip-x", "×") as HTMLButtonElement;
+      x.type = "button";
+      x.title = "Don't send this with the message";
+      x.setAttribute("aria-label", `Remove ${c.label}`);
+      x.disabled = busy; // the engine takes it off between requests
+      x.onclick = () => {
+        if (busy) return;
+        setBusy(true);
+        post({ kind: "send", text: `/pick drop ${c.index}`, includeContext: false });
+      };
+      chip.append(x);
+      return chip;
+    }),
+  );
+}
+
 /** The Pick element button, when this cmcoder has /pick; picking is a request, so not during one. */
 function updatePick(): void {
   pickButton.hidden = !commands.some((c) => c.name === "pick");
@@ -293,6 +363,10 @@ function setBusy(value: boolean): void {
   stopButton.hidden = !value;
   input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
   agentSelect.disabled = value; // an agent can't be changed in the middle of a turn
+  log.setAttribute("aria-busy", String(value)); // a reader waits for the finished text, not each streamed piece
+  renderReview(); // its buttons wait while a request runs
+  renderChips();
+  if (value && !was) announce(`${PRODUCT} is working`);
   if (!value) showStatus();
   if (value && !was) startProgress();
   if (!value) stopProgress();
@@ -579,6 +653,153 @@ function note(text: string, cls: string): void {
   append(el("div", `note ${cls}`, text));
 }
 
+// --- what a request changed: a bar in the conversation, and a review of every file and hunk ----------
+//
+// The engine lists the files a request wrote or edited (`turn_changes`) and takes parts back on
+// `/revert <request> <file> <hunk>`, then lists them again with what is back marked; this draws them.
+
+const reviews = new Map<number, TurnChanges>();
+const changeBars = new Map<number, HTMLElement>();
+let reviewing: number | undefined;
+
+const changesHost: ChangesHost = {
+  review: (turn) => openReview(turn),
+  revert: (turn, file, hunk) => {
+    if (busy) return;
+    setBusy(true);
+    post({ kind: "send", text: `/revert ${turn} ${file === null ? "all" : file}${hunk === null ? "" : ` ${hunk}`}`, includeContext: false });
+  },
+  back: () => closeReview(),
+};
+
+function renderReview(): void {
+  if (reviewing === undefined) return;
+  const ev = reviews.get(reviewing);
+  if (!ev) return closeReview();
+  const scroll = changesView.scrollTop;
+  changesView.replaceChildren(reviewView(ev, changesHost, busy));
+  changesView.scrollTop = scroll;
+}
+
+function openReview(turn: number): void {
+  reviewing = turn;
+  renderReview();
+  logWrap.hidden = true;
+  changesView.hidden = false;
+  (changesView.querySelector(".review-back") as HTMLElement | null)?.focus();
+}
+
+function closeReview(): void {
+  const turn = reviewing;
+  reviewing = undefined;
+  changesView.hidden = true;
+  logWrap.hidden = false;
+  toEnd();
+  if (turn !== undefined) (changeBars.get(turn)?.querySelector("button") as HTMLElement | null)?.focus();
+}
+
+function forgetReviews(): void {
+  reviews.clear();
+  changeBars.clear();
+  if (reviewing !== undefined) closeReview();
+}
+
+// --- a long conversation is drawn newest first -------------------------------------------------
+//
+// Drawing every message of a resumed conversation made opening it slow (2,000 messages took
+// 2.7 s, and every one forced a layout to keep the end in view). The newest are drawn at once,
+// in one go; "Show earlier messages" (and scrolling up to it) draws more above them without
+// moving what is being read.
+
+const HISTORY_FIRST = 80;
+const HISTORY_MORE = 150;
+
+type HistoryItem = Extract<AgentEvent, { type: "history" }>["messages"][number];
+
+function historyNode(item: HistoryItem): HTMLElement {
+  if (item.role === "user") return el("div", "msg user", item.text);
+  if (item.role === "tool") {
+    const card = el("div", "tool");
+    card.append(toolLabel(item.text));
+    return card;
+  }
+  const message = el("div", "msg assistant");
+  setMarkdown(message, item.text);
+  return message;
+}
+
+/** Changes to the conversation that are not news (older messages drawn above): a screen reader is not told. */
+function quietly(change: () => void): void {
+  log.setAttribute("aria-busy", "true");
+  change();
+  requestAnimationFrame(() => log.setAttribute("aria-busy", String(busy)));
+}
+
+interface Earlier {
+  items: HistoryItem[];
+  shown: number; // how many of the oldest are not drawn yet
+  bar: HTMLButtonElement;
+  watch?: IntersectionObserver;
+}
+let earlier: Earlier | undefined;
+
+function forgetEarlier(): void {
+  earlier?.watch?.disconnect();
+  earlier = undefined;
+}
+
+function earlierLabel(e: Earlier): string {
+  return `↑ Show earlier messages (${e.shown} not shown)`;
+}
+
+function showEarlier(): void {
+  const e = earlier;
+  if (!e || e.shown <= 0) return;
+  const from = Math.max(0, e.shown - HISTORY_MORE);
+  const fragment = document.createDocumentFragment();
+  for (const item of e.items.slice(from, e.shown)) fragment.append(historyNode(item));
+  // What is on screen must not move: note where the oldest drawn message is, draw, put it back
+  // (a browser with scroll anchoring has already done it, and then there is nothing to put back).
+  const ref = e.bar.nextElementSibling;
+  const before = ref?.getBoundingClientRect().top ?? 0;
+  quietly(() => {
+    e.bar.after(fragment);
+    e.shown = from;
+    if (from === 0) {
+      e.watch?.disconnect();
+      e.bar.remove();
+      earlier = undefined;
+    } else {
+      e.bar.textContent = earlierLabel(e);
+    }
+  });
+  if (ref) log.scrollTop += ref.getBoundingClientRect().top - before;
+}
+
+function showHistory(items: HistoryItem[]): void {
+  forgetEarlier();
+  const start = Math.max(0, items.length - HISTORY_FIRST);
+  const fragment = document.createDocumentFragment();
+  if (start > 0) {
+    const bar = el("button", "earlier secondary") as HTMLButtonElement;
+    bar.type = "button";
+    const e: Earlier = { items, shown: start, bar };
+    bar.textContent = earlierLabel(e);
+    bar.title = "Draw the messages before these";
+    bar.onclick = showEarlier;
+    if (typeof IntersectionObserver === "function") {
+      // Scrolling up to the button draws more, so reading back needs no clicking.
+      e.watch = new IntersectionObserver((hits) => hits.some((h) => h.isIntersecting) && showEarlier(), { root: log, rootMargin: "300px 0px 0px 0px" });
+      e.watch.observe(bar);
+    }
+    earlier = e;
+    fragment.append(bar);
+  }
+  for (const item of items.slice(start)) fragment.append(historyNode(item));
+  quietly(() => log.append(fragment));
+  toEnd(true);
+}
+
 function renderReply(): void {
   renderQueued = false;
   if (reply) {
@@ -717,6 +938,7 @@ function agentRow(id: string): AgentRow {
   line.title = "Show its card";
   line.onclick = () => document.querySelector(`.tool[data-task="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" });
   const name = el("span", "name");
+  activatable(name, "Show this subagent's card"); // the row itself holds a Stop button, so only the name takes the key
   const detail = el("span", "detail");
   const stop = el("button", "secondary stop-one", "Stop") as HTMLButtonElement;
   stop.type = "button";
@@ -843,6 +1065,7 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "permission_request":
       permissionCard(ev);
+      announce(`${PRODUCT} needs your answer: ${ev.label}`); // keyboard focus stays where the user is typing
       break;
     case "permission_denied":
       if (!deniedHere.delete(ev.id)) note(`Denied: ${ev.reason}`, "warn");
@@ -862,8 +1085,46 @@ function onEvent(ev: AgentEvent): void {
     case "warning":
       note(`⚠ ${ev.message}`, "warn");
       break;
+    case "attachments":
+      chips = ev.items.map((i) => ({ index: i.index, label: i.label }));
+      renderChips();
+      break;
+    case "turn_changes": {
+      reviews.set(ev.turn, ev);
+      const bar = changeBars.get(ev.turn);
+      if (bar) updateBar(bar, ev);
+      else {
+        const made = changesBar(ev, changesHost);
+        changeBars.set(ev.turn, made);
+        append(made);
+      }
+      renderReview();
+      break;
+    }
     case "error":
-      note(`✗ ${ev.message}${ev.hint ? `\n${ev.hint}` : ""}`, "error");
+      if (ev.title || ev.actions?.length) {
+        // Said in plain words, with the buttons that make sense for it (the engine chooses them).
+        append(
+          errorCard(ev, {
+            canOpenLog: HOST_FEATURES.includes("openLog"),
+            retry: () => {
+              setBusy(true);
+              post({ kind: "send", text: "/retry", includeContext: false });
+            },
+            switchModel: () => {
+              setInput("/model ");
+              input.focus();
+            },
+            compact: () => submit("/compact", false),
+            newConversation: () => post({ kind: "newConversation" }),
+            openLog: () => post({ kind: "openLog" }),
+          }),
+        );
+        toEnd();
+      } else {
+        note(`✗ ${ev.message}${ev.hint ? `\n${ev.hint}` : ""}`, "error");
+        announce(`Error: ${ev.message}`);
+      }
       renderAgentSelect(); // a refused choice: the list shows the agent really in use
       break;
     case "review_result":
@@ -912,11 +1173,7 @@ function onEvent(ev: AgentEvent): void {
       );
       break;
     case "history":
-      for (const item of ev.messages) {
-        if (item.role === "user") append(el("div", "msg user", item.text));
-        else if (item.role === "tool") append(el("div", "tool")).append(toolLabel(item.text));
-        else setMarkdown(append(el("div", "msg assistant")), item.text);
-      }
+      showHistory(ev.messages);
       if (rewound) note(rewound, "info");
       else if (ev.messages.length) note("Resumed this conversation.", "info");
       rewound = undefined;
@@ -929,6 +1186,8 @@ function onEvent(ev: AgentEvent): void {
       const deleted = ev.actions.filter((a) => a.action.startsWith("deleted")).length;
       const files = ev.code ? ` Files: ${restored} restored, ${deleted} deleted (changes made by Bash commands are not undone).` : "";
       if (ev.conversation) {
+        forgetEarlier();
+        forgetReviews();
         log.replaceChildren(); // the history that follows redraws it
         following = true;
         toolCards.clear();
@@ -964,6 +1223,7 @@ function onEvent(ev: AgentEvent): void {
       updateAskQueue();
       endBashRuns();
       endAgents();
+      if (ev.subtype !== "success") announce(ev.subtype === "interrupted" ? "Stopped" : `Stopped: ${ev.result}`.slice(0, 200));
       if (ev.subtype === "interrupted") note(`Interrupted. What should ${PRODUCT} do instead?`, "warn");
       else if (ev.subtype === "max_turns") {
         // The limit on a request's model calls (or the step budget): the work is kept, so one
@@ -1063,6 +1323,7 @@ function toolResult(ev: ToolResult): void {
     img.alt = "Screenshot of the page";
     img.title = "Click to enlarge";
     img.onclick = () => img.classList.toggle("big");
+    activatable(img, "Enlarge or shrink the screenshot");
     card.append(img);
   }
 }
@@ -1287,34 +1548,6 @@ function endBashRuns(): void {
   }
 }
 
-/** Copy to the clipboard: the browser's API where the page may use it, else the old way. */
-function copyText(text: string, button: HTMLElement): void {
-  const said = (ok: boolean) => {
-    const was = button.dataset.label ?? button.textContent ?? "";
-    button.dataset.label = was;
-    button.textContent = ok ? "Copied" : "Could not copy";
-    window.setTimeout(() => (button.textContent = was), 1500);
-  };
-  const fallback = () => {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.append(area);
-    area.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    area.remove();
-    said(ok);
-  };
-  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => said(true), fallback);
-  else fallback();
-}
-
 // --- the consent card: what is asked, why, where, and the ways to answer ---------------
 
 /** The last part of a path, for a headline. */
@@ -1396,7 +1629,38 @@ function askBody(ev: PermissionRequest): HTMLElement | null {
 
 type Scope = "once" | "project" | "session";
 
+/** The agent's plan (a request for ExitPlanMode): a card to approve, edit or send back. */
+function planRequest(ev: PermissionRequest): void {
+  progress.waiting = true;
+  if (busy) renderProgress();
+  const card = planCard(planOf(ev.input), {
+    canAcceptEdits: can("sessionRules"), // "accept edits" travels as the session flag of an approval
+    product: PRODUCT,
+    answer: (a, said) => {
+      post({
+        kind: "permission",
+        requestId: ev.request_id,
+        allow: a.allow,
+        remember: false,
+        ...(a.allow && a.acceptEdits ? { rememberSession: true } : {}),
+        // An approval carries the edited steps, a denial the note; the engine reads both as feedback.
+        ...(a.allow ? (a.edited ? { feedback: a.edited } : {}) : { feedback: (a.note ?? "").trim() }),
+      });
+      permissionCards.delete(ev.request_id);
+      if (!a.allow) deniedHere.add(ev.tool_use_id);
+      answered(card, said);
+    },
+  });
+  card.dataset.toolUseId = ev.tool_use_id;
+  permissionCards.set(ev.request_id, append(card));
+  updateAskQueue();
+}
+
 function permissionCard(ev: PermissionRequest): void {
+  if (ev.name === "ExitPlanMode") {
+    planRequest(ev);
+    return;
+  }
   progress.waiting = true;
   if (busy) renderProgress();
   const risky = ev.high_risk === true;
@@ -1537,7 +1801,7 @@ function updateAskQueue(): void {
 function answered(card: HTMLElement, text: string): void {
   progress.waiting = false;
   // Only what was asked stays; the ways to answer go.
-  card.querySelectorAll(".ask-actions, .ask-always, .ask-deny, .ask-note, button, input").forEach((e) => e.remove());
+  card.querySelectorAll(".ask-actions, .ask-always, .ask-deny, .ask-note, .plan-edit, button, input").forEach((e) => e.remove());
   card.querySelector(".ask-count")?.remove();
   card.classList.add("answered");
   card.append(el("div", "answer", `└ ${text}`));
@@ -1653,6 +1917,8 @@ function send(): void {
 }
 
 function submit(text: string, includeContext: boolean, images: ImageAttachment[] = []): void {
+  retireErrorCards(log); // their buttons would act on the wrong request now
+  if (reviewing !== undefined) closeReview(); // the answer comes in the conversation
   const bubble = append(el("div", "msg user", text));
   if (images.length) {
     const thumbs = el("div", "thumbs");
@@ -1949,6 +2215,10 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       break;
     case "reset":
       sessionsPanel.hidden = true;
+      forgetEarlier();
+      forgetReviews();
+      chips = [];
+      renderChips();
       log.replaceChildren();
       following = true;
       dock.reset();
@@ -1992,6 +2262,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
   }
 });
 
+watchTheme(); // light or dark, for the colours of code
 post({ kind: "ready" });
 fitInput();
 input.focus();

@@ -119,11 +119,19 @@ class Warning(_Event):  # noqa: A001 - protocol name
     message: str
 
 
+# What an IDE can offer next to an error ("Retry", ...): the engine says which make sense for it.
+ErrorAction = Literal["retry", "switch_model", "compact", "new_conversation", "open_log"]
+
+
 class Error(_Event):
     type: Literal["error"] = "error"
     kind: str
     message: str
     hint: str | None = None
+    # A plain-language headline ("The model gateway is not answering (502)") and what the user can do
+    # about it. Empty for errors that have neither (an IDE then shows `message` and `hint` as a line).
+    title: str = ""
+    actions: list[ErrorAction] = Field(default_factory=list)
 
 
 class Compacted(_Event):
@@ -143,6 +151,61 @@ class FileChange(BaseModel):
     path: str  # absolute
     before: str | None  # None: a new file
     after: str
+
+
+class DiffLine(BaseModel):
+    kind: Literal["ctx", "add", "del"]
+    text: str
+
+
+class ChangedHunk(BaseModel):
+    """A part of a file's change: the changed lines with a few around them."""
+
+    id: int  # what `/revert` names
+    old_start: int  # 1-based line in the file as it was
+    new_start: int  # 1-based line in the file as it is
+    lines: list[DiffLine]
+    reverted: bool = False
+
+
+class ChangedFile(BaseModel):
+    index: int  # what `/revert` names
+    path: str  # relative to the project when it is inside it
+    status: Literal["modified", "added"]
+    added: int  # lines
+    removed: int
+    hunks: list[ChangedHunk]
+    binary: bool = False  # no text diff: only the whole file can be taken back
+    truncated: bool = (
+        False  # a rewrite too big to draw: counted, and the whole file can be taken back
+    )
+    reverted: bool = False  # taken back completely
+    note: str = ""  # why the last attempt to take it back was refused
+
+
+class TurnChanges(_Event):
+    """The files a request wrote or edited, for review. Sent at the end of the request, and again
+    (with `reverted` marks) each time part of it is taken back with `/revert`."""
+
+    type: Literal["turn_changes"] = "turn_changes"
+    turn: int
+    files: list[ChangedFile]
+    added: int
+    removed: int
+
+
+class AttachmentInfo(BaseModel):
+    index: int  # what `/pick drop` names
+    kind: Literal["element"]
+    label: str
+
+
+class AttachmentsChanged(_Event):
+    """What waits to go with the user's next message (picked page elements), as removable chips.
+    Sent whenever it changes; an empty list when the message took them."""
+
+    type: Literal["attachments"] = "attachments"
+    items: list[AttachmentInfo]
 
 
 class PermissionRequest(_Event):
@@ -478,6 +541,9 @@ Event = Annotated[
     | PermissionRequest
     | TodoUpdate
     | ModeChanged
+    | TurnChanges
+    | AttachmentsChanged
+    | TurnChanges
     | ModelChanged
     | IdeToolRequest
     | AgentList

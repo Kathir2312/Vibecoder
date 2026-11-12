@@ -16,6 +16,34 @@ export interface AgentInfo {
   group: string;
 }
 
+export interface AttachmentInfo {
+  index: number;
+  kind: "element";
+  label: string;
+}
+
+export interface ChangedFile {
+  index: number;
+  path: string;
+  status: "modified" | "added";
+  added: number;
+  removed: number;
+  hunks: ChangedHunk[];
+  binary: boolean;
+  truncated: boolean;
+  reverted: boolean;
+  note: string;
+}
+
+/** A part of a file's change: the changed lines with a few around them. */
+export interface ChangedHunk {
+  id: number;
+  old_start: number;
+  new_start: number;
+  lines: DiffLine[];
+  reverted: boolean;
+}
+
 export interface CodeContextItem {
   path: string;
   start_line: number;
@@ -29,6 +57,11 @@ export interface CommandInfo {
   description: string;
   argument_hint: string;
   origin: "built-in" | "user" | "project" | "mcp";
+}
+
+export interface DiffLine {
+  kind: "ctx" | "add" | "del";
+  text: string;
 }
 
 /** A proposed file change, for review in a diff editor. */
@@ -165,6 +198,8 @@ export interface Error {
   kind: string;
   message: string;
   hint: string | null;
+  title: string;
+  actions: ("retry" | "switch_model" | "compact" | "new_conversation" | "open_log")[];
 }
 
 /** The older part of the conversation was replaced by a summary. */
@@ -208,6 +243,27 @@ export interface TodoUpdate {
 export interface ModeChanged {
   type: "mode_changed";
   mode: string;
+}
+
+/**
+ * The files a request wrote or edited, for review. Sent at the end of the request, and again
+ * (with `reverted` marks) each time part of it is taken back with `/revert`.
+ */
+export interface TurnChanges {
+  type: "turn_changes";
+  turn: number;
+  files: ChangedFile[];
+  added: number;
+  removed: number;
+}
+
+/**
+ * What waits to go with the user's next message (picked page elements), as removable chips.
+ * Sent whenever it changes; an empty list when the message took them.
+ */
+export interface AttachmentsChanged {
+  type: "attachments";
+  items: AttachmentInfo[];
 }
 
 export interface ModelChanged {
@@ -416,6 +472,8 @@ export type AgentEvent =
   | PermissionRequest
   | TodoUpdate
   | ModeChanged
+  | TurnChanges
+  | AttachmentsChanged
   | ModelChanged
   | IdeToolRequest
   | AgentList

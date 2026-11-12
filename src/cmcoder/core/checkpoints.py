@@ -112,6 +112,14 @@ class Checkpoints:
                 first[e.path] = e
         return list(first.values())
 
+    def entries_in(self, turn: int) -> list[Entry]:
+        """The files turn `turn` changed, each as it was before that turn (oldest first)."""
+        return [e for e in self.entries if e.turn == turn]
+
+    def read(self, blob: str) -> bytes:
+        """The contents saved under `blob` (an `Entry.blob`)."""
+        return self._get(blob)
+
     def files_changed_in(self, turn: int) -> int:
         return len({e.path for e in self.entries if e.turn == turn})
 

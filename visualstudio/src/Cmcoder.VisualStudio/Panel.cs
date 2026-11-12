@@ -181,6 +181,7 @@ namespace Cmcoder.VisualStudio
 #endif
             return "<!DOCTYPE html>\n<html lang=\"en\"><head>\n"
                 + "  <meta charset=\"UTF-8\">\n"
+                + "  <title>" + Attr(Brand.Product) + "</title>\n"
                 + "  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src " + source
                 + "; img-src " + source + " data:; script-src 'nonce-" + nonce + "'\">\n"
                 + "  <link href=\"" + source + "/" + page + ".css\" rel=\"stylesheet\">\n"

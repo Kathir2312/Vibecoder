@@ -61,6 +61,7 @@ any chat or the terminal.
 /pick                          point at an element on the page that is open in the browser
 /pick http://localhost:5080    open that page in cmcoder's browser window first
 /pick clear                    drop what is waiting for your next message
+/pick drop 1                   drop one of them (the number is on its chip, from 0)
 ```
 
 A highlight follows your mouse over the page (and a bar at the bottom says what to do). **Click
@@ -69,7 +70,9 @@ the element**: the click is swallowed, so the page doesn't act on it. Esc on the
 you picked, and the element goes to cmcoder **with your next message**: its page, a CSS selector,
 its text, its position and its HTML (cut at 6,000 characters), sent as a note the model reads
 before your words, so you can type "make this button red" or "why is this link wrong?". Pick
-more than one (up to five) before you write. They are sent once; the message after has none.
+more than one (up to five) before you write. Each one waits as a **chip above the message box**
+("With your next message: ⌖ button#save on /Orders ×"); the cross takes it off. They are sent once;
+the message after has none.
 
 - **Where it picks.** In VS Code, in the Integrated Browser tab, when the IDE offers a "run
   Playwright code" tool (see the section above; **cmcoder: Show the IDE's Browser Tools** lists

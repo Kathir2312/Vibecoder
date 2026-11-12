@@ -7,6 +7,11 @@
   # Harness-only check with scripted replies (CI; no model needed):
   uv run python evals/run.py --mock
 
+  # Every run writes scorecard.json and scorecard.md next to results.json (evals/scorecard.py):
+  # pass rate, model calls and tokens per run. Compare with an earlier run, and fail if something
+  # that passed before fails now:
+  uv run python evals/run.py --label qwen3-27b --baseline evals/.runs/<earlier>/scorecard.json --fail-on-regression
+
   # Through the IDE protocol (cmcoder --protocol stdio), or both ways,
   # checking that each task gives the same result and tool calls:
   uv run python evals/run.py --mock --via both
@@ -41,6 +46,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+
+import scorecard
 
 from cmcoder.compat import SHELL_HELP, find_shell, to_shell_path
 from cmcoder.core.steer import file_work_redirect
@@ -325,6 +332,13 @@ def main() -> int:
         default="on",
         help="code search for tasks with an index (off: compare without it)",
     )
+    ap.add_argument("--label", help="what to call the model on the scorecard (default: --model)")
+    ap.add_argument("--baseline", type=Path, help="an earlier run's scorecard.json to compare with")
+    ap.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="with --baseline: exit 1 if a task that passed there fails now",
+    )
     args = ap.parse_args()
 
     shell = find_shell()
@@ -371,6 +385,12 @@ def main() -> int:
                 mismatches.append(f"{task.name} ({diff})")
                 print(f"      PARITY MISMATCH cli vs stdio: {diff}")
     (run_dir / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
+    label = args.label or args.model or ("mock" if args.mock else "(settings default)")
+    card = scorecard.build(results, model=label, via=args.via, mock=args.mock)
+    baseline = json.loads(args.baseline.read_text(encoding="utf-8")) if args.baseline else None
+    (run_dir / "scorecard.json").write_text(json.dumps(card, indent=2), encoding="utf-8")
+    (run_dir / "scorecard.md").write_text(scorecard.markdown(card, baseline), encoding="utf-8")
+    worse = scorecard.regressions(card, baseline) if baseline else []
     passed = sum(1 for r in results if r["passed"])
     file_tools = sum(r["file_tool_calls"] for r in results)
     via_bash = sum(r["bash_file_work"] for r in results)
@@ -386,6 +406,17 @@ def main() -> int:
             "same result and tool calls"
             + (f"; differ: {'; '.join(mismatches)}" if mismatches else "")
         )
+    print(f"Scorecard: {run_dir / 'scorecard.md'}")
+    if baseline is not None:
+        diff = scorecard.compare(card, baseline)
+        print(
+            f"Since the baseline: pass rate {diff['pass_rate'] * 100:+.1f} points, "
+            f"model calls {diff['model_calls']:+.1f} per run, tokens {diff['tokens']:+,.0f} per run"
+        )
+        for why in worse:
+            print(f"  REGRESSION: {why}")
+    if args.fail_on_regression and worse:
+        return 1
     return 0 if passed == len(results) and not mismatches else 1
 
 

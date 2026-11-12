@@ -14,7 +14,9 @@ from typing import Any
 import pytest
 
 from cmcoder.ide_browser import IdeToolSet
+from cmcoder.protocol import events as ev
 from cmcoder.protocol.messages import IdeToolDef
+from cmcoder.runtime.attachments import Attachment
 from cmcoder.runtime.commands import run_command
 from cmcoder.tools.base import ToolContext, ToolResult
 from cmcoder.tools.browser import BrowserInput, BrowserSession, find_browser
@@ -430,7 +432,10 @@ async def test_an_address_cmcoder_would_ask_about_is_not_opened_by_pick(tmp_path
 async def test_clear_and_help(tmp_path: Path) -> None:
     session = session_in(tmp_path)
     assert (await run_command(session, "/pick clear")).lines == ["Nothing picked is waiting."]
-    session.attachments += ["a", "b"]
+    session.attachments += [
+        Attachment("element", "a", "note a"),
+        Attachment("element", "b", "note b"),
+    ]
     assert (await run_command(session, "/pick clear")).lines == ["Dropped 2 picked elements."]
     assert session.attachments == []
     assert any("/pick <address>" in x for x in (await run_command(session, "/pick help")).lines)
@@ -441,7 +446,7 @@ async def test_pick_in_vs_code_keeps_the_element_for_the_next_message(tmp_path: 
     session.agent.spec["ide_browser"] = IdeToolSet([code_def()], FakeVsCode(click_on=1))
     lines = (await run_command(session, "/pick")).lines
     assert lines[0].startswith("Picked #orders > tbody") and "next message to cmcoder" in lines[1]
-    assert len(session.attachments) == 1 and "selector: #orders" in session.attachments[0]
+    assert len(session.attachments) == 1 and "selector: #orders" in session.attachments[0].note
     # A VS Code whose browser tools can't run code: say so, and don't use cmcoder's window by surprise.
     session.agent.spec["ide_browser"] = IdeToolSet(
         [IdeToolDef(name="readPage", input_schema={"type": "object", "properties": {}})],
@@ -452,13 +457,13 @@ async def test_pick_in_vs_code_keeps_the_element_for_the_next_message(tmp_path: 
 
 async def test_at_most_five_wait_for_a_message(tmp_path: Path) -> None:
     session = session_in(tmp_path)
-    session.attachments += ["x"] * 5
+    session.attachments += [Attachment("element", "x", "x")] * 5
     assert "5 elements are already waiting" in (await run_command(session, "/pick")).lines[0]
 
 
 async def test_a_new_conversation_forgets_what_was_picked(tmp_path: Path) -> None:
     session = session_in(tmp_path)
-    session.attachments.append("note")
+    session.attachments.append(Attachment("element", "x", "note"))
     await session.clear()
     assert session.attachments == []
 
@@ -472,9 +477,11 @@ async def test_the_picked_element_goes_to_the_model_with_the_next_message_only(
     monkeypatch.setenv("CMCODER_API_KEY", API_KEY)
     server = mock_server([{"content": "That is the Edit link."}, {"content": "Second answer."}])
     session = make_session(server.base_url, tmp_path)
-    session.attachments.append(PickedElement.from_page(ELEMENT).note())
-    async for _ in session.run("what is this?"):
-        pass
+    el = PickedElement.from_page(ELEMENT)
+    session.attachments.append(Attachment("element", el.label(), el.note()))
+    events = [e async for e in session.run("what is this?")]
+    chips = [e for e in events if isinstance(e, ev.AttachmentsChanged)]
+    assert [c.items for c in chips] == [[]], "the chips go when the message takes them"
     sent = json.dumps(server.requests[0]["messages"])
     assert "picked this element" in sent and "/orders/edit/3" in sent and "what is this?" in sent
     assert sent.index("/orders/edit/3") < sent.index("what is this?")  # the note comes first

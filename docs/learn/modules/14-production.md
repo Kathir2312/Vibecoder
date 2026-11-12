@@ -278,6 +278,14 @@ the tools used.
   that matter.
 * `--via both` runs each task through the CLI and the IDE protocol and checks
   they agree; `--rag off` compares a task with and without code search.
+* Every run also writes a **scorecard** next to its results
+  ([`evals/scorecard.py`](../../../evals/scorecard.py)): `scorecard.md` to read and
+  `scorecard.json` for machines, with the pass rate and the model calls, tokens and
+  seconds per run. `--label qwen3-27b` names the model on it;
+  `--baseline <earlier scorecard.json>` adds what changed (which tasks now pass or
+  fail, and the change in calls and tokens), and `--fail-on-regression` exits 1 if a
+  task that passed before fails now. That is how a change to cmcoder, or to the
+  model behind it, is measured instead of felt.
 
 ### 5. `cmcoder doctor`: probing the real setup
 

@@ -75,6 +75,9 @@ from ..models.chat import REASONING_KEY
 from ..models.errors import classify
 from ..models.reasoning import ThinkSplitter, split_think
 from ..protocol import events as ev
+from .attachments import Attachment
+from .attachments import changed as attachments_changed
+from .changes import ChangeReviews
 from .store import SessionStore, sessions_dir
 from .titles import fallback_title, make_title
 
@@ -97,9 +100,10 @@ def _text(message: AnyMessage) -> str:
 # What this cmcoder can do beyond the base protocol (system_init.features): "images" in
 # a message; "stopTool" ends one running command (`stop_tool`); "sessionRules" takes an
 # "always allow" for the session only (`remember_session`); "agents" lists the agents and
-# switches the conversation to one (`agent_list`, `set_agent`). An IDE panel shows a control
+# switches the conversation to one (`agent_list`, `set_agent`); "retry" runs a failed step again
+# (the `/retry` message, and the `actions` of an `error`). An IDE panel shows a control
 # only when this list and the IDE's own (data-features) both have it.
-FEATURES = ("images", "stopTool", "sessionRules", "agents")
+FEATURES = ("images", "stopTool", "sessionRules", "agents", "retry")
 
 # What LangChain's ModelCallLimitMiddleware (exit_behavior="end") says as the turn's last message
 # when `maxTurns` is used up. It reads like an answer, so the turn is reported as a stop instead
@@ -137,7 +141,9 @@ class Session:
         self._titled = False
         self._session_started = False  # SessionStart hooks have run
         # Notes for the model that wait for the user's next message (a `/pick`ed page element).
-        self.attachments: list[str] = []
+        self.attachments: list[Attachment] = []
+        # What each request changed, for review and for taking parts back (runtime/changes.py).
+        self.reviews = ChangeReviews()
         self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
         if agent.telemetry is not None:  # counted when it starts, even without a turn
@@ -166,6 +172,7 @@ class Session:
         """Continue a saved conversation: just point at its thread."""
         self._use_thread(thread_id)
         self.attachments.clear()
+        self.reviews = ChangeReviews()
         messages = await self.messages()
         self.turn = max((int(m.additional_kwargs.get(TURN_KEY, 0)) for m in messages), default=0)
         self._titled = bool(messages)  # a resumed session keeps its title
@@ -176,6 +183,7 @@ class Session:
         self.turn = 0
         self._titled = False
         self.attachments.clear()
+        self.reviews = ChangeReviews()
 
     async def messages(self) -> list[AnyMessage]:
         snapshot = await self.agent.graph.aget_state(self.config)
@@ -238,6 +246,41 @@ class Session:
         finally:
             self.agent.policy.set_turn_allow([])
 
+    async def retry(self) -> AsyncIterator[ev.Event]:
+        """Run the step that failed again (a gateway that was down, a timeout), from the graph's last
+        checkpoint: the user's message stays as it is, and what had already worked (tool results,
+        edits) is not done again. Ends with a `result` like any turn."""
+        started = time.monotonic()
+        snapshot = await self.agent.graph.aget_state(self.config)
+        if not snapshot.next or snapshot.interrupts:
+            text = "There is nothing to retry: the last request finished, or was stopped."
+            yield ev.Error(kind="nothing_to_retry", message=text)
+            yield ev.Result(
+                subtype="error",
+                is_error=True,
+                result=text,
+                num_turns=0,
+                duration_ms=0,
+                usage={},
+                session_id=self.session_id,
+            )
+            return
+        self.agent.policy.set_turn_allow([])
+        telemetry = self.agent.telemetry
+        if telemetry is not None:
+            telemetry.turn_started(self.session_id)
+        try:
+            critic = self.agent.critic
+            state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
+            context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
+            usage = {"prompt_tokens": 0, "completion_tokens": 0}
+            async for event in self._drive(None, context, state, "", started, usage):
+                if telemetry is not None:
+                    telemetry.observe(event, self.agent.bundle.name, self.session_id)
+                yield event
+        finally:
+            self.agent.policy.set_turn_allow([])
+
     async def _run(
         self, prompt: str, *, note: str | None, images: list[Image] | None
     ) -> AsyncIterator[ev.Event]:
@@ -282,8 +325,10 @@ class Session:
                 extra += out.context
         self._session_started = True
         attached, self.attachments = self.attachments, []  # they go with this message only
+        if attached:
+            yield attachments_changed([])  # the chips go: the message took them
         if extra or attached:
-            note = "\n\n".join(x for x in (note, *attached, *extra) if x)
+            note = "\n\n".join(x for x in (note, *(a.note for a in attached), *extra) if x)
         text = f"{note}\n\n{prompt}" if note else prompt
         content: str | list[str | dict[str, Any]] = text
         kwargs: dict[str, Any] = {}
@@ -318,7 +363,26 @@ class Session:
         state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
         message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn, **kwargs})
         state.apply([message])
-        graph_input: Any = {"messages": [message]}
+        async for event in self._drive(
+            {"messages": [message]}, context, state, prompt, started, usage
+        ):
+            yield event
+
+    async def _drive(
+        self,
+        graph_input: Any,
+        context: RunContext,
+        state: _TurnState,
+        prompt: str,
+        started: float,
+        usage: dict[str, int],
+    ) -> AsyncIterator[ev.Event]:
+        """Run the graph from `graph_input` until the turn ends, answering its questions on the way.
+
+        `graph_input` None means "from where its last checkpoint stopped" (`retry`): LangGraph
+        keeps the state of every step that finished, so a step that failed is run again and
+        the ones before it are not."""
+        hooks = self.agent.hooks
         error: ev.Error | None = None
         step_limit = False  # the graph's safety limit ended the turn
         try:
@@ -393,6 +457,9 @@ class Session:
             error is None and not step_limit and state.final_text.startswith(MODEL_LIMIT_TEXT)
         )
         await self._after_turn(prompt)
+        changes = self.reviews.build(self.turn, self.checkpoints, self.agent.ctx.project_root)
+        if changes is not None:  # the files this request wrote or edited, for review
+            yield changes
         yield ev.Result(
             subtype="error"
             if error

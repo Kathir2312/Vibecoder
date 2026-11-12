@@ -225,6 +225,7 @@ public final class Panel {
         // sends it as a request to swt://browserfunction/); nothing else can be fetched.
         String html = "<!DOCTYPE html>\n<html lang=\"en\"><head>\n"
                 + "  <meta charset=\"UTF-8\">\n"
+                + "  <title>" + attr(Brand.product()) + "</title>\n"
                 + "  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src file:; img-src file: data:; connect-src swt:; script-src 'nonce-"
                 + nonce + "'\">\n"
                 + "  <link href=\"" + attr(source + "/" + page + ".css") + "\" rel=\"stylesheet\">\n"

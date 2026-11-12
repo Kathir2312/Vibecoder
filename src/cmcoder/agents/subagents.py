@@ -88,7 +88,8 @@ NOT_FOR_SUBAGENTS = {
     "Team",
     "PlaywrightTests",
     "write_todos",
-}  # no nesting; the todos are the main agent's
+    "ExitPlanMode",
+}  # no nesting; the todos and the plan the user approves are the main agent's
 CRITIC_NAME = "critic"  # reviews answers (middleware/critic.py); not offered to the Task tool
 MAX_REPORT_CHARS = 30_000
 

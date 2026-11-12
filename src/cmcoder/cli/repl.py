@@ -45,6 +45,14 @@ def _preview(req: ev.PermissionRequest) -> str:
             lineterm="",
         )
         lines = list(diff)
+    elif req.name == "ExitPlanMode":  # the agent's plan: its steps and the files each touches
+        lines = []
+        for i, step in enumerate(req.input.get("steps") or [], 1):
+            if isinstance(step, dict):
+                files = ", ".join(str(f) for f in step.get("files") or [])
+                lines.append(f"{i}. {step.get('text', '')}" + (f"  [{files}]" if files else ""))
+        if req.input.get("out_of_scope"):
+            lines.append(f"Out of scope: {req.input['out_of_scope']}")
     else:
         lines = str(req.input.get("command") or req.input).splitlines()
     if len(lines) > PREVIEW_LINES:
@@ -112,8 +120,15 @@ async def run_repl(
             event.app.invalidate()
 
         async def ask(req: ev.PermissionRequest) -> dict[str, object]:
+            plan = req.name == "ExitPlanMode"
             console.print(
-                Panel(_preview(req), title=f"cmcoder wants to run {req.label}", subtitle=req.reason)
+                Panel(
+                    _preview(req),
+                    title=f"cmcoder's plan: {req.input.get('title', '')}"
+                    if plan
+                    else f"cmcoder wants to run {req.label}",
+                    subtitle=req.reason,
+                )
             )
             # The options are drawn after the preview and repeated in the input line.
             options = "1 yes · 2 always · 3 no" if req.can_remember else "1 yes · 3 no"
@@ -188,6 +203,7 @@ async def run_repl(
                     continue
                 allow: list[str] = []
                 step_agent: str | None = None
+                retrying = False
                 if prompt.startswith("/"):
                     result = await run_command(
                         session, prompt, switch_model=switch_model, set_max_turns=set_max_turns
@@ -196,18 +212,21 @@ async def run_repl(
                         console.print(line, markup=False, highlight=False)
                     if result.exit:
                         return 0
-                    if result.send is None:
+                    if result.retry:  # /retry: the step that failed, again
+                        retrying = True
+                    elif result.send is None:
                         default = result.prompt or ""
                         prompt = None
                         continue
-                    prompt, allow = result.send, result.allow  # a custom command
-                    step_agent = result.agent
+                    else:
+                        prompt, allow = result.send, result.allow  # a custom command
+                        step_agent = result.agent
                 before = session.agent.persona
                 switched = step_agent is not None and step_agent != before
                 if switched:  # a step of a command (/playwright plan) runs as its own agent
                     session.agent = await rebuild_agent(session.agent, agent=step_agent)
                     console.print(f"[dim]This step runs as the {step_agent} agent.[/dim]")
-                task = asyncio.create_task(_show_turn(console, session, prompt, allow))
+                task = asyncio.create_task(_show_turn(console, session, prompt, allow, retrying))
                 interrupt.arm(task.cancel)
                 try:
                     await task
@@ -225,10 +244,14 @@ async def run_repl(
 
 
 async def _show_turn(
-    console: Console, session: Session, prompt: str, allow: list[str] | None = None
+    console: Console,
+    session: Session,
+    prompt: str,
+    allow: list[str] | None = None,
+    retry: bool = False,
 ) -> None:
     streamed = False
-    async for event in session.run(prompt, allow=allow):
+    async for event in session.retry() if retry else session.run(prompt, allow=allow):
         if isinstance(event, ev.AssistantDelta):
             console.print(event.text, end="", markup=False, highlight=False)
             streamed = True
@@ -249,6 +272,11 @@ async def _show_turn(
                     f"  {marks.get(t.get('status', ''), '[ ]')} {t.get('content', '')}",
                     markup=False,
                 )
+        elif isinstance(event, ev.TurnChanges):
+            console.print(
+                f"[dim]Changed {len(event.files)} file{'s' if len(event.files) != 1 else ''} "
+                f"(+{event.added} -{event.removed}); /revert {event.turn} all takes it all back.[/dim]"
+            )
         elif isinstance(event, ev.Compacted):
             console.print(
                 f"[dim]Context nearly full: summarised {event.summarized_messages} earlier "

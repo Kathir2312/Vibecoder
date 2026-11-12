@@ -17,11 +17,15 @@ interface Review {
 /** Serves both sides of each diff as read-only virtual documents. */
 export class DiffReview implements vscode.TextDocumentContentProvider {
   private readonly reviews = new Map<string, Review>();
+  // Code blocks from replies shown against a file ("Compare"): the code, by id; the latest few.
+  private readonly code = new Map<string, string>();
+  private codeCount = 0;
   private readonly changed = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this.changed.event;
 
   provideTextDocumentContent(uri: vscode.Uri): string {
     const { id, side } = parse(uri);
+    if (side === "code") return (id && this.code.get(id)) || "";
     const review = id ? this.reviews.get(id) : undefined;
     if (!review) return "";
     return side === "before" ? review.change.before ?? "" : review.change.after;
@@ -39,6 +43,20 @@ export class DiffReview implements vscode.TextDocumentContentProvider {
     await vscode.commands.executeCommand("vscode.diff", review.left, review.right, title, {
       preview: false,
       preserveFocus: true,
+    });
+  }
+
+  /** "Compare" on a code block: the code against the file being edited, in the diff editor. Nothing
+   *  is written: the editor's own arrows take a change into the file, which stays the editable side. */
+  async compare(text: string, file: vscode.Uri): Promise<void> {
+    const id = `code-${++this.codeCount}`;
+    this.code.set(id, text);
+    for (const old of [...this.code.keys()].slice(0, -20)) this.code.delete(old);
+    const name = path.basename(file.fsPath);
+    // The file name stays last in the path, so VS Code picks the file's language for the code too.
+    const left = vscode.Uri.from({ scheme: SCHEME, path: `/code/${name}`, query: `id=${id}&side=code` });
+    await vscode.commands.executeCommand("vscode.diff", left, file, `${name} ↔ code from ${productName()}`, {
+      preview: false,
     });
   }
 

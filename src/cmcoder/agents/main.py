@@ -283,6 +283,7 @@ def loop_middleware(
     agent: str | None = None,
     rethink: RethinkConfig | None = None,
     max_turns: int | None = None,
+    plan_todos: bool = False,
 ) -> list[AgentMiddleware[Any, Any]]:
     """The middleware every cmcoder agent loop has, the main one and subagents."""
     profile = bundle.profile
@@ -323,6 +324,7 @@ def loop_middleware(
             hooks=hooks,
             approve_hook=opts.approve_hook,
             agent=agent,
+            plan_todos=plan_todos,
         ),
         ToolCallContextMiddleware(),  # lets a tool find out which call it is (progress, stop)
         *([HooksMiddleware(hooks, opts.approve_hook, stop_event=stop_event)] if hooks else []),
@@ -498,6 +500,7 @@ def build_agent(
         summarise=compaction.emergency if compaction else None,
         rethink=settings.rethink,
         max_turns=max_turns,
+        plan_todos=keep("write_todos"),  # an approved plan becomes the todo list
     )
     middleware += extra_middleware or []
     # Subagents: the Task tool starts a fresh agent graph for a self-contained job.
