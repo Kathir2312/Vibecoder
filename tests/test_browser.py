@@ -333,3 +333,23 @@ async def test_screenshot_files_are_removed_when_the_browser_closes(
     finally:
         await session.close()
     assert not folder.exists()
+
+
+def test_a_browser_call_is_labelled_with_what_it_does() -> None:
+    """The chat's tool line says `Browser(open http://...)`, not just `Browser`, nine times in a row."""
+    from cmcoder.runtime.session import _label
+
+    def label(**args: object) -> str:
+        return _label({"name": "Browser", "args": args, "id": "x", "type": "tool_call"})
+
+    assert label(action="open", url="http://localhost:5080/orders") == (
+        "Browser(open http://localhost:5080/orders)"
+    )
+    assert label(action="click", ref=3) == "Browser(click 3)"
+    assert label(action="type", ref=2, text="Ada") == "Browser(type 2)"
+    assert label(action="snapshot") == "Browser(snapshot)"
+    assert label(action="press", key="Enter") == "Browser(press Enter)"
+    assert (
+        _label({"name": "Read", "args": {"file_path": "a.py"}, "id": "x", "type": "tool_call"})
+        == "Read(a.py)"
+    )

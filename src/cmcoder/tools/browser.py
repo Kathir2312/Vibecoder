@@ -43,6 +43,16 @@ from urllib.parse import unquote, urlparse
 from pydantic import Field
 
 from .base import Tool, ToolContext, ToolInput, ToolResult, truncate_middle
+from .pick import (
+    PICK_DONE,
+    PICK_READ,
+    PICK_START,
+    PICK_STOP,
+    PickedElement,
+    PickError,
+    decode_answer,
+    element_from,
+)
 
 if TYPE_CHECKING:
     from ..config.settings import Settings
@@ -279,6 +289,45 @@ class BrowserSession:
     async def close(self) -> None:
         async with self._lock:
             await self._stop()
+
+    async def show(self) -> bool:
+        """Make the browser one with a window, for `/pick`: someone has to be able to click. One that
+        runs without a window is closed, and the next action starts it again with one (its pages
+        are gone). True when that happened."""
+        async with self._lock:
+            if not self.headless:
+                return False
+            await self._stop()
+            self.headless = False
+            return True
+
+    async def pick(self, timeout: float) -> PickedElement:
+        """Wait for the user to click an element on the page that is open (tools/pick.py)."""
+        async with self._lock:
+            page = self.page
+            if page is None or page.url in ("", "about:blank"):
+                raise PickError("No page is open in cmcoder's browser yet.")
+            try:
+                await page.evaluate(PICK_START)
+                await page.wait_for_function(PICK_DONE, polling=250, timeout=timeout * 1000)
+                answer = decode_answer(await page.evaluate(PICK_READ))
+            except PickError:
+                raise
+            except Exception as e:
+                if "Timeout" in type(e).__name__:
+                    raise PickError(
+                        "Nothing was picked in time. Run /pick again when you are ready."
+                    ) from e
+                first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+                raise PickError(
+                    f"The page changed while waiting for a click ({first[:150]}). Run /pick again."
+                ) from e
+            finally:
+                try:  # off the page whatever happened, even when the user pressed Stop
+                    await asyncio.shield(page.evaluate(PICK_STOP))
+                except Exception:  # the page is gone
+                    pass
+        return element_from(answer)
 
     # -- what the page does ----------------------------------------------------
 

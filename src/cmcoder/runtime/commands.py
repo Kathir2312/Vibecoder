@@ -47,6 +47,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     (
+        "pick",
+        "[url|clear]",
+        "Point at an element on the page in the browser; it goes with your next message",
+    ),
+    (
         "playwright",
         "[setup|map|plan|generate|run|heal|all|agents] [area]",
         "Playwright tests for the web app: set up, plan, write, run, heal",
@@ -76,6 +81,9 @@ class CommandResult:
     # these allow rules for that turn only (the command's `allowed-tools`).
     send: str | None = None
     allow: list[str] = field(default_factory=list)
+    # Run that request as this agent (a step of /playwright): the front end switches to it for the
+    # request and back afterwards.
+    agent: str | None = None
 
 
 def help_lines(custom: dict[str, SlashCommand] | None = None) -> list[str]:
@@ -248,7 +256,7 @@ def playwright_command(session: Session, arg: str) -> CommandResult:
         ide_tools=a.ide_tool_names,
         trusted=bool(settings.project_trusted),
     )
-    return CommandResult(stage.lines, send=stage.prompt, allow=stage.allow)
+    return CommandResult(stage.lines, send=stage.prompt, allow=stage.allow, agent=stage.agent)
 
 
 async def review_command(session: Session, target: str) -> CommandResult:
@@ -387,6 +395,10 @@ async def run_command(
         return webtest_command(session, arg)
     if name == "playwright":
         return playwright_command(session, arg)
+    if name == "pick":
+        from .pick import pick_lines
+
+        return CommandResult(await pick_lines(session, arg))
     if name == "index":
         from ..rag.session import index_command
 

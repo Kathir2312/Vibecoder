@@ -144,6 +144,7 @@ app.innerHTML = `
     <div class="actions">
       <button class="attach secondary" title="Attach a file (@)">@</button>
       <button class="image secondary" title="Attach an image (or paste one with Ctrl+V, or drop it here)">Image</button>
+      <button class="pick secondary" type="button" hidden title="Point at an element on the page in the browser: its HTML goes to ${PRODUCT} with your next message (/pick)">Pick element</button>
       <select class="agent" title="Who you are talking to: the default agent, or one of your agents (its instructions, tools and model)" aria-label="Agent" hidden></select>
       <input class="image-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
       <span class="usage"></span>
@@ -183,6 +184,7 @@ const sessionsPanel = $<HTMLElement>(".sessions");
 const historyButton = $<HTMLButtonElement>(".history");
 const attachButton = $<HTMLButtonElement>(".attach");
 const imageButton = $<HTMLButtonElement>(".image");
+const pickButton = $<HTMLButtonElement>(".pick");
 const agentSelect = $<HTMLSelectElement>(".agent");
 const imageFile = $<HTMLInputElement>(".image-file");
 const imagesStrip = $<HTMLElement>(".images");
@@ -239,8 +241,17 @@ function renderAgentSelect(): void {
   agentSelect.hidden = !show;
   if (!show) return;
   agentSelect.replaceChildren(new Option(`${PRODUCT} (default)`, ""));
-  for (const [origin, label] of AGENT_GROUPS) {
-    const group = agents.filter((a) => a.origin === origin);
+  // The origins' groups first (the project's, yours, built in); an agent with a `group` of its own
+  // ("Playwright") is listed under that heading instead, after them.
+  const own = Array.from(new Set(agents.filter((a) => a.group).map((a) => a.group)));
+  const sections: [string, AgentInfo[]][] = [
+    ...AGENT_GROUPS.map(([origin, label]): [string, AgentInfo[]] => [
+      label,
+      agents.filter((a) => !a.group && a.origin === origin),
+    ]),
+    ...own.map((g): [string, AgentInfo[]] => [g, agents.filter((a) => a.group === g)]),
+  ];
+  for (const [label, group] of sections) {
     if (!group.length) continue;
     const box = document.createElement("optgroup");
     box.label = label;
@@ -261,10 +272,23 @@ function renderAgentSelect(): void {
 
 agentSelect.onchange = () => post({ kind: "setAgent", agent: agentSelect.value || null });
 
+/** The Pick element button, when this cmcoder has /pick; picking is a request, so not during one. */
+function updatePick(): void {
+  pickButton.hidden = !commands.some((c) => c.name === "pick");
+  pickButton.disabled = busy;
+}
+
+pickButton.onclick = () => {
+  if (busy) return;
+  note("◦ Pick mode: click an element on the page in the browser (Esc there cancels, Stop here ends the wait).", "info");
+  submit("/pick", false);
+};
+
 function setBusy(value: boolean): void {
   const was = busy;
   busy = value;
   updateStarters();
+  updatePick();
   sendButton.hidden = value;
   stopButton.hidden = !value;
   input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
@@ -877,10 +901,13 @@ function onEvent(ev: AgentEvent): void {
     case "agent_changed":
       currentAgent = ev.agent;
       renderAgentSelect();
+      if (ev.reason === "restore") break; // the list moves back; nothing to tell
       note(
-        ev.agent
-          ? `◦ Now talking to the ${ev.agent} agent: its instructions, tools and model, for this conversation.`
-          : `◦ Back to ${PRODUCT}'s default agent.`,
+        ev.reason === "step"
+          ? `◦ This step runs as the ${ev.agent} agent: its own instructions and tools.`
+          : ev.agent
+            ? `◦ Now talking to the ${ev.agent} agent: its instructions, tools and model, for this conversation.`
+            : `◦ Back to ${PRODUCT}'s default agent.`,
         "info",
       );
       break;
@@ -924,6 +951,7 @@ function onEvent(ev: AgentEvent): void {
       commands = ev.commands;
       updateCommands();
       updateStarters();
+      updatePick();
       break;
     case "model_changed":
       modelLabel.textContent = ev.model;

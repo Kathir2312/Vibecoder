@@ -136,6 +136,8 @@ class Session:
         self.cost = 0.0  # USD, when the gateway says (LiteLLM)
         self._titled = False
         self._session_started = False  # SessionStart hooks have run
+        # Notes for the model that wait for the user's next message (a `/pick`ed page element).
+        self.attachments: list[str] = []
         self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
         if agent.telemetry is not None:  # counted when it starts, even without a turn
@@ -163,6 +165,7 @@ class Session:
     async def resume(self, thread_id: str) -> None:
         """Continue a saved conversation: just point at its thread."""
         self._use_thread(thread_id)
+        self.attachments.clear()
         messages = await self.messages()
         self.turn = max((int(m.additional_kwargs.get(TURN_KEY, 0)) for m in messages), default=0)
         self._titled = bool(messages)  # a resumed session keeps its title
@@ -172,6 +175,7 @@ class Session:
         self._use_thread(uuid.uuid4().hex)
         self.turn = 0
         self._titled = False
+        self.attachments.clear()
 
     async def messages(self) -> list[AnyMessage]:
         snapshot = await self.agent.graph.aget_state(self.config)
@@ -277,8 +281,9 @@ class Session:
                     return
                 extra += out.context
         self._session_started = True
-        if extra:
-            note = "\n\n".join(x for x in (note, *extra) if x)
+        attached, self.attachments = self.attachments, []  # they go with this message only
+        if extra or attached:
+            note = "\n\n".join(x for x in (note, *attached, *extra) if x)
         text = f"{note}\n\n{prompt}" if note else prompt
         content: str | list[str | dict[str, Any]] = text
         kwargs: dict[str, Any] = {}
@@ -783,6 +788,9 @@ class _TurnState:
 def _label(call: ToolCall) -> str:
     args = call.get("args") or {}
     target = args.get("file_path") or args.get("command") or args.get("pattern") or ""
+    if not target and call["name"] == "Browser":  # "Browser(open http://localhost:5080)"
+        detail = args.get("url") or args.get("ref") or args.get("text") or args.get("key") or ""
+        target = f"{args.get('action', '')} {detail}".strip()
     target = str(target).splitlines()[0][:80] if target else ""
     return f"{call['name']}({target})" if target else call["name"]
 

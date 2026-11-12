@@ -648,6 +648,26 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
+  test(`${flavour}: Pick element sends /pick, only when this cmcoder has it, and not during a request`, async () => {
+    const { page, ev, sent } = await panel(flavour);
+    const command = (name: string) => ({ name, description: "", argument_hint: "", origin: "built-in" as const });
+    assert.equal(await page.isVisible(".pick"), false, "nothing to pick with before the commands are listed");
+    await ev({ type: "command_list", commands: [command("help"), command("model")] });
+    assert.equal(await page.isVisible(".pick"), false, "an older cmcoder without /pick: no button");
+    await ev({ type: "command_list", commands: [command("help"), command("pick")] });
+    assert.equal(await page.isVisible(".pick"), true);
+    assert.equal(await page.textContent(".pick"), "Pick element");
+    await page.fill("textarea", "half a message");
+    await page.click(".pick");
+    assert.deepEqual((await sent()).at(-1), { kind: "send", text: "/pick", includeContext: false });
+    assert.equal(await page.inputValue("textarea"), "half a message", "what was being typed stays");
+    assert.match((await page.locator(".note.info").last().textContent()) ?? "", /Pick mode: click an element on the page in the browser/);
+    assert.equal(await page.locator(".pick").isDisabled(), true, "picking is a request: it is busy until it ends");
+    await ev(result);
+    assert.equal(await page.locator(".pick").isDisabled(), false);
+    await page.close();
+  });
+
   test(`${flavour}: an empty conversation offers ready-made commands once cmcoder lists them`, async () => {
     const { page, ev, send, sent } = await panel(flavour);
     const command = (name: string) => ({ name, description: "", argument_hint: "", origin: "built-in" as const });
@@ -680,9 +700,9 @@ for (const flavour of FLAVOURS) {
   });
 
   const AGENTS = [
-    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "" },
-    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`." },
-    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "" },
+    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "", group: "" },
+    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`.", group: "" },
+    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "", group: "" },
   ];
   const HOST = "stopTool sessionRules agents";
 
@@ -713,7 +733,7 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator('.agent option[value="planner"]').getAttribute("title"), "Plans tests for a web app.");
     await page.selectOption(".agent", "planner");
     assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: "planner" });
-    await ev({ type: "agent_changed", agent: "planner" });
+    await ev({ type: "agent_changed", agent: "planner", reason: "" });
     await ev({ type: "agent_list", agents: AGENTS, current: "planner" });
     assert.equal(await page.locator(".agent").inputValue(), "planner");
     assert.match((await page.textContent(".note.info")) ?? "", /Now talking to the planner agent/);
@@ -721,10 +741,37 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.getAttribute(".agent", "title"), "Plans tests for a web app.");
     await page.selectOption(".agent", "");
     assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: null });
-    await ev({ type: "agent_changed", agent: null });
+    await ev({ type: "agent_changed", agent: null, reason: "" });
     assert.equal(await page.locator(".agent").inputValue(), "");
     assert.match((await page.locator(".note.info").last().textContent()) ?? "", /Back to cmcoder's default agent/);
     assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask cmcoder…/);
+    await page.close();
+  });
+
+  test(`${flavour}: the Playwright agents get their own heading and a step moves the dropdown there and back`, async () => {
+    const { page, ev } = await panel(flavour, undefined, true, HOST);
+    const roles = [
+      { name: "playwright-planner", description: "Plans the tests.", origin: "built-in" as const, usable: true, hint: "", group: "Playwright" },
+      { name: "playwright-healer", description: "Fixes tests.", origin: "built-in" as const, usable: true, hint: "", group: "Playwright" },
+    ];
+    const all = [...AGENTS, ...roles];
+    await ev({ type: "agent_list", agents: all, current: "explore" });
+    assert.deepEqual(await page.locator(".agent optgroup").evaluateAll((g) => g.map((x) => (x as HTMLOptGroupElement).label)), ["This project", "Built in", "Playwright"]);
+    assert.deepEqual(await page.locator('.agent optgroup[label="Playwright"] option').allTextContents(), ["playwright-planner", "playwright-healer"]);
+    assert.equal(await page.locator(".agent").inputValue(), "explore");
+    const notes = () => page.locator(".note.info").allTextContents();
+    const before = (await notes()).length;
+    // `/playwright plan` runs as the planner: the list shows it, with a note that says why.
+    await ev({ type: "agent_changed", agent: "playwright-planner", reason: "step" });
+    await ev({ type: "agent_list", agents: all, current: "playwright-planner" });
+    assert.equal(await page.locator(".agent").inputValue(), "playwright-planner");
+    assert.match((await notes()).at(-1) ?? "", /This step runs as the playwright-planner agent/);
+    // Afterwards the agent from before comes back, and that says nothing: it was not the user's doing.
+    await ev({ type: "agent_changed", agent: "explore", reason: "restore" });
+    await ev({ type: "agent_list", agents: all, current: "explore" });
+    assert.equal(await page.locator(".agent").inputValue(), "explore");
+    assert.equal((await notes()).length, before + 1, "only the step announced itself");
+    assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask explore…/);
     await page.close();
   });
 

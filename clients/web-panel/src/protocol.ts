@@ -13,6 +13,7 @@ export interface AgentInfo {
   origin: "built-in" | "user" | "project";
   usable: boolean;
   hint: string;
+  group: string;
 }
 
 export interface CodeContextItem {
@@ -237,6 +238,7 @@ export interface AgentList {
 export interface AgentChanged {
   type: "agent_changed";
   agent: string | null;
+  reason: "" | "step" | "restore";
 }
 
 export interface SessionList {
