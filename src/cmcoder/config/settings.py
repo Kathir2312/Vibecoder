@@ -229,6 +229,22 @@ class CriticConfig(_Model):
     max_rounds: int = Field(2, alias="maxRounds", ge=1, le=5)
 
 
+class VerifyConfig(_Model):
+    """Verify: after a request that changed files, run the project's own checks (build, tests,
+    lint) and send the agent back to fix what fails (middleware/verify.py). Nothing runs unless
+    `commands` says what. A project's settings can set them only when the project is trusted."""
+
+    enabled: bool = True
+    # Shell commands, run in the project folder in this order (in the Bash sandbox when there is
+    # one); the first that exits non-zero stops the check. `/verify` suggests some.
+    commands: list[str] = Field(default_factory=list)
+    # How many times the agent is sent back to fix what failed; after that the answer stands,
+    # with a warning that the checks still fail.
+    max_rounds: int = Field(2, alias="maxRounds", ge=1, le=5)
+    # Seconds one command may run.
+    timeout: int = Field(300, ge=10, le=3600)
+
+
 class MemoryConfig(_Model):
     """Auto memory (notes.py): cmcoder keeps short notes about the project between
     sessions, only from what the user says. `/memory` lists and deletes them."""
@@ -312,6 +328,9 @@ class Settings(_Model):
     vision_model: str | None = Field(None, alias="visionModel")
     # The model of the built-in `explore` subagent (default: smallFastModel).
     subagent_model: str | None = Field(None, alias="subagentModel")
+    # A model ("provider:model") to finish a request on when the main one's gateway fails
+    # (down, overloaded, timing out, rate limiting): runtime/session.py `_fall_back`.
+    fallback_model: str | None = Field(None, alias="fallbackModel")
     model_profiles: list[dict[str, Any]] = Field(default_factory=list, alias="modelProfiles")
     permissions: PermissionsConfig = Field(
         default_factory=lambda: PermissionsConfig.model_validate({})
@@ -341,6 +360,7 @@ class Settings(_Model):
     telemetry: TelemetryConfig = Field(default_factory=lambda: TelemetryConfig.model_validate({}))
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
     critic: CriticConfig = Field(default_factory=lambda: CriticConfig.model_validate({}))
+    verify: VerifyConfig = Field(default_factory=lambda: VerifyConfig.model_validate({}))
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
@@ -561,6 +581,8 @@ def env_layer(environ: dict[str, str] | None = None) -> dict[str, Any]:
         layer["smallFastModel"] = env["CMCODER_SMALL_FAST_MODEL"]
     if env.get("CMCODER_VISION_MODEL"):
         layer["visionModel"] = env["CMCODER_VISION_MODEL"]
+    if env.get("CMCODER_FALLBACK_MODEL"):
+        layer["fallbackModel"] = env["CMCODER_FALLBACK_MODEL"]
     sandbox = env.get("CMCODER_SANDBOX", "").strip().lower()
     if sandbox in ("0", "false", "off", "no"):
         layer["sandbox"] = {"enabled": False}
@@ -725,6 +747,8 @@ def _filter_project_layer(layer: dict[str, Any], trusted: bool) -> tuple[dict[st
         dropped.append(f"hooks ({events})")
     if out.pop("sandbox", None) is not None:
         dropped.append("sandbox settings")
+    if out.pop("verify", None) is not None:  # commands that run on their own after an edit
+        dropped.append("verify (commands run after each change)")
     if out.pop("telemetry", None) is not None:
         dropped.append("telemetry settings")
     rag = out.get("rag")
@@ -844,7 +868,7 @@ def load_settings(
         hint = ""
         if any(
             f"providers.{k}" in str(e)
-            for k in ("model", "smallFastModel", "visionModel", "permissions")
+            for k in ("model", "smallFastModel", "visionModel", "fallbackModel", "permissions")
         ):
             hint = (
                 "\nhint: `model` and `smallFastModel` go at the top level of settings.json, "

@@ -3,6 +3,7 @@
 
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { CODE_TOOLS, isCodeTool, runCodeTool, type CodeApi } from "./codeIntel";
 import type { IdeContext, IdeDiagnostic } from "./protocol";
 
 const MAX_DIAGNOSTICS = 30;
@@ -68,7 +69,22 @@ function toIde(uri: vscode.Uri, diags: readonly vscode.Diagnostic[]): IdeDiagnos
 
 // --- IDE tools -----------------------------------------------------------------
 
-export const IDE_TOOLS = ["getDiagnostics", "openFile"];
+/** The editor's language servers, for `goToDefinition`, `findReferences` and `workspaceSymbols` (codeIntel.ts). */
+const codeApi: CodeApi = {
+  command: (name, ...args) => Promise.resolve(vscode.commands.executeCommand(name, ...args)),
+  file: (p) => vscode.Uri.file(p),
+  position: (line, character) => new vscode.Position(line, character),
+  document: async (uri) => {
+    try {
+      return await vscode.workspace.openTextDocument(uri as vscode.Uri);
+    } catch {
+      return undefined; // a binary file, or one that is gone
+    }
+  },
+  kindName: (kind) => vscode.SymbolKind[kind] ?? "Symbol",
+};
+
+export const IDE_TOOLS = ["getDiagnostics", "openFile", ...CODE_TOOLS];
 
 export async function runIdeTool(
   name: string,
@@ -108,6 +124,7 @@ export async function runIdeTool(
       }
     }
     default:
+      if (isCodeTool(name)) return runCodeTool(codeApi, name, input);
       return { content: `Unknown IDE tool ${name}.`, is_error: true };
   }
 }

@@ -202,7 +202,8 @@ flowchart TB
   [resumes the graph](../../../src/cmcoder/runtime/session.py#L327) with
   `Command(resume=answers)`.
 * **When *not* to use an interrupt.** IDE tools (`getDiagnostics`,
-  `openFile`) are quick questions to the editor:
+  `openFile`, and the language server's `goToDefinition`, `findReferences`
+  and `workspaceSymbols`) are quick questions to the editor:
   [`ide_call`](../../../src/cmcoder/cli/stdio.py#L609) sends a request and
   awaits the answer inside the tool, with a 30-second timeout. An interrupt is
   for an answer that may take long or must survive a restart: a person's
@@ -307,6 +308,67 @@ plain `httpx` (with the same TLS, proxy and auth) for the model list,
 LiteLLM's `/model/info`, Open WebUI's `/api/models` and Ollama's trained
 context length, and probes a context window when nothing reports it
 (chapter 03).
+
+### 6b. When the gateway fails: `fallbackModel`
+
+LangChain has a middleware for "try another model", `ModelFallbackMiddleware`, and
+cmcoder does not use it for this. It works per model call: every call of a request
+would first wait for the failing model again, everything built around the main
+model (the compaction limit, the output budget, tool-call repair) would keep
+using *its* window, and the user would never be told. Instead
+[`Session._fall_back`](../../../src/cmcoder/runtime/session.py) acts on the
+request: when `classify()` says the failure is the gateway's
+(`models/errors.py` `worth_fallback`), it rebuilds the agent on `fallbackModel`
+with `rebuild_agent` (a full middleware set for that model, on the same
+checkpointer, so the same thread), and resumes with `astream(None, config)` from
+the last checkpoint: the same mechanism as `/retry`. The first model call that
+failed is the only step run again; the message is not sent twice. The next
+request puts the main model back (`_restore_primary`), unless you picked another
+model in between. It is done once per request: a fallback that fails too ends the
+request with the error card.
+
+### 6c. Checking the work: `middleware/verify.py`
+
+The critic (chapter 12) asks another model whether the answer is right. Verify asks the
+project: it runs the commands in `verify.commands` (build, tests, lint) after a request that
+changed code, and the exit status is the verdict, nothing is parsed. It is the same
+`aafter_agent` hook with `@hook_config(can_jump_to=["model"])`: when a command fails, the hook
+returns `{"jump_to": "model", "messages": [HumanMessage(<the output>)]}` and the agent gets
+another round with the failure in front of it. Three details are worth reading in
+[the file](../../../src/cmcoder/middleware/verify.py):
+
+* it sits **last** in the middleware list, because after-agent hooks run in reverse order: it
+  runs before the critic, which then reviews code that already passes;
+* it re-runs only when the files' mtime and size differ from the last check
+  (`fingerprint`), so an agent that answers "I could not fix it" is not sent round in circles;
+* each command is a `ToolUse`/`ToolResult` pair written with `get_stream_writer()`, with the
+  output streamed through the same `LiveOutput` the Bash tool uses, so the chat shows an
+  ordinary run card (tagged "check") with no new event type.
+
+Running a command reuses `PersistentShell` (so the sandbox applies); each check runs in a
+subshell so that a command that calls `exit 3` reports 3 instead of ending the shell.
+
+### 6d. Asking the editor: `core/ide.py` and `vscode/src/codeIntel.ts`
+
+A language server knows what `grep` can only guess: which `total` this is, who calls it,
+what a name resolves to through an import. The model gets that through three more of the
+"IDE tools" above. The client announces them in `ide_capabilities.tools`, the engine builds
+a `Tool` for each name it knows (an editor that does not name them just does not offer
+them), and a call travels as an `ide_tool_request`. Two decisions are worth reading:
+
+* the editor answers with **JSON** and the engine writes the text the model reads
+  (`format_locations`), so the rules are the same for every editor: a location in a secret
+  file is not mentioned (`sensitive.is_secret`), a file outside the project is a path
+  without its code (Read would ask before opening it), a line of code cannot close the
+  `<system-reminder>` it sits in, and a long list is cut with a count;
+* the model names a **line and a symbol**, not a column (models count columns badly). The
+  editor finds the name as a whole word on that line, and if it is not there it answers
+  with what *is* on the line, so the model can correct itself.
+
+The VS Code side is [`codeIntel.ts`](../../../vscode/src/codeIntel.ts): the providers are
+commands (`vscode.executeDefinitionProvider`, `executeReferenceProvider`,
+`executeWorkspaceSymbolProvider`), reached through a small structural `CodeApi` so that its
+logic is tested in plain Node, without VS Code.
 
 ### 7. Shipping without Python: the standalone build
 

@@ -205,6 +205,17 @@ what the command printed. Long output is folded to its last lines: **Show all** 
 
 ![A failed, a passed and a stopped command](img/13-bash-card.png)
 
+### Checks after an edit
+
+With `verify.commands` in your settings (for example `["npm run build", "npm test"]`), cmcoder
+runs them after a request that changed code and shows each as a card tagged **check**, with its
+output live (no Stop button: it is a check, not a command it chose to run). The first one that
+fails stops the check, and cmcoder is sent back to fix it with that output in front of it, up to
+`verify.maxRounds` times; if it is still failing the answer stands with a warning. `/verify` runs
+the checks now, `/verify off` and `/verify on` switch the step for this conversation, and `/verify setup`
+suggests commands from your project's files. A project's own `verify` setting counts only after
+`cmcoder trust`.
+
 After you allow it, cmcoder finishes and tells you what it did:
 
 ![The change is made and cmcoder reports](img/08-done.png)
@@ -262,6 +273,7 @@ line opens the Agent Navigator the same way.
 | The chat shows a red card ("The model gateway is not answering (502)") | the gateway failed, not your project. **Retry** runs the failed step again (your message is not sent twice and finished work is kept); **Switch model** puts `/model ` in the box; **Open log** shows the extension's log. A key that was refused offers no Retry: run `cmcoder login` |
 | I want a reply's code in my file | every code block has **Copy** and, in VS Code, **Insert** (puts the code in the file you were editing, at the cursor, over the selection) and **Compare** (opens VS Code's diff editor with the code on the left and your file on the right: nothing is written until you take a change with the editor's arrows; best for a block that is the whole file) |
 | I selected an element in VS Code's browser and it went to Copilot, not cmcoder | VS Code's own *select element* button always attaches to Copilot's chat. Use cmcoder's **Pick element** button in the chat (or type `/pick`), click the element, then write your message: [browser-testing.md](browser-testing.md#pick-point-at-an-element-and-talk-about-it) |
+| cmcoder should know where something is defined or used, not guess from text | nothing to switch on: in VS Code cmcoder can ask your language servers (the same ones behind F12 and Shift+F12) where a symbol is **defined** (`goToDefinition`), **everything that uses it** (`findReferences`, before a rename or a changed signature) and **what is called what** in the workspace (`workspaceSymbols`). It shows as `goToDefinition(src/orders.py:12 total)` in the chat. It needs the language extension for your language (Pylance, C# Dev Kit, the TypeScript one that is built in…) to be running; with none, the answer is "No definition … found". Files that hold secrets (`.env`, keys) are never listed, and a place outside your project is shown as a path without its code |
 | Earlier conversations | **History** at the top; **Continue Last Conversation** in the view's `…` menu |
 | Safer or freer | the mode picker at the top (`default` asks before edits and commands) |
 | A second opinion | the **Critique** box makes a reviewer check each answer first |

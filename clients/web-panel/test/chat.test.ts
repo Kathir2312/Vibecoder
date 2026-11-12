@@ -1179,3 +1179,25 @@ test("the mode picker offers auto (ask only for risky actions), each mode explai
   assert.deepEqual((await sent()).at(-1), { kind: "setMode", mode: "auto" });
   await page.close();
 });
+
+for (const flavour of FLAVOURS) {
+  test(`${flavour}: the project's check after an edit is a run card tagged "check", with its output, and nothing to stop`, async () => {
+    const { page, ev } = await panel(flavour, undefined, true, "stopTool sessionRules");
+    await ev({ type: "system_init", protocol_version: 1, session_id: "s", cwd: "/p", model: "m", provider: "corp", tools: [], permission_mode: "default", critique: false, version: "0.1.0", features: ["stopTool"] });
+    await page.fill("textarea", "set x");
+    await page.press("textarea", "Enter");
+    await ev({ type: "tool_use", id: "verify-1-0-1", name: "Verify", input: { command: "pytest -q" }, label: "Verify(pytest -q)", parent_tool_use_id: null });
+    await ev({ type: "tool_progress", id: "verify-1-0-1", name: "Verify", text: "F\n", elapsed_ms: 40, parent_tool_use_id: null });
+    await page.waitForSelector(".tool.bash.check .bash-out");
+    assert.equal(await page.textContent(".tool.bash.check .bash-tag"), "check");
+    assert.equal(await page.textContent(".tool.bash.check .bash-cmd"), "pytest -q");
+    assert.equal(await page.locator(".tool.bash.check .stop-cmd").isVisible(), false, "a check is not a command to stop");
+    await ev({ type: "tool_result", id: "verify-1-0-1", name: "Verify", content: "F\nFAILED test_orders: expected 3, got 4", is_error: true, summary: "exit 1", parent_tool_use_id: null, exit_code: 1, duration_ms: 1200, total_lines: 2, stopped: false, images: [] });
+    assert.equal(await page.textContent(".tool.bash.check .bash-badge"), "✗ exit 1 · 1.2 s");
+    assert.match((await page.textContent(".tool.bash.check .bash-out")) ?? "", /expected 3, got 4/);
+    assert.equal(await page.locator(".tool.bash:not(.check)").count(), 0, "not drawn as a command the agent ran");
+    await ev({ type: "warning", message: "The checks still fail after 2 attempts to fix them (`pytest -q`: exit 1); the answer may be wrong. /verify runs them again." });
+    assert.match((await page.textContent(".log")) ?? "", /still fail after 2 attempts/);
+    await page.close();
+  });
+}

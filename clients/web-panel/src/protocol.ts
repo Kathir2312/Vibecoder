@@ -270,6 +270,7 @@ export interface ModelChanged {
   type: "model_changed";
   model: string;
   context_window: number | null;
+  reason: string;
 }
 
 /** Run an IDE tool in the client; answer with `ide_tool_result`. */

@@ -91,6 +91,7 @@ from ..middleware.permission import PermissionMiddleware
 from ..middleware.rethink import RethinkMiddleware
 from ..middleware.tool_text import TextToolCallsMiddleware
 from ..middleware.toolcall import ToolCallContextMiddleware
+from ..middleware.verify import VerifyMiddleware
 from ..middleware.vision import VisionMiddleware
 from ..models.chat import ModelBundle, build_chat_model
 from ..models.gateway import prepare_models
@@ -168,6 +169,7 @@ class Agent:
     hooks: HookRunner | None = None  # the user's hook commands (core/hooks.py)
     subagents: SubagentRuntime | None = None  # the Task tool's runs (agents/subagents.py)
     critic: CriticMiddleware | None = None  # reviews answers; `.enabled` can be switched
+    verify: VerifyMiddleware | None = None  # runs the project's checks after edits (`/verify`)
     team: bool = False  # the Team tool is offered (`team.enabled`; agents/team.py)
     sandbox: Sandbox | None = None  # the Bash sandbox (sandbox/; None: unsandboxed)
     code_index: CodeIndex | None = None  # code search (rag/; None: off or not indexed)
@@ -239,6 +241,11 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
     )
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
+    # What `/critic` and `/verify` switched stays switched.
+    if old.critic is not None and new.critic is not None:
+        new.critic.enabled = old.critic.enabled
+    if old.verify is not None and new.verify is not None:
+        new.verify.enabled = old.verify.enabled
     old.sandbox = old.telemetry = old.memory = None
     if old.code_index is new.code_index:
         old.code_index = None
@@ -540,15 +547,29 @@ def build_agent(
         window=profile.context_window,
     )
     middleware.append(critic)
+    # Verify (after_agent): the project's checks after a request that changed files. Last in the list
+    # so that it runs first of the after-agent hooks: the critic reviews code that passes them.
+    verify = VerifyMiddleware(
+        settings.verify.commands,
+        enabled=settings.verify.enabled,
+        max_rounds=settings.verify.max_rounds,
+        timeout=settings.verify.timeout,
+        root=root,
+        sandbox=sandbox,
+        max_output_chars=ctx.max_output_chars,
+    )
+    middleware.append(verify)
 
-    # 4. The agent itself: a compiled LangGraph graph.
+    # 4. The agent itself: a compiled LangGraph graph. The saver it uses is kept in `spec`, made
+    #    here when none was given, so that a rebuild (`rebuild_agent`) continues the same threads.
+    saver = checkpointer or InMemorySaver(serde=checkpoint_serde())
     graph = create_agent(
         model=bundle.model,
         tools=lc_tools,
         system_prompt=system_prompt,
         middleware=middleware,
         context_schema=RunContext,
-        checkpointer=checkpointer or InMemorySaver(serde=checkpoint_serde()),
+        checkpointer=saver,
         name="cmcoder",
     )
     return Agent(
@@ -566,6 +587,7 @@ def build_agent(
         hooks=hooks,
         subagents=subagents,
         critic=critic,
+        verify=verify,
         team=settings.team.enabled,
         sandbox=sandbox,
         code_index=code_index,
@@ -580,7 +602,7 @@ def build_agent(
         spec={
             "settings": settings,
             "opts": opts,
-            "checkpointer": checkpointer,
+            "checkpointer": saver,
             "extra_middleware": extra_middleware,
             "extra_tools": extra_tools,
             "mcp": mcp,

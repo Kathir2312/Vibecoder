@@ -96,6 +96,12 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) 
     await ev({ type: "tool_use", id: "f2", name: "Edit", input: {}, label: "Edit(src/app.py)", parent_tool_use_id: null });
     await ev({ ...toolResult, id: "f2", name: "Edit", is_error: true, content: "old_string not found", summary: "error" });
   },
+  "a check after an edit that failed, next to a command that passed": async (ev) => {
+    await ev({ type: "tool_use", id: "c1", name: "Verify", input: { command: "pytest -q" }, label: "Verify(pytest -q)", parent_tool_use_id: null });
+    await ev({ ...toolResult, id: "c1", name: "Verify", is_error: true, content: "F\nFAILED test_orders", summary: "exit 1", exit_code: 1, duration_ms: 1200, total_lines: 2 });
+    await ev({ type: "tool_use", id: "c2", name: "Verify", input: { command: "ruff check ." }, label: "Verify(ruff check .)", parent_tool_use_id: null });
+    await ev({ ...toolResult, id: "c2", name: "Verify", content: "All checks passed!", summary: "ok", exit_code: 0, duration_ms: 300, total_lines: 1 });
+  },
   "a permission question": async (ev) => {
     await ev(ask({ request_id: "r1", tool_use_id: "9", name: "Bash", label: "Bash(npm test)", input: { command: "npm test" }, suggested_rule: "Bash(npm test:*)" }));
   },
