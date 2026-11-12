@@ -121,3 +121,27 @@ test("a title without buttons is a card with no button row", async () => {
   assert.equal(await page.locator(".alert-actions").count(), 0);
   await page.close();
 });
+
+test("a fallback model is named on the model label, the failed reply is dropped, and the usual model comes back", async () => {
+  const { page, ev } = await panel("vscode");
+  await ev({ type: "system_init", protocol_version: 1, session_id: "s", cwd: "/p", model: "qwen3-27b", provider: "mock", tools: [], permission_mode: "default", critique: false, version: "1", features: [] });
+  assert.equal((await page.textContent(".model")) ?? "", "qwen3-27b");
+  await page.fill("textarea", "go");
+  await page.press("textarea", "Enter");
+  await ev({ type: "assistant_delta", text: "Half of an answ" }); // the failed model's reply
+  await page.waitForSelector(".msg.assistant");
+  await ev({ type: "warning", message: "qwen3-27b: The model gateway is not answering (502). Finishing this request with qwen3-7b; your next message tries qwen3-27b again." });
+  await ev({ type: "model_changed", model: "qwen3-7b", context_window: 32768, reason: "fallback" });
+  assert.equal(await page.textContent(".model"), "qwen3-7b · fallback");
+  assert.match((await page.getAttribute(".model", "title")) ?? "", /next message tries the usual model/);
+  assert.equal(await page.locator(".msg.assistant").count(), 0, "what the failed model wrote is not kept");
+  await ev({ type: "assistant_delta", text: "The whole answer." });
+  await ev({ type: "assistant_message", text: "The whole answer.", reasoning: "", tool_calls: [], model: null });
+  await page.waitForFunction(() => document.querySelector(".msg.assistant")?.textContent?.includes("The whole answer."));
+  assert.equal(await page.locator(".msg.assistant").count(), 1);
+  assert.match((await page.textContent(".note.warning, .alert.warning, .note")) ?? "", /Finishing this request with qwen3-7b/);
+  await ev({ ...result });
+  await ev({ type: "model_changed", model: "qwen3-27b", context_window: 32768, reason: "restore" });
+  assert.equal(await page.textContent(".model"), "qwen3-27b");
+  await page.close();
+});

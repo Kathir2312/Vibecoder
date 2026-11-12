@@ -251,6 +251,9 @@ class ModelChanged(_Event):
     type: Literal["model_changed"] = "model_changed"
     model: str
     context_window: int | None = None
+    # "fallback": the main model's gateway failed and this one finishes the request;
+    # "restore": the main model is back for the next request; "": chosen by the user.
+    reason: str = ""
 
 
 class IdeToolRequest(_Event):

@@ -312,6 +312,9 @@ class Settings(_Model):
     vision_model: str | None = Field(None, alias="visionModel")
     # The model of the built-in `explore` subagent (default: smallFastModel).
     subagent_model: str | None = Field(None, alias="subagentModel")
+    # A model ("provider:model") to finish a request on when the main one's gateway fails
+    # (down, overloaded, timing out, rate limiting): runtime/session.py `_fall_back`.
+    fallback_model: str | None = Field(None, alias="fallbackModel")
     model_profiles: list[dict[str, Any]] = Field(default_factory=list, alias="modelProfiles")
     permissions: PermissionsConfig = Field(
         default_factory=lambda: PermissionsConfig.model_validate({})
@@ -561,6 +564,8 @@ def env_layer(environ: dict[str, str] | None = None) -> dict[str, Any]:
         layer["smallFastModel"] = env["CMCODER_SMALL_FAST_MODEL"]
     if env.get("CMCODER_VISION_MODEL"):
         layer["visionModel"] = env["CMCODER_VISION_MODEL"]
+    if env.get("CMCODER_FALLBACK_MODEL"):
+        layer["fallbackModel"] = env["CMCODER_FALLBACK_MODEL"]
     sandbox = env.get("CMCODER_SANDBOX", "").strip().lower()
     if sandbox in ("0", "false", "off", "no"):
         layer["sandbox"] = {"enabled": False}
@@ -844,7 +849,7 @@ def load_settings(
         hint = ""
         if any(
             f"providers.{k}" in str(e)
-            for k in ("model", "smallFastModel", "visionModel", "permissions")
+            for k in ("model", "smallFastModel", "visionModel", "fallbackModel", "permissions")
         ):
             hint = (
                 "\nhint: `model` and `smallFastModel` go at the top level of settings.json, "

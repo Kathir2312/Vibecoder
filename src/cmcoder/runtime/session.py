@@ -64,7 +64,8 @@ from langgraph.types import Command
 
 from .. import __version__
 from ..agents.context import RunContext
-from ..agents.main import Agent
+from ..agents.main import Agent, rebuild_agent
+from ..agents.subagents import load_agents, model_ref
 from ..core.checkpoints import Checkpoints
 from ..images import Image
 from ..middleware.compaction import CompactionBlocked, CompactionMiddleware, is_summary
@@ -72,7 +73,7 @@ from ..middleware.permission import PERMISSION_KIND, STOPPED, stopped
 from ..middleware.tool_text import ToolCallHoldback
 from ..middleware.vision import DESCRIPTIONS_KEY, describe
 from ..models.chat import REASONING_KEY
-from ..models.errors import classify
+from ..models.errors import classify, worth_fallback
 from ..models.reasoning import ThinkSplitter, split_think
 from ..protocol import events as ev
 from .attachments import Attachment
@@ -144,6 +145,10 @@ class Session:
         self.attachments: list[Attachment] = []
         # What each request changed, for review and for taking parts back (runtime/changes.py).
         self.reviews = ChangeReviews()
+        # While a request is finished on the `fallbackModel`: the model to go back to, and the
+        # fallback in use (to tell that the user has not picked another model since).
+        self._primary: str | None = None
+        self._on_fallback: str | None = None
         self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
         if agent.telemetry is not None:  # counted when it starts, even without a turn
@@ -270,6 +275,8 @@ class Session:
         if telemetry is not None:
             telemetry.turn_started(self.session_id)
         try:
+            for event in await self._restore_primary():  # a retry tries the main model first
+                yield event
             critic = self.agent.critic
             state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
             context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
@@ -355,6 +362,8 @@ class Session:
                         session_id=self.session_id,
                     )
                     return
+        for event in await self._restore_primary():  # every request tries the main model first
+            yield event
         self.turn += 1
         context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
         critic = self.agent.critic
@@ -376,12 +385,15 @@ class Session:
         prompt: str,
         started: float,
         usage: dict[str, int],
+        *,
+        fallen_back: bool = False,
     ) -> AsyncIterator[ev.Event]:
         """Run the graph from `graph_input` until the turn ends, answering its questions on the way.
 
         `graph_input` None means "from where its last checkpoint stopped" (`retry`): LangGraph
         keeps the state of every step that finished, so a step that failed is run again and
-        the ones before it are not."""
+        the ones before it are not. `fallen_back`: this is the rest of a request that went on
+        with the `fallbackModel` (`_fall_back`); it does not fall back again."""
         hooks = self.agent.hooks
         error: ev.Error | None = None
         step_limit = False  # the graph's safety limit ended the turn
@@ -444,6 +456,26 @@ class Session:
             await self.repair_after_interrupt()
         except Exception as e:
             error = classify(e)
+            switched = None if fallen_back else await self._fall_back(error)
+            if switched is not None:
+                # The gateway of the main model failed and the fallback model is in: go on from the
+                # last checkpoint with fresh bookkeeping (the failed reply's tokens are dropped).
+                for event in switched:
+                    yield event
+                critic = self.agent.critic
+                fresh = _TurnState(
+                    await self.messages(), hold_answer=bool(critic and critic.enabled)
+                )
+                fresh.model_calls = state.model_calls
+                async for event in self._drive(
+                    None, context, fresh, prompt, started, usage, fallen_back=True
+                ):
+                    yield event
+                return
+            if fallen_back:
+                error = error.model_copy(
+                    update={"title": f"{error.title} (the fallback model too)"}
+                )
             yield error
             await self.repair_after_interrupt()
         if state.held is not None:
@@ -484,6 +516,77 @@ class Session:
             usage=usage,
             session_id=self.session_id,
         )
+
+    # --- the fallback model --------------------------------------------------------------
+    # LANGCHAIN: `ModelFallbackMiddleware` is the building block for "try another model", and is
+    # not used here on purpose. It works per model call (every call of a request would first wait
+    # for the failing main model again), it keeps everything built for the main model (the
+    # compaction limit, the output budget and tool-call repair come from that model's window and
+    # profile) and it cannot tell the user. Here a failed request goes on with the fallback built as
+    # `/model` builds a model (`rebuild_agent`: a full set of middleware for that model, on the same
+    # checkpointer), from the last checkpoint, once; the next request tries the main model first.
+    async def _rebuilt(self, **changes: Any) -> Agent:
+        """`rebuild_agent`, keeping the rules this turn allows (a new policy starts without them)."""
+        turn_allow = self.agent.policy.turn_allow
+        new = await rebuild_agent(self.agent, **changes)
+        new.policy.turn_allow = turn_allow
+        return new
+
+    def _pins_model(self) -> bool:
+        """Is the conversation an agent that names its own model? Then it keeps it."""
+        a = self.agent
+        if a.persona is None:
+            return False
+        settings = a.spec["settings"]
+        definition = load_agents(a.ctx.project_root, settings.project_trusted).get(a.persona)
+        return definition is not None and model_ref(settings, definition) is not None
+
+    async def _fall_back(self, error: ev.Error) -> list[ev.Event] | None:
+        """After `error`: put the `fallbackModel` in and say so (the events), or None when the
+        request should stop with the error: no fallback set, the error is not the gateway's (a
+        refused key), nothing to go on from, or the fallback cannot be built."""
+        a = self.agent
+        ref = a.spec["settings"].fallback_model
+        if not ref or not worth_fallback(error) or self._pins_model():
+            return None
+        snapshot = await a.graph.aget_state(self.config)
+        if not snapshot.next or snapshot.interrupts:  # a step to run again, as `retry` needs
+            return None
+        primary = a.bundle
+        try:
+            self.agent = await self._rebuilt(model=ref)
+        except Exception:  # a name the gateway does not know, a settings error: stay as it is
+            return None
+        bundle = self.agent.bundle
+        if bundle.ref == primary.ref:
+            return None
+        self._primary, self._on_fallback = primary.ref, bundle.ref
+        reason = error.title or error.kind
+        return [
+            ev.Warning(
+                message=f"{primary.name}: {reason}. Finishing this request with {bundle.name}; "
+                f"your next message tries {primary.name} again."
+            ),
+            ev.ModelChanged(
+                model=bundle.name, context_window=bundle.profile.context_window, reason="fallback"
+            ),
+        ]
+
+    async def _restore_primary(self) -> list[ev.Event]:
+        """A request is starting: back to the main model, if the last one ended on the fallback
+        (unless the user has picked another model since, which stays)."""
+        primary, on = self._primary, self._on_fallback
+        self._primary = self._on_fallback = None
+        if primary is None or self.agent.bundle.ref != on:
+            return []
+        try:
+            self.agent = await self._rebuilt(model=primary)
+        except Exception:  # the main model cannot be built right now: stay on the fallback
+            return []
+        b = self.agent.bundle
+        return [
+            ev.ModelChanged(model=b.name, context_window=b.profile.context_window, reason="restore")
+        ]
 
     async def _after_turn(self, prompt: str) -> None:
         if self.store is None:

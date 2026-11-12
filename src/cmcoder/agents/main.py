@@ -541,14 +541,16 @@ def build_agent(
     )
     middleware.append(critic)
 
-    # 4. The agent itself: a compiled LangGraph graph.
+    # 4. The agent itself: a compiled LangGraph graph. The saver it uses is kept in `spec`, made
+    #    here when none was given, so that a rebuild (`rebuild_agent`) continues the same threads.
+    saver = checkpointer or InMemorySaver(serde=checkpoint_serde())
     graph = create_agent(
         model=bundle.model,
         tools=lc_tools,
         system_prompt=system_prompt,
         middleware=middleware,
         context_schema=RunContext,
-        checkpointer=checkpointer or InMemorySaver(serde=checkpoint_serde()),
+        checkpointer=saver,
         name="cmcoder",
     )
     return Agent(
@@ -580,7 +582,7 @@ def build_agent(
         spec={
             "settings": settings,
             "opts": opts,
-            "checkpointer": checkpointer,
+            "checkpointer": saver,
             "extra_middleware": extra_middleware,
             "extra_tools": extra_tools,
             "mcp": mcp,

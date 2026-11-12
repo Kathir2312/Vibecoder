@@ -1213,7 +1213,13 @@ function onEvent(ev: AgentEvent): void {
       updatePick();
       break;
     case "model_changed":
-      modelLabel.textContent = ev.model;
+      modelLabel.textContent = ev.reason === "fallback" ? `${ev.model} · fallback` : ev.model;
+      modelLabel.title = ev.reason === "fallback" ? `${ev.model} is finishing this request: the usual model's gateway failed. The next message tries the usual model again.` : modelLabel.title;
+      if (ev.reason === "fallback" && reply) {
+        // What the failed model had written so far is not part of the answer: the new model writes it again.
+        reply.el.remove();
+        reply = undefined;
+      }
       break;
     case "result":
       if (reply) renderReply();

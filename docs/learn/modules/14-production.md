@@ -308,6 +308,24 @@ LiteLLM's `/model/info`, Open WebUI's `/api/models` and Ollama's trained
 context length, and probes a context window when nothing reports it
 (chapter 03).
 
+### 6b. When the gateway fails: `fallbackModel`
+
+LangChain has a middleware for "try another model", `ModelFallbackMiddleware`, and
+cmcoder does not use it for this. It works per model call: every call of a request
+would first wait for the failing model again, everything built around the main
+model (the compaction limit, the output budget, tool-call repair) would keep
+using *its* window, and the user would never be told. Instead
+[`Session._fall_back`](../../../src/cmcoder/runtime/session.py) acts on the
+request: when `classify()` says the failure is the gateway's
+(`models/errors.py` `worth_fallback`), it rebuilds the agent on `fallbackModel`
+with `rebuild_agent` (a full middleware set for that model, on the same
+checkpointer, so the same thread), and resumes with `astream(None, config)` from
+the last checkpoint: the same mechanism as `/retry`. The first model call that
+failed is the only step run again; the message is not sent twice. The next
+request puts the main model back (`_restore_primary`), unless you picked another
+model in between. It is done once per request: a fallback that fails too ends the
+request with the error card.
+
 ### 7. Shipping without Python: the standalone build
 
 Developers' PCs have no Python. PyInstaller bundles the interpreter, cmcoder

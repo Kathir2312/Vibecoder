@@ -25,6 +25,21 @@ from .overflow import is_context_overflow
 _TRY_AGAIN: list[ev.ErrorAction] = ["retry", "switch_model", "open_log"]
 
 
+# The failures another model could get past: the gateway, the network or the model's own
+# deployment is at fault. Not a refused key or budget (another model on the same key fails the
+# same way), not a context that is too long (the fallback may have a smaller window), not a
+# request the server refused (a 4xx: it would refuse it again).
+FALLBACK_KINDS = frozenset(
+    {"gateway", "server", "timeout", "connection", "rate_limit", "model_not_found"}
+)
+
+
+def worth_fallback(error: ev.Error) -> bool:
+    """Whether the request may go on with the fallback model (`fallbackModel`) after `error`."""
+    # A "server" error with no actions is the server refusing the request (4xx), not failing.
+    return error.kind in FALLBACK_KINDS and bool(error.actions)
+
+
 def classify(exc: BaseException) -> ev.Error:
     msg = str(exc) or type(exc).__name__
     if isinstance(exc, openai.AuthenticationError | openai.PermissionDeniedError):
