@@ -428,6 +428,35 @@ footer .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 
 .changes-actions { display: flex; gap: var(--cm-space-3); }
 .changes-counts { font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
 
+/* The settings page: a view in place of the conversation. */
+.settings-view { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: var(--cm-space-4) 10px; }
+.settings-head { display: flex; align-items: center; gap: var(--cm-space-4); }
+.settings-title { flex: 1; }
+.settings-notice {
+  margin: var(--cm-space-4) 0;
+  padding: var(--cm-space-3) var(--cm-space-4);
+  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--vscode-textCodeBlock-background);
+}
+.settings-group { margin: var(--cm-space-4) 0; padding-top: var(--cm-space-3); border-top: 1px solid var(--vscode-panel-border, transparent); }
+.settings-heading { margin: 0 0 var(--cm-space-3); font-size: 1em; font-weight: 700; }
+.settings-row { margin: var(--cm-space-3) 0 var(--cm-space-4); }
+.settings-label { display: block; font-weight: 600; margin-bottom: 2px; }
+.settings-row.bool { display: flex; align-items: center; flex-wrap: wrap; column-gap: var(--cm-space-3); }
+.settings-row.bool .settings-label { display: inline; margin: 0; }
+.settings-row.bool .settings-help { flex-basis: 100%; }
+.settings-row input[type="text"], .settings-row input[type="number"], .settings-row select, .settings-row textarea { width: 100%; box-sizing: border-box; padding: 3px 6px; }
+.settings-row textarea { font-family: var(--vscode-editor-font-family); resize: vertical; }
+.settings-help { color: var(--vscode-descriptionForeground); font-size: 0.92em; }
+.settings-gateway { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cm-space-3) var(--cm-space-4); margin: var(--cm-space-3) 0; }
+.gw-name { font-weight: 600; }
+.gw-url { overflow-wrap: anywhere; }
+.gw-key.ok, .settings-tested.ok { color: var(--cm-ok); }
+.gw-key.missing, .settings-tested.fail { color: var(--cm-err); }
+.settings-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cm-space-4); }
+.settings-foot { color: var(--vscode-descriptionForeground); font-size: 0.92em; }
+.settings-loading { color: var(--vscode-descriptionForeground); }
+
 .changes-view { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: var(--cm-space-4) 10px; }
 .review-head { display: flex; align-items: center; gap: var(--cm-space-4); flex-wrap: wrap; }
 .review-title { flex: 1; min-width: 0; }

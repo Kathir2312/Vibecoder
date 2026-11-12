@@ -113,6 +113,26 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) 
       ],
     });
   },
+  "the settings page with a missing key and a failed connection test": async (ev, page) => {
+    const base = { help: "Help text for the setting.", value: null, choices: [] as string[], locked: false, note: "" };
+    await page.click(".settings-open");
+    await ev({
+      type: "settings_state",
+      fields: [
+        { ...base, key: "model", label: "Main model", group: "Models", kind: "text", value: "corp:qwen3-27b" },
+        { ...base, key: "permissions.defaultMode", label: "Permission mode", group: "Behaviour", kind: "choice", value: "default", choices: ["default", "plan"] },
+        { ...base, key: "maxTurns", label: "Model calls per request", group: "Behaviour", kind: "number", value: 50 },
+        { ...base, key: "critic.enabled", label: "Critique every answer", group: "Behaviour", kind: "bool", value: true },
+        { ...base, key: "verify.commands", label: "Check commands", group: "Checks", kind: "lines", value: ["npm test"] },
+        { ...base, key: "audit.enabled", label: "Audit log", group: "Records", kind: "bool", value: true, locked: true, note: "set by your organisation" },
+      ],
+      gateways: [{ name: "corp", base_url: "https://gw.example/v1", key: "missing" }],
+      file: "/home/u/.cmcoder/settings.json",
+      notice: "Saved Main model: corp:qwen3-27b. In use now.",
+      models: ["qwen3-27b"],
+    });
+    await ev({ type: "connection_tested", ok: false, gateway: "corp", message: "The gateway refused the key: run `cmcoder login` in a terminal.", elapsed_ms: 20 });
+  },
   "a permission question": async (ev) => {
     await ev(ask({ request_id: "r1", tool_use_id: "9", name: "Bash", label: "Bash(npm test)", input: { command: "npm test" }, suggested_rule: "Bash(npm test:*)" }));
   },

@@ -231,6 +231,48 @@ class JobsChanged(_Event):
     jobs: list[JobInfo]
 
 
+class SettingsField(BaseModel):
+    """One setting of the settings page."""
+
+    key: str  # the dotted path in settings.json
+    label: str
+    group: str
+    kind: Literal["text", "choice", "bool", "number", "lines"]
+    help: str = ""
+    value: Any = None  # str | bool | int | list[str] | None
+    choices: list[str] = []
+    locked: bool = False  # the organisation fixes it: shown, not editable
+    note: str = ""
+
+
+class SettingsGateway(BaseModel):
+    name: str
+    base_url: str
+    key: Literal["set", "missing", "not needed"]  # whether an API key was found, never the key
+
+
+class SettingsState(_Event):
+    """The settings page: sent when it is opened (`/settings`), after a change (`/settings set
+    <key> <value>`, value as JSON for a list) and after a connection test (`/settings test`)."""
+
+    type: Literal["settings_state"] = "settings_state"
+    fields: list[SettingsField]
+    gateways: list[SettingsGateway]
+    file: str  # where the changes are saved
+    notice: str = ""  # what the last action did, or why it could not
+    models: list[str] = []  # the gateway's models, after a successful test
+
+
+class ConnectionTested(_Event):
+    """The answer to `/settings test`: whether the gateway answered, and how fast."""
+
+    type: Literal["connection_tested"] = "connection_tested"
+    ok: bool
+    gateway: str
+    message: str
+    elapsed_ms: int = 0
+
+
 class PermissionRequest(_Event):
     """The agent needs the user's approval for a tool call (stdio protocol).
 
@@ -570,6 +612,8 @@ Event = Annotated[
     | TurnChanges
     | AttachmentsChanged
     | JobsChanged
+    | SettingsState
+    | ConnectionTested
     | TurnChanges
     | ModelChanged
     | IdeToolRequest

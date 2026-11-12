@@ -22,6 +22,7 @@ import { copyText } from "./clipboard";
 import { enhanceCodeBlocks } from "./codeblock";
 import { Dock } from "./dock";
 import { JobsPanel } from "./jobs";
+import { settingsView, type ConnectionTested, type SettingsState } from "./settings";
 import { changesBar, reviewView, updateBar, type ChangesHost, type TurnChanges } from "./changes";
 import { errorCard, retireErrorCards } from "./errorcard";
 import { planCard, planOf } from "./plancard";
@@ -138,6 +139,7 @@ app.innerHTML = `
       <input type="checkbox" disabled> Critique
     </label>
     <button class="history secondary" title="Past conversations in this project">History</button>
+    <button class="settings-open secondary" type="button" title="Models, checks after edits and the audit log">Settings</button>
     <select class="mode" title="Permission mode (Shift+Tab in the CLI)" aria-label="Permission mode"></select>
   </header>
   <section class="sessions" hidden></section>
@@ -147,6 +149,7 @@ app.innerHTML = `
     <button class="to-end secondary" type="button" hidden title="Go to the newest output and follow it again">↓ Latest</button>
   </div>
   <section class="changes-view" hidden tabindex="-1" aria-label="Changes of a request"></section>
+  <section class="settings-view" hidden tabindex="-1" aria-label="Settings"></section>
   <section class="starters" hidden aria-label="Ways to start"></section>
   <div class="progress" hidden aria-hidden="true"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
@@ -175,6 +178,8 @@ const $ = <T extends HTMLElement>(sel: string) => app.querySelector(sel) as T;
 const log = $<HTMLElement>(".log");
 const logWrap = $<HTMLElement>(".log-wrap");
 const changesView = $<HTMLElement>(".changes-view");
+const settingsPanelView = $<HTMLElement>(".settings-view");
+const settingsButton = $<HTMLButtonElement>(".settings-open");
 const announcer = $<HTMLElement>(".announcer");
 
 /** Tell a screen reader something that is not in the conversation (the work started, it needs an answer). */
@@ -370,6 +375,7 @@ function setBusy(value: boolean): void {
   agentSelect.disabled = value; // an agent can't be changed in the middle of a turn
   log.setAttribute("aria-busy", String(value)); // a reader waits for the finished text, not each streamed piece
   renderReview(); // its buttons wait while a request runs
+  renderSettings(); // so do the settings: they change between requests
   renderChips();
   if (value && !was) announce(`${PRODUCT} is working`);
   if (!value) showStatus();
@@ -707,6 +713,53 @@ function forgetReviews(): void {
   reviews.clear();
   changeBars.clear();
   if (reviewing !== undefined) closeReview();
+}
+
+// --- the settings page --------------------------------------------------------------------------
+//
+// A view in place of the conversation, like the review of changes. The engine sends the page
+// (`settings_state`) when `/settings` is asked, and again after every change; this only draws it.
+
+let lastSettings: SettingsState | undefined;
+let settingsTested: ConnectionTested | undefined;
+let settingsTesting = false;
+let settingsOpen = false;
+
+const settingsHost = {
+  set: (key: string, value: string) => post({ kind: "send", text: `/settings set ${key} ${value}`, includeContext: false }),
+  test: () => {
+    settingsTesting = true;
+    settingsTested = undefined;
+    renderSettings();
+    post({ kind: "send", text: "/settings test", includeContext: false });
+  },
+  back: () => closeSettings(),
+};
+
+function renderSettings(): void {
+  if (!settingsOpen || !lastSettings) return;
+  const scroll = settingsPanelView.scrollTop;
+  const focused = (document.activeElement as HTMLElement | null)?.dataset?.key;
+  settingsPanelView.replaceChildren(settingsView(lastSettings, settingsHost, { tested: settingsTested, testing: settingsTesting, busy }));
+  settingsPanelView.scrollTop = scroll;
+  if (focused) settingsPanelView.querySelector<HTMLElement>(`[data-key="${CSS.escape(focused)}"]`)?.focus();
+}
+
+function openSettings(): void {
+  if (reviewing !== undefined) closeReview();
+  settingsOpen = true;
+  logWrap.hidden = true;
+  settingsPanelView.hidden = false;
+  settingsPanelView.replaceChildren(el("p", "settings-loading", "Loading the settings…"));
+  post({ kind: "send", text: "/settings", includeContext: false });
+}
+
+function closeSettings(): void {
+  settingsOpen = false;
+  settingsPanelView.hidden = true;
+  logWrap.hidden = false;
+  toEnd();
+  settingsButton.focus();
 }
 
 // --- a long conversation is drawn newest first -------------------------------------------------
@@ -1076,6 +1129,15 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "jobs_changed":
       jobsPanel.update(ev);
+      break;
+    case "settings_state":
+      lastSettings = ev;
+      renderSettings();
+      break;
+    case "connection_tested":
+      settingsTesting = false;
+      settingsTested = ev;
+      renderSettings();
       break;
     case "permission_request":
       permissionCard(ev);
@@ -1924,6 +1986,12 @@ function send(): void {
     return;
   }
   showStatus();
+  if (text === "/settings" && !pendingImages.length) {
+    setInput("");
+    commandsPopup.hidden = true;
+    openSettings();
+    return;
+  }
   const images = pendingImages;
   pendingImages = [];
   renderImages();
@@ -2131,6 +2199,7 @@ historyButton.onclick = () => {
   if (!sessionsPanel.hidden) sessionsPanel.hidden = true;
   else if (!busy) post({ kind: "listSessions" });
 };
+settingsButton.onclick = () => (settingsOpen ? closeSettings() : openSettings());
 modeSelect.onchange = () => post({ kind: "setMode", mode: modeSelect.value });
 critiqueBox.onchange = () => post({ kind: "setCritique", enabled: critiqueBox.checked });
 document.addEventListener("keydown", (e) => {

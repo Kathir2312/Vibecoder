@@ -407,6 +407,27 @@ for free. Three things are worth reading:
   but `/jobs stop` ends a process and takes nothing from the request, so `handle()` lets it
   through. The panel's Stop button is then just that message, and no IDE needs to change.
 
+### 6g. A settings page that cannot do harm: `config/editor.py`
+
+A settings form is a way to write to a file the whole program trusts, so the engine, not the
+panel, decides everything. [`editor.py`](../../../src/cmcoder/config/editor.py) holds a **fixed
+table** of the settings the page may touch (`FIELDS`): `write_value` refuses any other key, so a
+gateway, a hook or a sandbox rule cannot be changed through it, whatever the panel sends. A
+change is parsed for its kind, put into the user's JSON (every other key stays), checked by
+validating the whole file as `Settings`, and only then replaced in one step (`os.replace`
+of a temp file). The managed settings win: a key the organisation sets is `locked` in the
+page and refused by `write_value`. After saving, the stdio server loads the settings again,
+rebuilds the agent (the same `rebuild_agent` as `/model`) and sets again the few switches a
+rebuild keeps from the old agent (`/critic`, `/verify`, `/audit`), and tells the user if
+something with more say (an environment variable, the project) still decides differently.
+
+The panel ([`settings.ts`](../../../clients/web-panel/src/chat/settings.ts)) only draws the
+`settings_state` event and says which control changed, as the message
+`/settings set <key> <value>`: the same "no host change" route as `/pick` and `/jobs stop`,
+so every IDE gets the page. There is no field for an API key on purpose: it would travel
+through the IDE and its logs, so the page shows whether one was found and names
+`cmcoder login`.
+
 ### 7. Shipping without Python: the standalone build
 
 Developers' PCs have no Python. PyInstaller bundles the interpreter, cmcoder
