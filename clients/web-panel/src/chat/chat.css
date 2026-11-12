@@ -1,5 +1,42 @@
 /* The chat panel. Colours come from the VS Code theme (light, dark, high contrast). */
 
+/* One scale for the whole panel: spacing, corner radius, and the theme's success green for text.
+   Colours otherwise are the IDE's own (theme.json); these are not, so they never change per IDE. */
+:root {
+  --cm-space-1: 2px;
+  --cm-space-2: 4px;
+  --cm-space-3: 6px;
+  --cm-space-4: 8px;
+  --cm-space-5: 12px;
+  --cm-space-6: 16px;
+  --cm-radius-s: 3px;
+  --cm-radius-m: 6px;
+  --cm-radius-l: 12px;
+  /* The theme's green is meant for marks and bars; as small text it needs more contrast, so it
+     is mixed toward the text colour (an IDE without color-mix keeps the plain green). */
+  --cm-ok: var(--vscode-testing-iconPassed, #388a34);
+  --cm-err: var(--vscode-errorForeground, #c72e0f);
+}
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --cm-ok: color-mix(in srgb, var(--vscode-testing-iconPassed, #388a34) 65%, var(--vscode-foreground, #3b3b3b));
+    --cm-err: color-mix(in srgb, var(--vscode-errorForeground, #c72e0f) 75%, var(--vscode-foreground, #3b3b3b));
+  }
+}
+
+/* Read by screen readers only: the page heading and the announcer. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -25,7 +62,7 @@ header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--cm-space-4);
   padding: 6px 10px;
   border-bottom: 1px solid var(--vscode-panel-border, transparent);
 }
@@ -51,7 +88,7 @@ select, input, textarea {
   border: 1px solid var(--vscode-input-border, transparent);
   font-family: inherit;
   font-size: inherit;
-  border-radius: 2px;
+  border-radius: var(--cm-radius-s);
 }
 
 select { padding: 2px 4px; }
@@ -83,7 +120,7 @@ select { padding: 2px 4px; }
   flex: none;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--cm-space-2);
   min-height: 2.15em;
   padding: 0 8px 0 4px;
 }
@@ -92,11 +129,11 @@ select { padding: 2px 4px; }
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--cm-space-4);
   padding: 3px 4px;
   color: inherit;
   background: none;
-  border-radius: 3px;
+  border-radius: var(--cm-radius-s);
   text-align: left;
   font: inherit;
 }
@@ -121,7 +158,7 @@ select { padding: 2px 4px; }
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--cm-space-4);
   overflow: hidden;
 }
 .dock-count { flex: none; opacity: 0.85; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -156,7 +193,7 @@ select { padding: 2px 4px; }
   flex: none;
   width: 56px;
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--cm-radius-s);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-panel-border, transparent);
   overflow: hidden;
@@ -188,7 +225,7 @@ select { padding: 2px 4px; }
   bottom: 8px;
   padding: 2px 10px;
   border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 12px;
+  border-radius: var(--cm-radius-l);
   font-size: 0.9em;
 }
 
@@ -232,7 +269,7 @@ select { padding: 2px 4px; }
 .msg.user {
   white-space: pre-wrap;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--cm-radius-s);
   background: var(--vscode-input-background);
   border-left: 3px solid var(--vscode-textLink-foreground);
 }
@@ -243,7 +280,7 @@ select { padding: 2px 4px; }
   background: var(--vscode-textCodeBlock-background);
   padding: 6px 8px;
   overflow-x: auto;
-  border-radius: 3px;
+  border-radius: var(--cm-radius-s);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -252,7 +289,7 @@ select { padding: 2px 4px; }
   font-family: var(--vscode-editor-font-family);
   background: var(--vscode-textCodeBlock-background);
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: var(--cm-radius-s);
 }
 
 .msg pre code { background: none; padding: 0; }
@@ -264,11 +301,11 @@ select { padding: 2px 4px; }
 .tool .tool-call { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tool .tool-name { font-weight: 600; }
 .tool .tool-args { opacity: 0.9; }
-.tool .result { opacity: 0.7; padding-left: 12px; }
+.tool .result { color: var(--vscode-descriptionForeground); padding-left: 12px; }
 .tool pre { margin: 2px 0 0 12px; opacity: 0.8; }
-.tool pre.error { color: var(--vscode-errorForeground); opacity: 1; }
+.tool pre.error { color: var(--cm-err); opacity: 1; }
 .tool img.shot {
-  display: block; max-width: 340px; margin: 6px 0 2px 12px; border-radius: 6px; cursor: zoom-in;
+  display: block; max-width: 340px; margin: 6px 0 2px 12px; border-radius: var(--cm-radius-m); cursor: zoom-in;
   border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4));
 }
 .tool img.shot.big { max-width: calc(100% - 12px); cursor: zoom-out; }
@@ -280,7 +317,7 @@ select { padding: 2px 4px; }
   padding: 8px 10px;
   border: 1px solid var(--vscode-panel-border, transparent);
   border-left: 4px solid var(--vscode-editorWarning-foreground, var(--vscode-focusBorder));
-  border-radius: 4px;
+  border-radius: var(--cm-radius-s);
   background: var(--vscode-editorWidget-background);
 }
 .permission.risk { border-left-color: var(--vscode-errorForeground); }
@@ -290,7 +327,7 @@ select { padding: 2px 4px; }
 
 .ask-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
 .ask-icon { width: 1.3em; text-align: center; font-weight: 700; color: var(--vscode-editorWarning-foreground); }
-.risk .ask-icon { color: var(--vscode-errorForeground); }
+.risk .ask-icon { color: var(--cm-err); }
 .ask-title { font-weight: 600; overflow-wrap: anywhere; }
 .ask-agent { opacity: 0.7; font-size: 0.9em; }
 .ask-count { margin-left: auto; opacity: 0.7; font-size: 0.9em; }
@@ -298,15 +335,15 @@ select { padding: 2px 4px; }
 .chip {
   padding: 0 8px;
   border: 1px solid var(--vscode-panel-border, currentColor);
-  border-radius: 10px;
+  border-radius: var(--cm-radius-l);
   font-size: 0.85em;
 }
-.risk .chip { border-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
+.risk .chip { border-color: var(--vscode-errorForeground); color: var(--cm-err); }
 
 .ask-cmd, .ask-diff, .permission pre.preview {
   margin: 6px 0;
   background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
+  border-radius: var(--cm-radius-s);
   font-family: var(--vscode-editor-font-family);
   font-size: var(--vscode-editor-font-size);
 }
@@ -319,12 +356,12 @@ select { padding: 2px 4px; }
 
 /* A shell command: flags, strings, variables; what can do harm stands out. */
 .sh-flag { color: var(--vscode-textLink-foreground); }
-.sh-string { color: var(--vscode-testing-iconPassed); }
+.sh-string { color: var(--cm-ok); }
 .sh-var { color: var(--vscode-editorWarning-foreground); }
 .sh-op { opacity: 0.65; }
 .sh-comment { opacity: 0.55; font-style: italic; }
 .sh-danger {
-  color: var(--vscode-errorForeground);
+  color: var(--cm-err);
   font-weight: 700;
   text-decoration: underline;
   text-decoration-color: var(--vscode-errorForeground);
@@ -335,15 +372,15 @@ select { padding: 2px 4px; }
 .ask-diff { overflow: hidden; }
 .diff-head {
   display: flex;
-  gap: 8px;
+  gap: var(--cm-space-4);
   padding: 3px 8px;
   border-bottom: 1px solid var(--vscode-panel-border, transparent);
   font-size: 0.9em;
 }
 .diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-new { opacity: 0.7; }
-.diff-add { color: var(--vscode-testing-iconPassed); }
-.diff-del { color: var(--vscode-errorForeground); }
+.diff-add { color: var(--cm-ok); }
+.diff-del { color: var(--cm-err); }
 .diff-rows { max-height: 280px; overflow: auto; }
 .permission.answered .diff-rows { max-height: 8em; }
 .drow { display: flex; min-height: 1.35em; white-space: pre-wrap; }
@@ -361,26 +398,26 @@ select { padding: 2px 4px; }
 .drow .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .drow.add { box-shadow: inset 3px 0 var(--vscode-testing-iconPassed); }
 .drow.add { background: color-mix(in srgb, var(--vscode-testing-iconPassed) 16%, transparent); }
-.drow.add .sign { color: var(--vscode-testing-iconPassed); opacity: 1; }
+.drow.add .sign { color: var(--cm-ok); opacity: 1; }
 .drow.del { box-shadow: inset 3px 0 var(--vscode-errorForeground); }
 .drow.del { background: color-mix(in srgb, var(--vscode-errorForeground) 16%, transparent); }
-.drow.del .sign { color: var(--vscode-errorForeground); opacity: 1; }
+.drow.del .sign { color: var(--cm-err); opacity: 1; }
 .drow.gap { padding-left: 8px; opacity: 0.55; font-size: 0.9em; }
 
-.ask-note { margin-top: 6px; font-size: 0.9em; color: var(--vscode-errorForeground); }
+.ask-note { margin-top: 6px; font-size: 0.9em; color: var(--cm-err); }
 .danger-parts { margin-top: 2px; font-family: var(--vscode-editor-font-family); }
 .ask-actions, .permission .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
 .ask-actions .link { margin: 0 0 0 4px; }
 button.danger {
   background: transparent;
-  color: var(--vscode-errorForeground);
+  color: var(--cm-err);
   border: 1px solid var(--vscode-errorForeground);
 }
 button.danger:hover { background: transparent; text-decoration: underline; }
 .ask-rule { margin-top: 6px; overflow-wrap: anywhere; }
 .ask-rule code {
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--cm-radius-s);
   background: var(--vscode-textCodeBlock-background);
   font-family: var(--vscode-editor-font-family);
 }
@@ -391,7 +428,7 @@ button.danger:hover { background: transparent; text-decoration: underline; }
 .tool.bash {
   margin: 6px 0;
   border: 1px solid var(--vscode-panel-border, transparent);
-  border-radius: 4px;
+  border-radius: var(--cm-radius-s);
   overflow: hidden;
 }
 .tool.bash[data-state="fail"] { border-left: 3px solid var(--vscode-errorForeground); }
@@ -401,15 +438,15 @@ button.danger:hover { background: transparent; text-decoration: underline; }
 .bash-head {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--cm-space-3);
   padding: 4px 8px;
   background: var(--vscode-textCodeBlock-background);
 }
 .bash-head .bash-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bash-cmd { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 .bash-badge { flex: none; font-size: 0.9em; }
-.bash-badge.ok { color: var(--vscode-testing-iconPassed); }
-.bash-badge.fail, .bash-badge.fail-other { color: var(--vscode-errorForeground); }
+.bash-badge.ok { color: var(--cm-ok); }
+.bash-badge.fail, .bash-badge.fail-other { color: var(--cm-err); }
 .bash-badge.stopped, .bash-badge.waiting { color: var(--vscode-editorWarning-foreground); }
 .bash-badge.interrupted { opacity: 0.7; }
 .bash-badge.running, .bash-badge.stopping { color: var(--vscode-textLink-foreground); }
@@ -442,7 +479,7 @@ button.danger:hover { background: transparent; text-decoration: underline; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--cm-space-5);
   padding: 2px 8px 4px;
   font-family: var(--vscode-font-family);
 }
@@ -451,7 +488,7 @@ button.danger:hover { background: transparent; text-decoration: underline; }
 
 .note { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .note.warn { color: var(--vscode-editorWarning-foreground); }
-.note.error { color: var(--vscode-errorForeground); }
+.note.error { color: var(--cm-err); }
 .note.info { opacity: 0.8; }
 .note button { margin-top: 6px; }
 
@@ -479,7 +516,7 @@ footer .actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--cm-space-3);
   margin-top: 6px;
 }
 
@@ -492,7 +529,7 @@ button {
   background: var(--vscode-button-background);
   border: none;
   padding: 4px 12px;
-  border-radius: 2px;
+  border-radius: var(--cm-radius-s);
   cursor: pointer;
   font-family: inherit;
   font-size: inherit;
@@ -507,7 +544,8 @@ button.secondary {
 
 button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
 
-button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible,
+[role="button"]:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
 }
@@ -521,7 +559,7 @@ header .critique {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--cm-space-2);
   white-space: nowrap;
   cursor: pointer;
   opacity: 0.9;
@@ -554,7 +592,7 @@ header .critique:has(input:disabled) { opacity: 0.5; cursor: default; }
 footer .context {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--cm-space-2);
   margin-bottom: 4px;
   opacity: 0.85;
   cursor: pointer;
@@ -599,7 +637,7 @@ footer .commands .description { opacity: 0.7; margin-left: 8px; }
 .tool .steps summary { cursor: pointer; opacity: 0.7; }
 .tool .steps { margin: 2px 0 2px 12px; border-left: 2px solid var(--vscode-panel-border, #8884); padding-left: 6px; }
 .tool .steps .step { opacity: 0.75; font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tool .steps .error { color: var(--vscode-errorForeground); }
+.tool .steps .error { color: var(--cm-err); }
 
 /* The Subagents panel of the dock: a row per subagent (what it is, how far it is, what it does
    now). A narrow panel puts the numbers on their own line. */
@@ -629,7 +667,7 @@ footer .commands .description { opacity: 0.7; margin-left: 8px; }
 }
 .agents .running .name, .substatus.running { color: var(--vscode-textLink-foreground); }
 .agents .waiting .name, .agents .stopping .name, .substatus.waiting, .substatus.stopping { color: var(--vscode-editorWarning-foreground); }
-.agents .failed .name, .substatus.failed { color: var(--vscode-errorForeground); }
+.agents .failed .name, .substatus.failed { color: var(--cm-err); }
 .agents .queued { opacity: 0.6; }
 .tool .substatus { opacity: 0.8; padding-left: 12px; font-size: 0.95em; }
 
@@ -671,12 +709,12 @@ footer .commands .description { opacity: 0.7; margin-left: 8px; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--cm-space-3);
   padding: 6px 10px;
   border-top: 1px solid var(--vscode-panel-border, transparent);
 }
 .starters-heading { flex-basis: 100%; opacity: 0.75; }
-.starter { padding: 2px 10px; border-radius: 12px; }
+.starter { padding: 2px 10px; border-radius: var(--cm-radius-l); }
 
 /* Messages typed while it works: sent when the turn ends. */
 .queued { margin-bottom: 4px; }
@@ -686,15 +724,15 @@ footer .commands .description { opacity: 0.7; margin-left: 8px; }
 
 /* Critique: the reviewer's verdict on the answer. */
 .note.review .issues { margin: 2px 0 0; padding-left: 1.4em; }
-.note.review .issue.high { color: var(--vscode-errorForeground); }
+.note.review .issue.high { color: var(--cm-err); }
 .note.review .fix { opacity: 0.75; }
-.note.review-pass { color: var(--vscode-testing-iconPassed, #73c991); }
+.note.review-pass { color: var(--cm-ok); }
 
 /* Images to send (pasted, dropped or picked), and in sent messages. */
 footer .images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 footer .images .item { position: relative; }
-footer .images .thumb { display: block; height: 56px; max-width: 120px; object-fit: cover; border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4)); border-radius: 3px; }
-footer .images .remove { position: absolute; top: -6px; right: -6px; padding: 0 5px; line-height: 16px; border-radius: 8px; }
+footer .images .thumb { display: block; height: 56px; max-width: 120px; object-fit: cover; border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.4)); border-radius: var(--cm-radius-s); }
+footer .images .remove { position: absolute; top: -6px; right: -6px; padding: 0 5px; line-height: 16px; border-radius: var(--cm-radius-m); }
 footer .image, footer .pick { padding: 4px 8px; }
 .msg.user .thumbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.msg.user .thumbs .thumb { height: 72px; max-width: 160px; object-fit: cover; border-radius: 3px; }
+.msg.user .thumbs .thumb { height: 72px; max-width: 160px; object-fit: cover; border-radius: var(--cm-radius-s); }

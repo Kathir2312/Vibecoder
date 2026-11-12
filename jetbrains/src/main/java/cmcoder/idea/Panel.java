@@ -239,6 +239,7 @@ public final class Panel implements Disposable {
         String icon = Files.isRegularFile(panel.resolve("icon.png")) ? " data-icon=\"" + attr(source + "/icon.png") + "\"" : "";
         String html = "<!DOCTYPE html>\n<html lang=\"en\"><head>\n"
                 + "  <meta charset=\"UTF-8\">\n"
+                + "  <title>" + attr(Brand.product()) + "</title>\n"
                 + "  <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src file:; img-src file: data:; script-src 'nonce-"
                 + nonce + "'\">\n"
                 + "  <link href=\"" + attr(source + "/" + page + ".css") + "\" rel=\"stylesheet\">\n"

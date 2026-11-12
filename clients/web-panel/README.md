@@ -88,6 +88,16 @@ Nothing scrolls the page: the conversation and each open list have their own scr
 - **Pick element** (`updatePick`): the button next to Image sends `/pick` as a message (the engine does the
   rest: `src/cmcoder/runtime/pick.py`), shown when `command_list` has `pick`, disabled during a request. The
   element is not a panel concept: it waits in the engine's session and joins the next message as a note.
+- **Design tokens** (top of `chat.css`): `--cm-space-1…6`, `--cm-radius-s/m/l`, and `--cm-ok` / `--cm-err`, the
+  theme's green and red mixed toward the text colour so small text keeps its contrast. Colours otherwise
+  stay the IDE's own (`theme.json`). Use a token, not a new pixel value, in new CSS.
+- **Accessibility** (`test/a11y.test.ts`): axe-core runs over eight states of the panel in the dark and the light
+  values of `theme.json` and must find nothing, so a new colour or control that fails it fails the build. The
+  panel is one `main` landmark with one `h1` and a `log` region; a screen reader is told (an `announcer`) when work
+  starts, when a question needs an answer and when it stops, and the streamed text is held back with `aria-busy`
+  until it is whole. Anything clickable that is not a `<button>` goes through `activatable()` so the keyboard
+  works. Keyboard focus is never moved by the panel itself: a question arriving while you type must not take
+  your next keystroke.
 - **The input** is as tall as its text, from two lines to about a quarter of the window.
 
 ## Messages

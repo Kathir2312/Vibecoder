@@ -115,25 +115,29 @@ function setMarkdown(target: HTMLElement, markdown: string): void {
 const { product: PRODUCT, features: HOST_FEATURES } = hostSettings();
 
 const app = document.getElementById("app")!;
+app.setAttribute("role", "main"); // the one landmark: everything the panel shows is inside it
+app.setAttribute("aria-label", `${PRODUCT} chat`);
 app.innerHTML = `
-  <header>
+  <h1 class="sr-only">${PRODUCT} chat</h1>
+  <div class="sr-only announcer" role="status" aria-live="polite" aria-atomic="true"></div>
+  <header role="group" aria-label="Model and settings">
     <span class="model" title="Model"></span>
     <label class="critique" title="A critic agent reviews each answer before you see it; if it finds problems, the answer is fixed first. Saved in your cmcoder settings: applies to the terminal, the TUI and every VS Code window.">
       <input type="checkbox" disabled> Critique
     </label>
     <button class="history secondary" title="Past conversations in this project">History</button>
-    <select class="mode" title="Permission mode (Shift+Tab in the CLI)"></select>
+    <select class="mode" title="Permission mode (Shift+Tab in the CLI)" aria-label="Permission mode"></select>
   </header>
   <section class="sessions" hidden></section>
   <section class="dock" aria-label="What the agent is keeping track of"></section>
   <div class="log-wrap">
-    <main class="log" aria-live="polite"></main>
+    <div class="log" role="log" aria-live="polite" aria-label="Conversation"></div>
     <button class="to-end secondary" type="button" hidden title="Go to the newest output and follow it again">↓ Latest</button>
   </div>
   <section class="starters" hidden aria-label="Ways to start"></section>
-  <div class="progress" hidden role="status"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
+  <div class="progress" hidden aria-hidden="true"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
-  <footer>
+  <footer role="group" aria-label="Message">
     <div class="queued" hidden></div>
     <label class="context" hidden title="Send the active file, selection and problems with this message">
       <input type="checkbox" checked> <span></span>
@@ -155,6 +159,26 @@ app.innerHTML = `
 
 const $ = <T extends HTMLElement>(sel: string) => app.querySelector(sel) as T;
 const log = $<HTMLElement>(".log");
+const announcer = $<HTMLElement>(".announcer");
+
+/** Tell a screen reader something that is not in the conversation (the work started, it needs an answer). */
+function announce(text: string): void {
+  announcer.textContent = "";
+  window.setTimeout(() => (announcer.textContent = text), 50); // a repeat of the same words is read again
+}
+
+/** A clickable thing that is not a <button> (a picture, a name) works from the keyboard too. */
+function activatable(target: HTMLElement, label: string): void {
+  target.tabIndex = 0;
+  target.setAttribute("role", "button");
+  target.setAttribute("aria-label", label);
+  target.addEventListener("keydown", (e) => {
+    if (e.target === target && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      target.click();
+    }
+  });
+}
 log.dataset.product = PRODUCT; // the empty screen shows the logo and this name
 const input = $<HTMLTextAreaElement>("textarea");
 input.placeholder = idlePlaceholder();
@@ -293,6 +317,8 @@ function setBusy(value: boolean): void {
   stopButton.hidden = !value;
   input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
   agentSelect.disabled = value; // an agent can't be changed in the middle of a turn
+  log.setAttribute("aria-busy", String(value)); // a reader waits for the finished text, not each streamed piece
+  if (value && !was) announce(`${PRODUCT} is working`);
   if (!value) showStatus();
   if (value && !was) startProgress();
   if (!value) stopProgress();
@@ -717,6 +743,7 @@ function agentRow(id: string): AgentRow {
   line.title = "Show its card";
   line.onclick = () => document.querySelector(`.tool[data-task="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" });
   const name = el("span", "name");
+  activatable(name, "Show this subagent's card"); // the row itself holds a Stop button, so only the name takes the key
   const detail = el("span", "detail");
   const stop = el("button", "secondary stop-one", "Stop") as HTMLButtonElement;
   stop.type = "button";
@@ -843,6 +870,7 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "permission_request":
       permissionCard(ev);
+      announce(`${PRODUCT} needs your answer: ${ev.label}`); // keyboard focus stays where the user is typing
       break;
     case "permission_denied":
       if (!deniedHere.delete(ev.id)) note(`Denied: ${ev.reason}`, "warn");
@@ -864,6 +892,7 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "error":
       note(`✗ ${ev.message}${ev.hint ? `\n${ev.hint}` : ""}`, "error");
+      announce(`Error: ${ev.message}`);
       renderAgentSelect(); // a refused choice: the list shows the agent really in use
       break;
     case "review_result":
@@ -964,6 +993,7 @@ function onEvent(ev: AgentEvent): void {
       updateAskQueue();
       endBashRuns();
       endAgents();
+      if (ev.subtype !== "success") announce(ev.subtype === "interrupted" ? "Stopped" : `Stopped: ${ev.result}`.slice(0, 200));
       if (ev.subtype === "interrupted") note(`Interrupted. What should ${PRODUCT} do instead?`, "warn");
       else if (ev.subtype === "max_turns") {
         // The limit on a request's model calls (or the step budget): the work is kept, so one
@@ -1063,6 +1093,7 @@ function toolResult(ev: ToolResult): void {
     img.alt = "Screenshot of the page";
     img.title = "Click to enlarge";
     img.onclick = () => img.classList.toggle("big");
+    activatable(img, "Enlarge or shrink the screenshot");
     card.append(img);
   }
 }
