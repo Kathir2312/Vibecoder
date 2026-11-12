@@ -60,6 +60,21 @@ test("Insert is there only where the IDE can do it, and sends the code", async (
   await page.close();
 });
 
+test("Compare is there only where the IDE can open a diff, and sends the code", async () => {
+  const without = await panel("vscode", undefined, true, "stopTool insertCode"); // an IDE that does not say "compareCode"
+  await without.ev(reply(fenced("ts", "let a = 1;")));
+  assert.equal(await without.page.locator(".codeblock button", { hasText: "Compare" }).count(), 0);
+  await without.page.close();
+
+  const { page, ev, sent } = await panel("vscode", undefined, true, "stopTool insertCode compareCode");
+  await ev(reply(fenced("ts", "let a = 1;")));
+  assert.deepEqual(await page.locator(".codeblock .codebtn").allTextContents(), ["Copy", "Insert", "Compare"]);
+  await page.click('.codeblock button:has-text("Compare")');
+  assert.deepEqual((await sent()).at(-1), { kind: "compareCode", text: "let a = 1;" });
+  assert.match((await page.getAttribute('.codeblock button:has-text("Compare")', "aria-label")) ?? "", /Compare the JS\/TS code with the open file/);
+  await page.close();
+});
+
 test("a language it does not know, or none, still gets the header and Copy but no colours", async () => {
   const { page, ev } = await panel("vscode");
   await ev(reply(fenced("brainfuck", "+++[>++<-]")));

@@ -57,6 +57,7 @@ spaces; an IDE that leaves it out gets the base panel:
 | `agents` | `{"kind": "setAgent", "agent": name \| null}` as a `set_agent` message | the **Agent** dropdown above the input: the agents in `agent_list`, a project's untrusted ones greyed out; choosing one makes the whole conversation that agent |
 | `tasksTab` | `{"kind": "openTasks"}`: open an editor tab with the page `tasks.js`/`tasks.css`, send it `{"kind": "todos", "todos": [...]}` on every `todo_update` event (and again when it says `ready`), `{"kind": "reset"}` for a new conversation; `{"kind": "openChat"}` from it means "show the chat" | **↗** at the end of the Tasks line, which opens the tab (the line itself opens the list inside the chat, with or without the feature) |
 | `insertCode` | `{"kind": "insertCode", "text"}`: put the text into the file being edited, at the cursor (over the selection) | **Insert** next to **Copy** on every code block in a reply |
+| `compareCode` | `{"kind": "compareCode", "text"}`: show the text against the file being edited in the IDE's diff editor (nothing is written; the editor's own controls take a change in) | **Compare** next to **Insert** on every code block in a reply |
 | `openLog` | `{"kind": "openLog"}`: show the IDE's log for the extension | **Open log** on an error card |
 
 A control also needs cmcoder to have the feature (`system_init.features`), so an
@@ -122,6 +123,10 @@ Nothing scrolls the page: the conversation and each open list have their own scr
   is listed; the engine puts the file back as the snapshots `/rewind` keeps had it, refuses when the user edited the file since
   (it never overwrites that), and sends the list again with what is back marked. Needs nothing from the IDE. Only Write and Edit
   are tracked; changes made by shell commands are not (the same limit as `/rewind`).
+- **Attachment chips** (`renderChips` in `main.ts`): what waits to go with the next message (page elements picked with `/pick`) is
+  drawn as removable chips above the message box, so nothing travels unseen. The engine keeps the list and sends it again whenever it
+  changes (`attachments`; empty when a message took them); the cross sends `/pick drop <number>`, quietly (no bubble) and only
+  between requests. The editor context and images keep their own controls (the checkbox, the thumbnails with a cross).
 - **Design tokens** (top of `chat.css`): `--cm-space-1…6`, `--cm-radius-s/m/l`, and `--cm-ok` / `--cm-err`, the
   theme's green and red mixed toward the text colour so small text keeps its contrast. Colours otherwise
   stay the IDE's own (`theme.json`). Use a token, not a new pixel value, in new CSS.

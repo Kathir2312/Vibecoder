@@ -63,6 +63,9 @@ export type FromWebview =
   | { kind: "attachFile" }
   /** Put the code of a reply's code block into the open file at the cursor (data-features "insertCode"). */
   | { kind: "insertCode"; text: string }
+  /** Compare the code of a reply's code block with the file being edited, in the IDE's diff editor
+   *  (data-features "compareCode"): nothing is written; the editor's own arrows take changes in. */
+  | { kind: "compareCode"; text: string }
   /** Show the IDE's log for this extension (data-features "openLog"): the error card's "Open log". */
   | { kind: "openLog" }
   | { kind: "restart" }

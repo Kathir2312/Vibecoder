@@ -81,6 +81,9 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) 
     await ev({ type: "turn_changes", turn: 1, files, added: 36, removed: 1 });
     await page.click('.changes-bar button:has-text("Review changes")');
   },
+  "picked elements waiting to be sent": async (ev) => {
+    await ev({ type: "attachments", items: [{ index: 0, kind: "element", label: 'button[data-testid="save"] "Save" on http://localhost:5080/Orders' }, { index: 1, kind: "element", label: "h1 on /" }] });
+  },
   "the agent's plan": async (ev) => {
     await ev(ask({ request_id: "plan1", tool_use_id: "7", name: "ExitPlanMode", label: "Plan: Orders status filter", input: { title: "Orders status filter", steps: [{ text: "Add a status parameter to Index", files: ["Controllers/OrdersController.cs"] }, { text: "Add tests", files: [] }], out_of_scope: "The database" }, suggested_rule: "", can_remember: false }));
   },

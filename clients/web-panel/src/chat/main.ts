@@ -114,7 +114,10 @@ function setMarkdown(target: HTMLElement, markdown: string): void {
   sanitize(doc.body);
   target.replaceChildren(...Array.from(doc.body.childNodes));
   // After the cleaning, so the colours and buttons added here are ours and not the reply's.
-  enhanceCodeBlocks(target, { insert: HOST_FEATURES.includes("insertCode") ? (text) => post({ kind: "insertCode", text }) : undefined });
+  enhanceCodeBlocks(target, {
+    insert: HOST_FEATURES.includes("insertCode") ? (text) => post({ kind: "insertCode", text }) : undefined,
+    compare: HOST_FEATURES.includes("compareCode") ? (text) => post({ kind: "compareCode", text }) : undefined,
+  });
 }
 
 // --- layout ------------------------------------------------------------------
@@ -152,6 +155,7 @@ app.innerHTML = `
       <input type="checkbox" checked> <span></span>
     </label>
     <div class="commands" role="listbox" hidden></div>
+    <div class="attachments" hidden role="group" aria-label="Waiting to go with your next message"></div>
     <div class="images" hidden></div>
     <textarea rows="2"></textarea>
     <div class="actions">
@@ -307,6 +311,37 @@ function renderAgentSelect(): void {
 
 agentSelect.onchange = () => post({ kind: "setAgent", agent: agentSelect.value || null });
 
+// --- what waits to go with the next message: picked page elements, as removable chips ---------------
+//
+// The engine keeps them (`/pick`) and says what is waiting (`attachments`); taking one off is
+// `/pick drop <number>`. They are drawn so nothing travels with a message unseen.
+
+const attachmentsBar = $<HTMLElement>(".attachments");
+let chips: { index: number; label: string }[] = [];
+
+function renderChips(): void {
+  attachmentsBar.hidden = chips.length === 0;
+  attachmentsBar.replaceChildren(
+    ...(chips.length ? [el("span", "attachments-title", "With your next message:")] : []),
+    ...chips.map((c) => {
+      const chip = el("span", "chip attached");
+      chip.append(el("span", "chip-text", `⌖ ${c.label}`));
+      const x = el("button", "chip-x", "×") as HTMLButtonElement;
+      x.type = "button";
+      x.title = "Don't send this with the message";
+      x.setAttribute("aria-label", `Remove ${c.label}`);
+      x.disabled = busy; // the engine takes it off between requests
+      x.onclick = () => {
+        if (busy) return;
+        setBusy(true);
+        post({ kind: "send", text: `/pick drop ${c.index}`, includeContext: false });
+      };
+      chip.append(x);
+      return chip;
+    }),
+  );
+}
+
 /** The Pick element button, when this cmcoder has /pick; picking is a request, so not during one. */
 function updatePick(): void {
   pickButton.hidden = !commands.some((c) => c.name === "pick");
@@ -330,6 +365,7 @@ function setBusy(value: boolean): void {
   agentSelect.disabled = value; // an agent can't be changed in the middle of a turn
   log.setAttribute("aria-busy", String(value)); // a reader waits for the finished text, not each streamed piece
   renderReview(); // its buttons wait while a request runs
+  renderChips();
   if (value && !was) announce(`${PRODUCT} is working`);
   if (!value) showStatus();
   if (value && !was) startProgress();
@@ -1048,6 +1084,10 @@ function onEvent(ev: AgentEvent): void {
     }
     case "warning":
       note(`⚠ ${ev.message}`, "warn");
+      break;
+    case "attachments":
+      chips = ev.items.map((i) => ({ index: i.index, label: i.label }));
+      renderChips();
       break;
     case "turn_changes": {
       reviews.set(ev.turn, ev);
@@ -2177,6 +2217,8 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       sessionsPanel.hidden = true;
       forgetEarlier();
       forgetReviews();
+      chips = [];
+      renderChips();
       log.replaceChildren();
       following = true;
       dock.reset();

@@ -530,13 +530,6 @@ class StdioServer:
             elif name == "retry":  # the failed step again, from the graph's checkpoint
                 async for event in session.retry():
                     self.emit(event)
-            elif name == "revert":  # part of a request's changes taken back: the review shows it
-                result = await run_command(session, text)
-                for event in result.events:
-                    self.emit(event)
-                if not result.events:  # nothing to show it in: say it
-                    self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
-                self.emit(self._result("success", "", False, started))
             elif name in PANEL_COMMANDS:  # answered here, not sent to the model
                 if name == "index":  # with progress, and the status bar after it
                     from ..rag.session import index_command
@@ -557,7 +550,10 @@ class StdioServer:
                         set_max_turns=self._set_max_turns,
                     )
                     body = "\n".join(result.lines)
-                    self.emit(ev.AssistantMessage(text=f"```text\n{body}\n```"))
+                    if not (result.quiet and result.events):  # a quiet one is shown by its events
+                        self.emit(ev.AssistantMessage(text=f"```text\n{body}\n```"))
+                    for event in result.events:
+                        self.emit(event)
                 self.emit(self._result("success", "", False, started))
             else:
                 await self._start_mcp()

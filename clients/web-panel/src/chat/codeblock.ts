@@ -10,6 +10,8 @@ import { updateThemeMode } from "./theme";
 export interface CodeHost {
   /** Put the code into the file being edited, at the cursor (data-features "insertCode"); none: no button. */
   insert?: (text: string) => void;
+  /** Open the code against the file being edited, in the IDE's diff editor (data-features "compareCode"). */
+  compare?: (text: string) => void;
 }
 
 function button(label: string, title: string): HTMLButtonElement {
@@ -62,6 +64,12 @@ export function enhanceCodeBlocks(root: ParentNode, host: CodeHost = {}): void {
       insert.setAttribute("aria-label", `Insert the ${name.textContent} code at the cursor`);
       insert.onclick = () => host.insert?.(text);
       actions.append(insert);
+    }
+    if (host.compare) {
+      const compare = button("Compare", "See this code against the open file: nothing is written until you take a change");
+      compare.setAttribute("aria-label", `Compare the ${name.textContent} code with the open file`);
+      compare.onclick = () => host.compare?.(text);
+      actions.append(compare);
     }
     bar.append(name, actions);
     pre.replaceWith(block);

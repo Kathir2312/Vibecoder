@@ -16,6 +16,12 @@ export interface AgentInfo {
   group: string;
 }
 
+export interface AttachmentInfo {
+  index: number;
+  kind: "element";
+  label: string;
+}
+
 export interface ChangedFile {
   index: number;
   path: string;
@@ -251,6 +257,15 @@ export interface TurnChanges {
   removed: number;
 }
 
+/**
+ * What waits to go with the user's next message (picked page elements), as removable chips.
+ * Sent whenever it changes; an empty list when the message took them.
+ */
+export interface AttachmentsChanged {
+  type: "attachments";
+  items: AttachmentInfo[];
+}
+
 export interface ModelChanged {
   type: "model_changed";
   model: string;
@@ -458,6 +473,7 @@ export type AgentEvent =
   | TodoUpdate
   | ModeChanged
   | TurnChanges
+  | AttachmentsChanged
   | ModelChanged
   | IdeToolRequest
   | AgentList

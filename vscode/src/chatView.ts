@@ -196,6 +196,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     else void vscode.window.showWarningMessage("Could not insert the code here (the file may be read-only).");
   }
 
+  /** "Compare" on a code block: the code against the file being edited, in the diff editor. */
+  async compareCode(text: string): Promise<void> {
+    if (!text || text.length > 200_000) return;
+    const editor = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors.find((e) => e.document.uri.scheme === "file");
+    if (!editor || editor.document.uri.scheme !== "file") {
+      void vscode.window.showInformationMessage("Open the file first, then use Compare again.");
+      return;
+    }
+    await this.diffs.compare(text, editor.document.uri);
+  }
+
   /** The editor's context changed (active file, selection, problems). */
   updateContext(): void {
     const enabled = vscode.workspace.getConfiguration("cmcoder").get<boolean>("autoContext", true);
@@ -438,6 +449,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "insertCode":
         if (typeof m.text === "string") void this.insertCode(m.text);
         break;
+      case "compareCode":
+        if (typeof m.text === "string") void this.compareCode(m.text);
+        break;
       case "openLog":
         this.log.show(true);
         break;
@@ -486,7 +500,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <link href="${style}" rel="stylesheet">
   <title>${escapeHtml(productName())}</title>
 </head>
-<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab agents insertCode openLog">
+<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab agents insertCode compareCode openLog">
   <div id="app"></div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

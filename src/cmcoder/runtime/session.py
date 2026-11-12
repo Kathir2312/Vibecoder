@@ -75,6 +75,8 @@ from ..models.chat import REASONING_KEY
 from ..models.errors import classify
 from ..models.reasoning import ThinkSplitter, split_think
 from ..protocol import events as ev
+from .attachments import Attachment
+from .attachments import changed as attachments_changed
 from .changes import ChangeReviews
 from .store import SessionStore, sessions_dir
 from .titles import fallback_title, make_title
@@ -139,7 +141,7 @@ class Session:
         self._titled = False
         self._session_started = False  # SessionStart hooks have run
         # Notes for the model that wait for the user's next message (a `/pick`ed page element).
-        self.attachments: list[str] = []
+        self.attachments: list[Attachment] = []
         # What each request changed, for review and for taking parts back (runtime/changes.py).
         self.reviews = ChangeReviews()
         self._background: set[asyncio.Task[Any]] = set()
@@ -323,8 +325,10 @@ class Session:
                 extra += out.context
         self._session_started = True
         attached, self.attachments = self.attachments, []  # they go with this message only
+        if attached:
+            yield attachments_changed([])  # the chips go: the message took them
         if extra or attached:
-            note = "\n\n".join(x for x in (note, *attached, *extra) if x)
+            note = "\n\n".join(x for x in (note, *(a.note for a in attached), *extra) if x)
         text = f"{note}\n\n{prompt}" if note else prompt
         content: str | list[str | dict[str, Any]] = text
         kwargs: dict[str, Any] = {}

@@ -97,8 +97,10 @@ class CommandResult:
     agent: str | None = None
     # `/retry`: the front end runs `Session.retry()` and shows it like a turn.
     retry: bool = False
-    # Events to send besides the lines (`/revert`: the review as it is now).
+    # Events to send besides the lines (`/revert`: the review as it is now; `/pick`: the chips).
     events: list[ev.Event] = field(default_factory=list)
+    # The events say it all: with some, the chat shows no message for the lines.
+    quiet: bool = False
 
 
 def help_lines(custom: dict[str, SlashCommand] | None = None) -> list[str]:
@@ -301,7 +303,7 @@ def revert_command(session: Session, arg: str) -> CommandResult:
     except (ValueError, IndexError):
         return CommandResult([usage])
     lines, review = session.reviews.revert(turn, file, hunk)
-    return CommandResult(lines, events=[review] if review is not None else [])
+    return CommandResult(lines, events=[review] if review is not None else [], quiet=True)
 
 
 async def run_command(
@@ -434,9 +436,17 @@ async def run_command(
     if name == "playwright":
         return playwright_command(session, arg)
     if name == "pick":
+        from .attachments import changed
         from .pick import pick_lines
 
-        return CommandResult(await pick_lines(session, arg))
+        waiting = len(session.attachments)
+        lines = await pick_lines(session, arg)
+        return CommandResult(
+            lines,
+            events=[changed(session.attachments)],  # the chips above the message box
+            # A chip taken off needs no message (the chip going is the answer); a mistake does.
+            quiet=(arg == "drop" or arg.startswith("drop ")) and len(session.attachments) < waiting,
+        )
     if name == "index":
         from ..rag.session import index_command
 

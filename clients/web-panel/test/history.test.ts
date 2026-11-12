@@ -110,6 +110,8 @@ test("a new conversation forgets the older messages of the last one", async () =
 test("drawing older messages is not announced to a screen reader, and the log goes back to its state", async () => {
   const { page, ev } = await panel("vscode");
   await ev(history(300));
+  // The first draw has its own "quiet" that ends on the next frame: let it end before watching.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await page.evaluate(() => {
     const seen: (string | null)[] = [];
     (window as unknown as { seen: typeof seen }).seen = seen;

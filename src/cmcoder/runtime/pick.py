@@ -30,12 +30,14 @@ from ..tools.pick import (
     code_tool,
     pick_in_ide,
 )
+from .attachments import Attachment
 from .session import Session
 
 USAGE: tuple[str, ...] = (
     "/pick           point at an element on the page that is open in the browser",
     "/pick <address> open that page in cmcoder's browser window and point at an element there",
     "/pick clear     drop what is waiting for your next message",
+    "/pick drop <n>  drop one of them (the number on its chip, from 0)",
 )
 
 
@@ -79,7 +81,7 @@ async def _own_browser(browser: BrowserSession, ctx: ToolContext, address: str) 
 
 async def pick_lines(session: Session, arg: str) -> list[str]:
     """Run `/pick`: what to show the user."""
-    if arg in ("clear", "drop"):
+    if arg == "clear":
         n = len(session.attachments)
         session.attachments.clear()
         return (
@@ -87,6 +89,13 @@ async def pick_lines(session: Session, arg: str) -> list[str]:
             if n
             else ["Nothing picked is waiting."]
         )
+    if arg == "drop" or arg.startswith("drop "):  # one of them, by the number on its chip
+        try:
+            which = int(arg.split()[1])
+            dropped = session.attachments.pop(which)
+        except (IndexError, ValueError):
+            return ["Usage: /pick drop <number of a picked element>"]
+        return [f"Dropped {dropped.label}"]
     if arg in ("help", "?"):
         return list(USAGE)
     a = session.agent
@@ -118,7 +127,7 @@ async def pick_lines(session: Session, arg: str) -> list[str]:
             )
     except PickError as e:
         return [str(e)]
-    session.attachments.append(element.note())
+    session.attachments.append(Attachment("element", element.label(), element.note()))
     return [
         f"Picked {element.label()}",
         f"{_waiting(session)} with your next message to cmcoder (/pick again for another, /pick clear to drop).",

@@ -194,6 +194,20 @@ class TurnChanges(_Event):
     removed: int
 
 
+class AttachmentInfo(BaseModel):
+    index: int  # what `/pick drop` names
+    kind: Literal["element"]
+    label: str
+
+
+class AttachmentsChanged(_Event):
+    """What waits to go with the user's next message (picked page elements), as removable chips.
+    Sent whenever it changes; an empty list when the message took them."""
+
+    type: Literal["attachments"] = "attachments"
+    items: list[AttachmentInfo]
+
+
 class PermissionRequest(_Event):
     """The agent needs the user's approval for a tool call (stdio protocol).
 
@@ -528,6 +542,7 @@ Event = Annotated[
     | TodoUpdate
     | ModeChanged
     | TurnChanges
+    | AttachmentsChanged
     | TurnChanges
     | ModelChanged
     | IdeToolRequest
