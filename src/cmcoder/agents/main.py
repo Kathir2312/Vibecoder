@@ -68,7 +68,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
 
-from ..config.settings import RethinkConfig, Settings, SettingsError, find_project_root
+from ..audit import AuditLog
+from ..config.settings import (
+    RethinkConfig,
+    Settings,
+    SettingsError,
+    config_dir,
+    find_project_root,
+)
 from ..core.hooks import ApproveHookFn, HookRunner
 from ..core.permissions import ModeNotAllowed, PermissionPolicy
 from ..core.prompt import build_subagent_prompt, build_system_prompt, load_memory_files
@@ -174,6 +181,9 @@ class Agent:
     sandbox: Sandbox | None = None  # the Bash sandbox (sandbox/; None: unsandboxed)
     code_index: CodeIndex | None = None  # code search (rag/; None: off or not indexed)
     telemetry: Telemetry | None = None  # OpenTelemetry metrics (off by default)
+    audit: AuditLog | None = (
+        None  # the record of what was run and changed (audit.py; off by default)
+    )
     memory: Memory | None = None  # notes between sessions, on a LangGraph store (notes.py)
     frontend: str = "cli"
     # Shown once, with the first turn (e.g. a sandbox asked for that can't run here).
@@ -237,7 +247,13 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
     # The sandbox (its proxy, its temp folder) carries over too.
     spec.setdefault("code_index", old.code_index)
     new = build_agent(
-        settings, opts, sandbox=old.sandbox, telemetry=old.telemetry, memory=old.memory, **spec
+        settings,
+        opts,
+        sandbox=old.sandbox,
+        telemetry=old.telemetry,
+        memory=old.memory,
+        audit=old.audit,  # the same object: what `/audit on|off` switched stays
+        **spec,
     )
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
@@ -352,6 +368,7 @@ def build_agent(
     code_index: CodeIndex | None = None,
     memory: Memory | None = None,
     ide_browser: IdeToolSet | None = None,
+    audit: AuditLog | None = None,
 ) -> Agent:
     """`sandbox`, `telemetry`, `code_index`, `memory`: reuse these (a rebuild, or
     /index turning code search on); else made from settings. `ide_browser`: tools the IDE
@@ -595,6 +612,12 @@ def build_agent(
         telemetry=telemetry
         if telemetry is not None
         else telemetry_from_settings(settings.telemetry),
+        audit=audit
+        or AuditLog(
+            Path(settings.audit.dir).expanduser() if settings.audit.dir else config_dir() / "audit",
+            enabled=settings.audit.enabled,
+            include_prompts=settings.audit.include_prompts,
+        ),
         frontend=opts.frontend,
         startup_warnings=warnings,
         persona=persona.name if persona else None,

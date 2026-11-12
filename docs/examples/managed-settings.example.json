@@ -14,5 +14,6 @@
     "allowManagedPermissionRulesOnly": false,
     "allow": []
   },
+  "audit": { "enabled": true, "dir": null },
   "env": {}
 }

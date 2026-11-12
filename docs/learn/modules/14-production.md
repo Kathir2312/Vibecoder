@@ -370,6 +370,24 @@ commands (`vscode.executeDefinitionProvider`, `executeReferenceProvider`,
 `executeWorkspaceSymbolProvider`), reached through a small structural `CodeApi` so that its
 logic is tested in plain Node, without VS Code.
 
+### 6e. The audit trail: `audit.py`
+
+Telemetry (section 2) counts; an audit log says *what happened*: which command ran, who
+allowed it, which files a request changed. It is not a callback handler on purpose. A
+handler sees model and tool runs, but not the permission **answers** (those happen in the
+session, between an interrupt and its resume) and not the user's rewinds. The session
+yields every one of these as a protocol event, so [`AuditLog.observe`](../../../src/cmcoder/audit.py)
+is called in the same two places `Telemetry.observe` is, and `Session._drive` adds the
+answer to each `permission_request`. The subagents' tool calls arrive the same way (on the
+custom stream), so nothing needs to be wired into a nested graph.
+
+Three decisions: the file is plain JSON lines, appended with `O_APPEND` and mode 600, so
+it can be read and collected without cmcoder; file contents, replies and tool output are
+never recorded (`summarize_input` keeps a Write as its path and size), and `redact` hides
+what looks like a key in the text that is; and a repository can never set it
+(`_PROJECT_NEVER` in `config/settings.py`), because a repository must not be able to
+switch your audit trail off or write it somewhere else.
+
 ### 7. Shipping without Python: the standalone build
 
 Developers' PCs have no Python. PyInstaller bundles the interpreter, cmcoder

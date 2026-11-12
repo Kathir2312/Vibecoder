@@ -172,6 +172,20 @@ class Session:
         if self.store is not None and self.store.persistent:
             folder = sessions_dir(self.agent.ctx.project_root) / f"{thread_id}.checkpoints"
         self.checkpoints = Checkpoints(folder)
+        self.audit_session_started()
+
+    def audit_session_started(self) -> None:
+        """A `session_start` record for this conversation (when the audit log is on)."""
+        audit = self.agent.audit
+        if audit is not None and audit.enabled:
+            a = self.agent
+            audit.session_started(
+                self.session_id,
+                cwd=str(a.ctx.cwd),
+                project=str(a.ctx.project_root),
+                model=a.bundle.name,
+                mode=a.policy.mode,
+            )
 
     async def resume(self, thread_id: str) -> None:
         """Continue a saved conversation: just point at its thread."""
@@ -247,6 +261,8 @@ class Session:
             async for event in self._run(prompt, note=note, images=images):
                 if telemetry is not None:
                     telemetry.observe(event, self.agent.bundle.name, self.session_id)
+                if self.agent.audit is not None:
+                    self.agent.audit.observe(event, self.session_id, self.turn)
                 yield event
         finally:
             self.agent.policy.set_turn_allow([])
@@ -284,6 +300,8 @@ class Session:
             async for event in self._drive(None, context, state, "", started, usage):
                 if telemetry is not None:
                     telemetry.observe(event, self.agent.bundle.name, self.session_id)
+                if self.agent.audit is not None:
+                    self.agent.audit.observe(event, self.session_id, self.turn)
                 yield event
         finally:
             self.agent.policy.set_turn_allow([])
@@ -365,6 +383,8 @@ class Session:
         for event in await self._restore_primary():  # every request tries the main model first
             yield event
         self.turn += 1
+        if self.agent.audit is not None:
+            self.agent.audit.prompt(self.session_id, self.turn, prompt)
         context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
         critic = self.agent.critic
         # With the critic on, the answer is held until it is reviewed: the
@@ -435,6 +455,8 @@ class Session:
                         task.add_done_callback(self._background.discard)  # type: ignore[arg-type]
                     answer = await self.ask(request)
                     answers[intr.id] = answer
+                    if self.agent.audit is not None:
+                        self.agent.audit.permission(self.session_id, self.turn, request, answer)
                     if not answer.get("allow"):
                         yield ev.PermissionDenied(
                             id=request.tool_use_id, name=request.name, reason="denied by user"
@@ -856,6 +878,8 @@ class Session:
                 prompt = _text(target)
                 await self._fork_before(target.id or "")
                 self.turn = turn - 1
+        if self.agent.audit is not None:
+            self.agent.audit.rewound(self.session_id, turn, actions)
         return ev.Rewound(code=code, conversation=conversation, actions=actions, prompt=prompt)
 
     async def _fork_before(self, message_id: str) -> None:

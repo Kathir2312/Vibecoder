@@ -24,6 +24,10 @@
     "commands": [],
     "maxRounds": 2
   },
+  "audit": {
+    "enabled": false,
+    "includePrompts": false
+  },
   "browser": {
     "enabled": true,
     "headless": true,
