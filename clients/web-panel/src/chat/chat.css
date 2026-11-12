@@ -336,6 +336,33 @@ select { padding: 2px 4px; }
 .tk-add { color: var(--cm-ok); }
 .tk-del { color: var(--cm-err); }
 
+/* An error as a card: a headline, the engine's message, and the buttons that make sense for it. */
+.alert {
+  margin: var(--cm-space-4) 0;
+  padding: var(--cm-space-4) var(--cm-space-5);
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: var(--cm-radius-m);
+  overflow-wrap: anywhere;
+}
+/* No tint behind the text: the theme's muted colour is made for the plain panel background (a tint
+   under it fell to 4.07:1 in the light theme). The red edge and the icon say it is an error. */
+.alert.error {
+  border-left: 3px solid var(--vscode-errorForeground);
+}
+.alert-title { font-weight: 600; }
+.alert-icon { color: var(--cm-err); }
+.alert-message { margin-top: var(--cm-space-2); }
+.alert-hint { margin-top: var(--cm-space-2); color: var(--vscode-descriptionForeground); }
+.alert-more { margin-top: var(--cm-space-3); font-size: 0.9em; }
+.alert-more summary { cursor: pointer; color: var(--vscode-descriptionForeground); }
+.alert-more pre { margin: var(--cm-space-2) 0 0; max-height: 12em; overflow: auto; }
+.alert-actions { display: flex; flex-wrap: wrap; gap: var(--cm-space-3); margin-top: var(--cm-space-4); }
+.alert-status { margin-top: var(--cm-space-4); color: var(--vscode-descriptionForeground); }
+.alert.resolved { border-left-color: var(--vscode-panel-border, transparent); }
+
+/* The button above a long conversation that draws the messages before the ones shown. */
+.earlier { display: block; margin: var(--cm-space-3) auto; padding: var(--cm-space-2) var(--cm-space-5); }
+
 /* A code block: the language and its buttons above the code. */
 .codeblock {
   margin: var(--cm-space-3) 0;

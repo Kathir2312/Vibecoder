@@ -165,6 +165,8 @@ export interface Error {
   kind: string;
   message: string;
   hint: string | null;
+  title: string;
+  actions: ("retry" | "switch_model" | "compact" | "new_conversation" | "open_log")[];
 }
 
 /** The older part of the conversation was replaced by a summary. */

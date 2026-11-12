@@ -34,6 +34,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("help", "", "Show the commands"),
     ("clear", "", "Start a new conversation (the old one stays saved)"),
     ("compact", "[focus]", "Summarise the conversation now to free context"),
+    (
+        "retry",
+        "",
+        "Run the step that failed again (a gateway that was down), without sending your message twice",
+    ),
     ("resume", "[id]", "List saved conversations, or continue one"),
     ("rewind", "[turn] [code|conversation|both]", "Go back to before an earlier message"),
     ("mode", "[mode]", "Show or change the permission mode (also Shift+Tab)"),
@@ -84,6 +89,8 @@ class CommandResult:
     # Run that request as this agent (a step of /playwright): the front end switches to it for the
     # request and back afterwards.
     agent: str | None = None
+    # `/retry`: the front end runs `Session.retry()` and shows it like a turn.
+    retry: bool = False
 
 
 def help_lines(custom: dict[str, SlashCommand] | None = None) -> list[str]:
@@ -284,6 +291,8 @@ async def run_command(
         return CommandResult(exit=True)
     if name == "help":
         return CommandResult(help_lines(custom_commands(session)))
+    if name == "retry":
+        return CommandResult(retry=True)
     if name == "clear":
         await session.clear()
         return CommandResult(["Started a new conversation."])

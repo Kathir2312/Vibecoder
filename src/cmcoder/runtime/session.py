@@ -97,9 +97,10 @@ def _text(message: AnyMessage) -> str:
 # What this cmcoder can do beyond the base protocol (system_init.features): "images" in
 # a message; "stopTool" ends one running command (`stop_tool`); "sessionRules" takes an
 # "always allow" for the session only (`remember_session`); "agents" lists the agents and
-# switches the conversation to one (`agent_list`, `set_agent`). An IDE panel shows a control
+# switches the conversation to one (`agent_list`, `set_agent`); "retry" runs a failed step again
+# (the `/retry` message, and the `actions` of an `error`). An IDE panel shows a control
 # only when this list and the IDE's own (data-features) both have it.
-FEATURES = ("images", "stopTool", "sessionRules", "agents")
+FEATURES = ("images", "stopTool", "sessionRules", "agents", "retry")
 
 # What LangChain's ModelCallLimitMiddleware (exit_behavior="end") says as the turn's last message
 # when `maxTurns` is used up. It reads like an answer, so the turn is reported as a stop instead
@@ -238,6 +239,41 @@ class Session:
         finally:
             self.agent.policy.set_turn_allow([])
 
+    async def retry(self) -> AsyncIterator[ev.Event]:
+        """Run the step that failed again (a gateway that was down, a timeout), from the graph's last
+        checkpoint: the user's message stays as it is, and what had already worked (tool results,
+        edits) is not done again. Ends with a `result` like any turn."""
+        started = time.monotonic()
+        snapshot = await self.agent.graph.aget_state(self.config)
+        if not snapshot.next or snapshot.interrupts:
+            text = "There is nothing to retry: the last request finished, or was stopped."
+            yield ev.Error(kind="nothing_to_retry", message=text)
+            yield ev.Result(
+                subtype="error",
+                is_error=True,
+                result=text,
+                num_turns=0,
+                duration_ms=0,
+                usage={},
+                session_id=self.session_id,
+            )
+            return
+        self.agent.policy.set_turn_allow([])
+        telemetry = self.agent.telemetry
+        if telemetry is not None:
+            telemetry.turn_started(self.session_id)
+        try:
+            critic = self.agent.critic
+            state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
+            context = RunContext(turn=self.turn, checkpoints=self.checkpoints)
+            usage = {"prompt_tokens": 0, "completion_tokens": 0}
+            async for event in self._drive(None, context, state, "", started, usage):
+                if telemetry is not None:
+                    telemetry.observe(event, self.agent.bundle.name, self.session_id)
+                yield event
+        finally:
+            self.agent.policy.set_turn_allow([])
+
     async def _run(
         self, prompt: str, *, note: str | None, images: list[Image] | None
     ) -> AsyncIterator[ev.Event]:
@@ -318,7 +354,26 @@ class Session:
         state = _TurnState(await self.messages(), hold_answer=bool(critic and critic.enabled))
         message = HumanMessage(content, additional_kwargs={TURN_KEY: self.turn, **kwargs})
         state.apply([message])
-        graph_input: Any = {"messages": [message]}
+        async for event in self._drive(
+            {"messages": [message]}, context, state, prompt, started, usage
+        ):
+            yield event
+
+    async def _drive(
+        self,
+        graph_input: Any,
+        context: RunContext,
+        state: _TurnState,
+        prompt: str,
+        started: float,
+        usage: dict[str, int],
+    ) -> AsyncIterator[ev.Event]:
+        """Run the graph from `graph_input` until the turn ends, answering its questions on the way.
+
+        `graph_input` None means "from where its last checkpoint stopped" (`retry`): LangGraph
+        keeps the state of every step that finished, so a step that failed is run again and
+        the ones before it are not."""
+        hooks = self.agent.hooks
         error: ev.Error | None = None
         step_limit = False  # the graph's safety limit ended the turn
         try:

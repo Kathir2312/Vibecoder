@@ -81,8 +81,11 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>) => Promise<v
   "a permission question": async (ev) => {
     await ev(ask({ request_id: "r1", tool_use_id: "9", name: "Bash", label: "Bash(npm test)", input: { command: "npm test" }, suggested_rule: "Bash(npm test:*)" }));
   },
+  "an error card with all its buttons": async (ev) => {
+    await ev({ type: "error", kind: "gateway", message: "Error code: 502 - {'error': {'message': 'Bad Gateway'}}\nsecond line", hint: "The gateway is down or overloaded: that is on its side. Retry in a moment, or switch to another model.", title: "The model gateway is not answering (502)", actions: ["retry", "switch_model", "compact", "new_conversation", "open_log"] });
+  },
   "an error and a warning": async (ev) => {
-    await ev({ type: "error", kind: "internal", message: "The gateway returned 502", hint: null });
+    await ev({ type: "error", kind: "internal", message: "The gateway returned 502", hint: null, title: "", actions: [] });
     await ev({ type: "warning", message: "Context is 90% full" });
   },
   "the agent list": async (ev) => {
@@ -93,7 +96,7 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>) => Promise<v
 for (const mode of ["dark", "light"] as const) {
   for (const [name, setup] of Object.entries(STATES)) {
     test(`axe finds nothing in ${name}, ${mode} theme`, async () => {
-      const { page, ev } = await panel("vscode", undefined, true, "stopTool sessionRules agents");
+      const { page, ev } = await panel("vscode", undefined, true, "stopTool sessionRules agents openLog");
       await themed(page, mode);
       await setup(ev);
       assert.deepEqual(await violations(page), []);
@@ -142,7 +145,7 @@ test("a screen reader is told when work starts, when a question needs an answer 
   await ev({ ...result, subtype: "interrupted", is_error: false });
   assert.match(await said(), /Stopped/);
   assert.equal(await page.getAttribute(".log", "aria-busy"), "false");
-  await ev({ type: "error", kind: "internal", message: "The gateway returned 502", hint: null });
+  await ev({ type: "error", kind: "internal", message: "The gateway returned 502", hint: null, title: "", actions: [] });
   assert.match(await said(), /Error: The gateway returned 502/);
   await page.close();
 });

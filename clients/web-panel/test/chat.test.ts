@@ -689,7 +689,7 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator(".agent").isDisabled(), false);
     // The user picks one, cmcoder refuses (an error event): the list shows what is really in use.
     await page.evaluate(() => ((document.querySelector(".agent") as HTMLSelectElement).value = "explore"));
-    await ev({ type: "error", kind: "invalid_agent", message: "No agent named 'explore'.", hint: null });
+    await ev({ type: "error", kind: "invalid_agent", message: "No agent named 'explore'.", hint: null, title: "", actions: [] });
     assert.equal(await page.locator(".agent").inputValue(), "planner");
     await page.close();
   });

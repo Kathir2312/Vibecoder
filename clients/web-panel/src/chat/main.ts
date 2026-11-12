@@ -21,6 +21,7 @@ import { lineDiff } from "./diff";
 import { copyText } from "./clipboard";
 import { enhanceCodeBlocks } from "./codeblock";
 import { Dock } from "./dock";
+import { errorCard, retireErrorCards } from "./errorcard";
 import { dangerousParts, renderShell } from "./shell";
 import { watchTheme } from "./theme";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
@@ -610,6 +611,102 @@ function note(text: string, cls: string): void {
   append(el("div", `note ${cls}`, text));
 }
 
+// --- a long conversation is drawn newest first -------------------------------------------------
+//
+// Drawing every message of a resumed conversation made opening it slow (2,000 messages took
+// 2.7 s, and every one forced a layout to keep the end in view). The newest are drawn at once,
+// in one go; "Show earlier messages" (and scrolling up to it) draws more above them without
+// moving what is being read.
+
+const HISTORY_FIRST = 80;
+const HISTORY_MORE = 150;
+
+type HistoryItem = Extract<AgentEvent, { type: "history" }>["messages"][number];
+
+function historyNode(item: HistoryItem): HTMLElement {
+  if (item.role === "user") return el("div", "msg user", item.text);
+  if (item.role === "tool") {
+    const card = el("div", "tool");
+    card.append(toolLabel(item.text));
+    return card;
+  }
+  const message = el("div", "msg assistant");
+  setMarkdown(message, item.text);
+  return message;
+}
+
+/** Changes to the conversation that are not news (older messages drawn above): a screen reader is not told. */
+function quietly(change: () => void): void {
+  log.setAttribute("aria-busy", "true");
+  change();
+  requestAnimationFrame(() => log.setAttribute("aria-busy", String(busy)));
+}
+
+interface Earlier {
+  items: HistoryItem[];
+  shown: number; // how many of the oldest are not drawn yet
+  bar: HTMLButtonElement;
+  watch?: IntersectionObserver;
+}
+let earlier: Earlier | undefined;
+
+function forgetEarlier(): void {
+  earlier?.watch?.disconnect();
+  earlier = undefined;
+}
+
+function earlierLabel(e: Earlier): string {
+  return `↑ Show earlier messages (${e.shown} not shown)`;
+}
+
+function showEarlier(): void {
+  const e = earlier;
+  if (!e || e.shown <= 0) return;
+  const from = Math.max(0, e.shown - HISTORY_MORE);
+  const fragment = document.createDocumentFragment();
+  for (const item of e.items.slice(from, e.shown)) fragment.append(historyNode(item));
+  // What is on screen must not move: note where the oldest drawn message is, draw, put it back
+  // (a browser with scroll anchoring has already done it, and then there is nothing to put back).
+  const ref = e.bar.nextElementSibling;
+  const before = ref?.getBoundingClientRect().top ?? 0;
+  quietly(() => {
+    e.bar.after(fragment);
+    e.shown = from;
+    if (from === 0) {
+      e.watch?.disconnect();
+      e.bar.remove();
+      earlier = undefined;
+    } else {
+      e.bar.textContent = earlierLabel(e);
+    }
+  });
+  if (ref) log.scrollTop += ref.getBoundingClientRect().top - before;
+}
+
+function showHistory(items: HistoryItem[]): void {
+  forgetEarlier();
+  const start = Math.max(0, items.length - HISTORY_FIRST);
+  const fragment = document.createDocumentFragment();
+  if (start > 0) {
+    const bar = el("button", "earlier secondary") as HTMLButtonElement;
+    bar.type = "button";
+    const e: Earlier = { items, shown: start, bar };
+    bar.textContent = earlierLabel(e);
+    bar.title = "Draw the messages before these";
+    bar.onclick = showEarlier;
+    if (typeof IntersectionObserver === "function") {
+      // Scrolling up to the button draws more, so reading back needs no clicking.
+      e.watch = new IntersectionObserver((hits) => hits.some((h) => h.isIntersecting) && showEarlier(), { root: log, rootMargin: "300px 0px 0px 0px" });
+      e.watch.observe(bar);
+    }
+    earlier = e;
+    fragment.append(bar);
+  }
+  for (const item of items.slice(start)) fragment.append(historyNode(item));
+  quietly(() => log.append(fragment));
+  toEnd(true);
+}
+
 function renderReply(): void {
   renderQueued = false;
   if (reply) {
@@ -896,8 +993,29 @@ function onEvent(ev: AgentEvent): void {
       note(`⚠ ${ev.message}`, "warn");
       break;
     case "error":
-      note(`✗ ${ev.message}${ev.hint ? `\n${ev.hint}` : ""}`, "error");
-      announce(`Error: ${ev.message}`);
+      if (ev.title || ev.actions?.length) {
+        // Said in plain words, with the buttons that make sense for it (the engine chooses them).
+        append(
+          errorCard(ev, {
+            canOpenLog: HOST_FEATURES.includes("openLog"),
+            retry: () => {
+              setBusy(true);
+              post({ kind: "send", text: "/retry", includeContext: false });
+            },
+            switchModel: () => {
+              setInput("/model ");
+              input.focus();
+            },
+            compact: () => submit("/compact", false),
+            newConversation: () => post({ kind: "newConversation" }),
+            openLog: () => post({ kind: "openLog" }),
+          }),
+        );
+        toEnd();
+      } else {
+        note(`✗ ${ev.message}${ev.hint ? `\n${ev.hint}` : ""}`, "error");
+        announce(`Error: ${ev.message}`);
+      }
       renderAgentSelect(); // a refused choice: the list shows the agent really in use
       break;
     case "review_result":
@@ -946,11 +1064,7 @@ function onEvent(ev: AgentEvent): void {
       );
       break;
     case "history":
-      for (const item of ev.messages) {
-        if (item.role === "user") append(el("div", "msg user", item.text));
-        else if (item.role === "tool") append(el("div", "tool")).append(toolLabel(item.text));
-        else setMarkdown(append(el("div", "msg assistant")), item.text);
-      }
+      showHistory(ev.messages);
       if (rewound) note(rewound, "info");
       else if (ev.messages.length) note("Resumed this conversation.", "info");
       rewound = undefined;
@@ -963,6 +1077,7 @@ function onEvent(ev: AgentEvent): void {
       const deleted = ev.actions.filter((a) => a.action.startsWith("deleted")).length;
       const files = ev.code ? ` Files: ${restored} restored, ${deleted} deleted (changes made by Bash commands are not undone).` : "";
       if (ev.conversation) {
+        forgetEarlier();
         log.replaceChildren(); // the history that follows redraws it
         following = true;
         toolCards.clear();
@@ -1661,6 +1776,7 @@ function send(): void {
 }
 
 function submit(text: string, includeContext: boolean, images: ImageAttachment[] = []): void {
+  retireErrorCards(log); // their buttons would act on the wrong request now
   const bubble = append(el("div", "msg user", text));
   if (images.length) {
     const thumbs = el("div", "thumbs");
@@ -1957,6 +2073,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
       break;
     case "reset":
       sessionsPanel.hidden = true;
+      forgetEarlier();
       log.replaceChildren();
       following = true;
       dock.reset();

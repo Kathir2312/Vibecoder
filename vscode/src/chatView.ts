@@ -438,6 +438,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       case "insertCode":
         if (typeof m.text === "string") void this.insertCode(m.text);
         break;
+      case "openLog":
+        this.log.show(true);
+        break;
       case "restart":
         void this.stopAgent().then(() => this.startAgent());
         break;
@@ -483,7 +486,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <link href="${style}" rel="stylesheet">
   <title>${escapeHtml(productName())}</title>
 </head>
-<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab agents insertCode">
+<body data-product="${escapeHtml(productName())}" data-icon="${escapeHtml(icon.toString())}" data-features="stopTool sessionRules tasksTab agents insertCode openLog">
   <div id="app"></div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

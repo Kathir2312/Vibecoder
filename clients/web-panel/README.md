@@ -57,6 +57,7 @@ spaces; an IDE that leaves it out gets the base panel:
 | `agents` | `{"kind": "setAgent", "agent": name \| null}` as a `set_agent` message | the **Agent** dropdown above the input: the agents in `agent_list`, a project's untrusted ones greyed out; choosing one makes the whole conversation that agent |
 | `tasksTab` | `{"kind": "openTasks"}`: open an editor tab with the page `tasks.js`/`tasks.css`, send it `{"kind": "todos", "todos": [...]}` on every `todo_update` event (and again when it says `ready`), `{"kind": "reset"}` for a new conversation; `{"kind": "openChat"}` from it means "show the chat" | **↗** at the end of the Tasks line, which opens the tab (the line itself opens the list inside the chat, with or without the feature) |
 | `insertCode` | `{"kind": "insertCode", "text"}`: put the text into the file being edited, at the cursor (over the selection) | **Insert** next to **Copy** on every code block in a reply |
+| `openLog` | `{"kind": "openLog"}`: show the IDE's log for the extension | **Open log** on an error card |
 
 A control also needs cmcoder to have the feature (`system_init.features`), so an
 older cmcoder with a newer IDE, or the other way round, just shows less.
@@ -96,6 +97,18 @@ Nothing scrolls the page: the conversation and each open list have their own scr
   `innerHTML`, so code in a reply cannot turn into markup. Code over 20,000 characters is left plain. The colours are
   `--cm-tok-*` in `chat.css`, one set for dark and one for light, picked by `<html data-theme>`, which `theme.ts` sets
   from the colour the page really has (and again when the IDE changes its theme); the axe test checks every language in both.
+- **Error cards** (`errorcard.ts`): an `error` event with a `title` or `actions` is drawn as a card (a headline, the engine's
+  own message cut for reading and whole under "Full message", its hint, and buttons); one without both stays a plain line,
+  which is also what an older cmcoder's errors look like. The engine chooses the buttons (`Error.actions`: `retry`,
+  `switch_model`, `compact`, `new_conversation`, `open_log`): a gateway that was down gets Retry and Switch model, a refused
+  key gets neither. **Retry** sends the message `/retry`, which runs the failed step again from the graph's checkpoint
+  (`Session.retry`), so the user's message is not sent twice and tool results that already came are not redone; a new request
+  ends the buttons of earlier cards. Nothing new is needed from an IDE except **Open log** (`openLog`, above).
+- **Long conversations** (`showHistory`, `showEarlier` in `main.ts`): a resumed conversation draws only its newest 80
+  messages, in one fragment (drawing each message separately made every one force a layout to keep the end in view:
+  2,000 messages took 2.7 s); a **Show earlier messages** button above them, and scrolling up to it, draws 150 more
+  at a time. What is being read does not move (the oldest drawn message is put back where it was, which also covers
+  browsers without scroll anchoring), and a screen reader is not told about the older messages (`aria-busy`).
 - **Design tokens** (top of `chat.css`): `--cm-space-1…6`, `--cm-radius-s/m/l`, and `--cm-ok` / `--cm-err`, the
   theme's green and red mixed toward the text colour so small text keeps its contrast. Colours otherwise
   stay the IDE's own (`theme.json`). Use a token, not a new pixel value, in new CSS.

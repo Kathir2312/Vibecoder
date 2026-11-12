@@ -63,6 +63,8 @@ export type FromWebview =
   | { kind: "attachFile" }
   /** Put the code of a reply's code block into the open file at the cursor (data-features "insertCode"). */
   | { kind: "insertCode"; text: string }
+  /** Show the IDE's log for this extension (data-features "openLog"): the error card's "Open log". */
+  | { kind: "openLog" }
   | { kind: "restart" }
   | { kind: "openLink"; href: string }
   /** The page's script failed: the IDE writes it to its log (the page shows it too). */

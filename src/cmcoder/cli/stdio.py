@@ -89,7 +89,7 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick",
+    "critic", "index", "memory", "pick", "retry",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
@@ -527,6 +527,9 @@ class StdioServer:
                         ev.Warning(message=f"Not compacted: a PreCompact hook declined ({e}).")
                     )
                 self.emit(self._result("success", "", False, started))
+            elif name == "retry":  # the failed step again, from the graph's checkpoint
+                async for event in session.retry():
+                    self.emit(event)
             elif name in PANEL_COMMANDS:  # answered here, not sent to the model
                 if name == "index":  # with progress, and the status bar after it
                     from ..rag.session import index_command

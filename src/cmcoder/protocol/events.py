@@ -119,11 +119,19 @@ class Warning(_Event):  # noqa: A001 - protocol name
     message: str
 
 
+# What an IDE can offer next to an error ("Retry", ...): the engine says which make sense for it.
+ErrorAction = Literal["retry", "switch_model", "compact", "new_conversation", "open_log"]
+
+
 class Error(_Event):
     type: Literal["error"] = "error"
     kind: str
     message: str
     hint: str | None = None
+    # A plain-language headline ("The model gateway is not answering (502)") and what the user can do
+    # about it. Empty for errors that have neither (an IDE then shows `message` and `hint` as a line).
+    title: str = ""
+    actions: list[ErrorAction] = Field(default_factory=list)
 
 
 class Compacted(_Event):

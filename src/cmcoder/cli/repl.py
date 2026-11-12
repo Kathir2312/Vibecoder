@@ -188,6 +188,7 @@ async def run_repl(
                     continue
                 allow: list[str] = []
                 step_agent: str | None = None
+                retrying = False
                 if prompt.startswith("/"):
                     result = await run_command(
                         session, prompt, switch_model=switch_model, set_max_turns=set_max_turns
@@ -196,18 +197,21 @@ async def run_repl(
                         console.print(line, markup=False, highlight=False)
                     if result.exit:
                         return 0
-                    if result.send is None:
+                    if result.retry:  # /retry: the step that failed, again
+                        retrying = True
+                    elif result.send is None:
                         default = result.prompt or ""
                         prompt = None
                         continue
-                    prompt, allow = result.send, result.allow  # a custom command
-                    step_agent = result.agent
+                    else:
+                        prompt, allow = result.send, result.allow  # a custom command
+                        step_agent = result.agent
                 before = session.agent.persona
                 switched = step_agent is not None and step_agent != before
                 if switched:  # a step of a command (/playwright plan) runs as its own agent
                     session.agent = await rebuild_agent(session.agent, agent=step_agent)
                     console.print(f"[dim]This step runs as the {step_agent} agent.[/dim]")
-                task = asyncio.create_task(_show_turn(console, session, prompt, allow))
+                task = asyncio.create_task(_show_turn(console, session, prompt, allow, retrying))
                 interrupt.arm(task.cancel)
                 try:
                     await task
@@ -225,10 +229,14 @@ async def run_repl(
 
 
 async def _show_turn(
-    console: Console, session: Session, prompt: str, allow: list[str] | None = None
+    console: Console,
+    session: Session,
+    prompt: str,
+    allow: list[str] | None = None,
+    retry: bool = False,
 ) -> None:
     streamed = False
-    async for event in session.run(prompt, allow=allow):
+    async for event in session.retry() if retry else session.run(prompt, allow=allow):
         if isinstance(event, ev.AssistantDelta):
             console.print(event.text, end="", markup=False, highlight=False)
             streamed = True
