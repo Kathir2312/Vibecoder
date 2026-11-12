@@ -5,6 +5,7 @@ from __future__ import annotations
 from .base import Tool
 from .bash import BashTool
 from .files import EditTool, ReadTool, WriteTool
+from .jobs import JobsTool
 from .plan import ExitPlanModeTool
 from .search import GlobTool, GrepTool
 from .todo import TodoTool
@@ -18,6 +19,7 @@ def default_tools() -> list[Tool]:
         GlobTool(),
         GrepTool(),
         BashTool(),
+        JobsTool(),
         TodoTool(),
         ExitPlanModeTool(),
     ]

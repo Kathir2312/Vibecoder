@@ -113,6 +113,7 @@ from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
 from ..tools.browser import BrowserTool, browser_session
 from ..tools.code_search import CodeSearchTool
+from ..tools.jobs import JobManager
 from ..tools.registry import default_tools
 from .context import RunContext
 from .limits import recursion_limit_for
@@ -253,8 +254,10 @@ async def rebuild_agent(old: Agent, **changes: Any) -> Agent:
         telemetry=old.telemetry,
         memory=old.memory,
         audit=old.audit,  # the same object: what `/audit on|off` switched stays
+        jobs=old.ctx.jobs,  # running jobs go on in the new agent
         **spec,
     )
+    old.ctx.jobs = None  # so that closing the old agent does not end them
     new.policy.mode = old.policy.mode
     new.policy.allow = old.policy.allow
     # What `/critic` and `/verify` switched stays switched.
@@ -369,6 +372,7 @@ def build_agent(
     memory: Memory | None = None,
     ide_browser: IdeToolSet | None = None,
     audit: AuditLog | None = None,
+    jobs: JobManager | None = None,
 ) -> Agent:
     """`sandbox`, `telemetry`, `code_index`, `memory`: reuse these (a rebuild, or
     /index turning code search on); else made from settings. `ide_browser`: tools the IDE
@@ -413,6 +417,8 @@ def build_agent(
         warnings += [warning] if warning else []
     ctx = ToolContext(cwd=cwd, project_root=root, sandbox=sandbox, code_index=code_index)
     ctx.max_output_chars = output_budget_chars(profile.context_window)
+    # Background jobs outlive a rebuild (a model switch, a fallback): the manager is handed over.
+    ctx.jobs = jobs or JobManager(sandbox)
     tools = {t.name: t for t in default_tools() if t.name != "TodoWrite"}
     if code_index is not None:
         tools["CodeSearch"] = CodeSearchTool()

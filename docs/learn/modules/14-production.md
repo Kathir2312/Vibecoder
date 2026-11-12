@@ -388,6 +388,25 @@ what looks like a key in the text that is; and a repository can never set it
 (`_PROJECT_NEVER` in `config/settings.py`), because a repository must not be able to
 switch your audit trail off or write it somewhere else.
 
+### 6f. Work that outlives a tool call: `tools/jobs.py`
+
+A LangGraph tool call returns a result and is over, but a dev server must keep running after
+the call that started it. LangChain has nothing for processes that outlive a tool call, so
+[`JobManager`](../../../src/cmcoder/tools/jobs.py) is plain asyncio around the same
+`PersistentShell` the Bash tool uses: each job is a shell of its own with a task awaiting its
+`run()`. That one decision gives a job the sandbox, the process-tree kill and live output
+for free. Three things are worth reading:
+
+* **Ownership.** A job belongs to the agent, not to a graph, and `rebuild_agent` hands the
+  manager to the new agent (`old.ctx.jobs = None` before the old one is closed). A `/model`
+  switch or a model fallback therefore never kills your dev server.
+* **Telling the chat.** The manager calls `on_change`; the stdio server turns it into a
+  `jobs_changed` event. Output changes are coalesced to one a second, state changes are sent
+  at once.
+* **Stop while busy.** While a request runs the engine refuses every other user message,
+  but `/jobs stop` ends a process and takes nothing from the request, so `handle()` lets it
+  through. The panel's Stop button is then just that message, and no IDE needs to change.
+
 ### 7. Shipping without Python: the standalone build
 
 Developers' PCs have no Python. PyInstaller bundles the interpreter, cmcoder

@@ -21,6 +21,7 @@ import { lineDiff } from "./diff";
 import { copyText } from "./clipboard";
 import { enhanceCodeBlocks } from "./codeblock";
 import { Dock } from "./dock";
+import { JobsPanel } from "./jobs";
 import { changesBar, reviewView, updateBar, type ChangesHost, type TurnChanges } from "./changes";
 import { errorCard, retireErrorCards } from "./errorcard";
 import { planCard, planOf } from "./plancard";
@@ -219,6 +220,10 @@ const agentsDock = dock.add("agents", "Subagents", {
   hint: (open) => (open ? "Click to hide the list of subagents" : "Click to show every subagent of this turn"),
 });
 agentsDock.el.classList.add("agents");
+const jobsDock = dock.add("jobs", "Jobs", {
+  hint: (open) => (open ? "Click to hide the background jobs" : "Click to show the background jobs and their output"),
+});
+jobsDock.el.classList.add("jobs");
 const sessionsPanel = $<HTMLElement>(".sessions");
 const historyButton = $<HTMLButtonElement>(".history");
 const attachButton = $<HTMLButtonElement>(".attach");
@@ -895,6 +900,12 @@ function agentDetail(s: SubagentStatus): string {
   return words + agentSummary(s, true);
 }
 
+// Stop is a message: the engine runs `/jobs stop` at once, even while a request is running.
+const jobsPanel = new JobsPanel(jobsDock, {
+  stop: (id) => post({ kind: "send", text: `/jobs stop ${id}`, includeContext: false }),
+  stopAll: () => post({ kind: "send", text: "/jobs stop all", includeContext: false }),
+});
+
 function subagentStatus(s: SubagentStatus): void {
   if (agentRuns.size === 0) agentsDock.autoOpen(); // a turn's first subagent
   agentRuns.set(s.id, { status: s, seen: Date.now(), order: ++agentOrder });
@@ -1062,6 +1073,9 @@ function onEvent(ev: AgentEvent): void {
       break;
     case "subagent_status":
       subagentStatus(ev);
+      break;
+    case "jobs_changed":
+      jobsPanel.update(ev);
       break;
     case "permission_request":
       permissionCard(ev);

@@ -89,7 +89,7 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick", "retry", "revert", "verify", "audit",
+    "critic", "index", "memory", "pick", "retry", "revert", "verify", "audit", "jobs",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
@@ -192,6 +192,9 @@ class StdioServer:
                 self.error("startup", str(e), hint)
                 return 2
             self.session = Session(agent, ask=self.ask, store=store)
+            if agent.ctx.jobs is not None:  # the chat lists background jobs as they change
+                jobs = agent.ctx.jobs
+                jobs.on_change = lambda: self.emit(jobs.snapshot())
             if self.resume or self.continue_session:
                 found = await (store.find(self.resume) if self.resume else store.latest())
                 if found is not None:
@@ -248,6 +251,13 @@ class StdioServer:
         assert session is not None
         if isinstance(message, msg.UserMessage):
             if self.busy:
+                if message.text.strip().startswith("/jobs stop"):
+                    # Ending a background job takes nothing from the turn that is running, so
+                    # the chat's Stop button on a job works at once (no new message for a host).
+                    result = await run_command(session, message.text.strip())
+                    for event in result.events:
+                        self.emit(event)
+                    return
                 self.error("busy", "A turn is already running; interrupt it first.")
                 return
             note = (

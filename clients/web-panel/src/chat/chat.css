@@ -215,6 +215,35 @@ select { padding: 2px 4px; }
   line-height: 1.5;
 }
 
+/* The Jobs panel: background commands, each with how it stands, its last lines and a Stop. */
+.job { padding: 2px 0 4px; }
+.job-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.job-mark { flex: none; }
+.job.running .job-mark { color: var(--vscode-textLink-foreground); }
+.job.exited .job-mark { color: var(--cm-ok); }
+.job.failed .job-mark { color: var(--cm-err); }
+.job-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+.job-detail { flex: none; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+.stop-job { flex: none; padding: 0 8px; font-size: 0.9em; line-height: 1.6; }
+.job-tail {
+  margin: 2px 0 0 1.4em;
+  max-height: 7em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: calc(var(--vscode-editor-font-size) * 0.92);
+}
+
 /* The Tasks panel: done/total, a meter, the task in progress; open, the numbered list. */
 .todo-count { font-weight: 600; opacity: 1; }
 .todo-meter {

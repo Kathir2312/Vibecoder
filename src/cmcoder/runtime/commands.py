@@ -54,6 +54,7 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("mcp", "", "MCP servers: status and tools"),
     ("agents", "", "Subagent types, and this session's subagent runs"),
     ("critic", "[on|off]", "A critic agent reviews each answer before you see it"),
+    ("jobs", "[stop <n>|output <n>]", "Background jobs: list, stop one, show its output"),
     ("audit", "[on|off|<n>]", "What the audit log recorded of this conversation; switch it"),
     (
         "verify",
@@ -450,6 +451,10 @@ async def run_command(
         return CommandResult(
             [f"Critique is {state} (up to {a.critic.max_rounds} reviews per answer)."]
         )
+    if name == "jobs":
+        from .jobs import jobs_lines
+
+        return await jobs_lines(session, arg)
     if name == "audit":
         from .audit import audit_lines
 

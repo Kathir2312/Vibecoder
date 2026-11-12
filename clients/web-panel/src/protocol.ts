@@ -76,6 +76,18 @@ export interface HistoryItem {
   text: string;
 }
 
+/** One background job (a command started with `run_in_background`). */
+export interface JobInfo {
+  id: number;
+  command: string;
+  state: "running" | "exited" | "stopped" | "failed";
+  exit_code: number | null;
+  elapsed_ms: number;
+  tail: string;
+  outside_sandbox: boolean;
+  note: string;
+}
+
 export interface ReviewIssue {
   severity: "high" | "medium" | "low";
   problem: string;
@@ -264,6 +276,15 @@ export interface TurnChanges {
 export interface AttachmentsChanged {
   type: "attachments";
   items: AttachmentInfo[];
+}
+
+/**
+ * The background jobs, all of them (newest last), whenever one starts, ends or prints.
+ * Stopping one: send `/jobs stop <id>` as a message.
+ */
+export interface JobsChanged {
+  type: "jobs_changed";
+  jobs: JobInfo[];
 }
 
 export interface ModelChanged {
@@ -475,6 +496,7 @@ export type AgentEvent =
   | ModeChanged
   | TurnChanges
   | AttachmentsChanged
+  | JobsChanged
   | ModelChanged
   | IdeToolRequest
   | AgentList
