@@ -62,7 +62,14 @@ from pydantic import ValidationError
 
 from ..agents.main import Agent, AgentOptions, build_agent, prepare_agent, rebuild_agent
 from ..agents.subagents import agent_infos
-from ..config.settings import Settings, SettingsError, add_local_allow_rule, find_project_root
+from ..config import editor
+from ..config.settings import (
+    Settings,
+    SettingsError,
+    add_local_allow_rule,
+    find_project_root,
+    load_settings,
+)
 from ..core.hooks import Hook
 from ..core.ide import IDE_TOOLS, format_ide_context
 from ..core.permissions import MODES, Decision, ModeNotAllowed
@@ -89,11 +96,11 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick", "retry", "revert", "verify",
+    "critic", "index", "memory", "pick", "retry", "revert", "verify", "audit", "jobs", "settings",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
-PROMPT_COMMANDS = ("team", "init", "review", "webtest", "playwright")
+PROMPT_COMMANDS = ("team", "init", "review", "commit", "pr", "webtest", "playwright")
 _READ = ReadTool()
 
 
@@ -124,6 +131,7 @@ class StdioServer:
         self.ide_dirty = False  # the IDE's tools changed during a turn: rebuild before the next
         self.mcp: McpManager | None = None
         self.inbox: asyncio.Queue[bytes] = asyncio.Queue()
+        self.gateway_models: list[str] = []  # from the last connection test on the settings page
 
     def emit(self, event: ev.Event) -> None:
         self.out.write(event.model_dump_json().encode() + b"\n")
@@ -192,6 +200,9 @@ class StdioServer:
                 self.error("startup", str(e), hint)
                 return 2
             self.session = Session(agent, ask=self.ask, store=store)
+            if agent.ctx.jobs is not None:  # the chat lists background jobs as they change
+                jobs = agent.ctx.jobs
+                jobs.on_change = lambda: self.emit(jobs.snapshot())
             if self.resume or self.continue_session:
                 found = await (store.find(self.resume) if self.resume else store.latest())
                 if found is not None:
@@ -248,6 +259,25 @@ class StdioServer:
         assert session is not None
         if isinstance(message, msg.UserMessage):
             if self.busy:
+                if message.text.strip().startswith("/jobs stop"):
+                    # Ending a background job takes nothing from the turn that is running, so
+                    # the chat's Stop button on a job works at once (no new message for a host).
+                    result = await run_command(session, message.text.strip())
+                    for event in result.events:
+                        self.emit(event)
+                    return
+                if message.text.strip().startswith("/settings"):
+                    # Looking and testing take nothing from the request; a change rebuilds the agent.
+                    rest = message.text.strip().partition(" ")[2].strip()
+                    if rest in ("", "test"):
+                        await self._settings_command(rest)
+                    else:
+                        self.emit(
+                            self._settings_state(
+                                "Settings change between requests: wait for this one to finish."
+                            )
+                        )
+                    return
                 self.error("busy", "A turn is already running; interrupt it first.")
                 return
             note = (
@@ -539,6 +569,8 @@ class StdioServer:
                     body = "\n".join(lines)
                     self.emit(ev.AssistantMessage(text=f"**Code index**\n\n```text\n{body}\n```"))
                     self._side(self._index("status"))
+                elif name == "settings":  # the settings page
+                    await self._settings_command(text.partition(" ")[2].strip())
                 elif name == "rewind" and not text.partition(" ")[2].strip():
                     points = await session.rewind_points()
                     self.emit(ev.RewindPoints(points=points[-20:]))
@@ -591,6 +623,129 @@ class StdioServer:
             self.emit(self._result("error", str(e), True, started))
 
     # --- code search (VS Code's status bar and setup) ------------------------------
+
+    # --- the settings page (`/settings`; config/editor.py) ----------------------------------
+    def _key_status(self) -> dict[str, bool]:
+        """Per gateway: whether an API key was found (never the key)."""
+        from ..models.chat import api_key_for
+
+        found: dict[str, bool] = {}
+        for name, cfg in self.settings.providers.items():
+            try:
+                found[name] = bool(api_key_for(name, cfg))
+            except Exception:  # a keychain that will not answer: no key as far as we can tell
+                found[name] = False
+        return found
+
+    def _settings_state(self, notice: str = "") -> ev.SettingsState:
+        return editor.state(
+            self.settings, notice=notice, models=self.gateway_models, keys=self._key_status()
+        )
+
+    async def _settings_command(self, arg: str) -> None:
+        words = arg.split(maxsplit=2)
+        notice = ""
+        if words[:1] == ["test"]:
+            self._side(self._settings_test())  # the network can be slow: beside the conversation
+            return
+        if words[:1] == ["set"] and len(words) == 3:
+            notice = await self._settings_set(words[1], words[2])
+        elif words:
+            notice = "Usage: /settings [set <key> <value> | test]"
+        self.emit(self._settings_state(notice))
+
+    async def _settings_set(self, key: str, text: str) -> str:
+        """Save one setting and put it to work in this session; what to tell the user."""
+        try:
+            value, saved = editor.write_value(key, text)
+        except editor.SettingsEditError as e:
+            return str(e)
+        try:
+            new = load_settings(self.agent.ctx.cwd, trust_project=self.settings.project_trusted)
+        except SettingsError as e:
+            return f"{saved} But the settings no longer load: {e}"
+        self.settings = new
+        try:
+            await self._rebuild(model=new.model if key == "model" else None, settings=new)
+        except (SettingsError, ValueError) as e:
+            return f"{saved} It could not be put to work now: {e}"
+        a = self.agent
+        # What a rebuild keeps from the old agent is set again where the user has just chosen.
+        if key == "verify.enabled" and a.verify is not None:
+            a.verify.enabled = new.verify.enabled
+        elif key == "critic.enabled" and a.critic is not None:
+            a.critic.enabled = new.critic.enabled
+            self.emit(ev.CritiqueChanged(enabled=a.critic.enabled))
+        elif key == "audit.enabled" and a.audit is not None:
+            a.audit.enabled = new.audit.enabled
+            self.session_audit_started()
+        elif key == "audit.includePrompts" and a.audit is not None:
+            a.audit.include_prompts = new.audit.include_prompts
+        elif key == "permissions.defaultMode":
+            try:
+                a.policy.mode = new.permissions.default_mode
+                self.emit(ev.ModeChanged(mode=a.policy.mode))
+            except ModeNotAllowed as e:
+                return f"{saved} Not used now: {e}"
+        if key == "model":
+            b = a.bundle
+            self.emit(ev.ModelChanged(model=b.name, context_window=b.profile.context_window))
+        if value is not None and editor.value_of(new, key) != value:
+            return (
+                f"{saved} Something with more say sets it differently "
+                "(the project's settings, an environment variable or your organisation)."
+            )
+        return f"{saved} In use now."
+
+    def session_audit_started(self) -> None:
+        if self.session is not None:
+            self.session.audit_session_started()
+
+    async def _settings_test(self) -> None:
+        """Ask the gateway for its models (the same call `cmcoder models` makes)."""
+        from ..models.chat import api_key_for
+        from ..models.gateway import Gateway, GatewayError
+
+        name = self.agent.bundle.provider
+        cfg = self.settings.providers.get(name)
+        if cfg is None:
+            self.emit(ev.ConnectionTested(ok=False, gateway=name, message="No such gateway."))
+            return
+        started = time.monotonic()
+        gateway = Gateway(name, cfg, api_key_for(name, cfg))
+        try:
+            models = await asyncio.wait_for(gateway.list_models(), 20)
+        except GatewayError as e:
+            refused = getattr(e, "status", None) in (401, 403)
+            message = (
+                "The gateway refused the key: run `cmcoder login` in a terminal."
+                if refused
+                else f"The gateway answered with an error: {e}"
+            )
+        except Exception as e:  # unreachable, a certificate, a timeout
+            message = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        else:
+            self.gateway_models = models
+            self.emit(
+                ev.ConnectionTested(
+                    ok=True,
+                    gateway=name,
+                    message=f"{len(models)} model{'' if len(models) == 1 else 's'} available",
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                )
+            )
+            self.emit(self._settings_state(f"Connected to {name}."))
+            return
+        finally:
+            await gateway.aclose()
+        self.emit(
+            ev.ConnectionTested(
+                ok=False,
+                gateway=name,
+                message=message,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
+        )
 
     def _side(self, job: Any, reply: Callable[[str], ev.Event] | None = None) -> None:
         """Run a job beside the conversation (indexing can take a while).

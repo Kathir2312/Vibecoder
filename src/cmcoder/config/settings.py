@@ -245,6 +245,18 @@ class VerifyConfig(_Model):
     timeout: int = Field(300, ge=10, le=3600)
 
 
+class AuditConfig(_Model):
+    """The audit log (audit.py): a JSON-lines record of what the agent ran and changed, in your
+    own folder. Off unless switched on; the managed settings can switch it on, and a repository's
+    settings are never read for it."""
+
+    enabled: bool = False
+    # Where the daily files go (default: <config folder>/audit).
+    dir: str | None = None
+    # Record the text of your prompts (redacted) too; by default only their length.
+    include_prompts: bool = Field(False, alias="includePrompts")
+
+
 class MemoryConfig(_Model):
     """Auto memory (notes.py): cmcoder keeps short notes about the project between
     sessions, only from what the user says. `/memory` lists and deletes them."""
@@ -361,6 +373,7 @@ class Settings(_Model):
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
     critic: CriticConfig = Field(default_factory=lambda: CriticConfig.model_validate({}))
     verify: VerifyConfig = Field(default_factory=lambda: VerifyConfig.model_validate({}))
+    audit: AuditConfig = Field(default_factory=lambda: AuditConfig.model_validate({}))
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
@@ -645,7 +658,7 @@ def env_api_key(environ: dict[str, str] | None = None) -> str | None:
 #   (the VS Code extension passes it for workspaces VS Code trusts), or
 #   rules cmcoder wrote itself ("Always" answers) in settings.local.json.
 
-_PROJECT_NEVER = ("providers",)
+_PROJECT_NEVER = ("providers", "audit")
 _PERMISSIVE_MODES = ("acceptEdits", "auto", "bypassPermissions")
 
 
@@ -903,7 +916,7 @@ def ignored_settings_message(settings: Settings) -> str | None:
     if never:
         return (
             f"Ignored in this project's .cmcoder settings: {items}. "
-            "Gateways are only read from your user settings (~/.cmcoder/settings.json)."
+            "Gateways and the audit log are only read from your user settings (~/.cmcoder/settings.json)."
         )
     return (
         f"Ignored in this project's .cmcoder settings because the folder isn't trusted: {items}. "

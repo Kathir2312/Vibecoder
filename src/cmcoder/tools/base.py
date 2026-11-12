@@ -63,9 +63,11 @@ class ToolContext:
     code_index: Any = None  # rag.index.CodeIndex, Phase 5 (code search)
     # The Browser tool's browser (tools/browser.py); started on first use.
     browser: Any = None
+    # Background jobs (tools/jobs.py): `Bash` with `run_in_background` and the `Jobs` tool.
+    jobs: Any = None
 
     async def close_shells(self) -> None:
-        """Close what this context keeps alive: its shells and its browser."""
+        """Close what this context keeps alive: its shells, its browser and its background jobs."""
         for shell in (self.shell, self.unsandboxed_shell):
             if shell is not None:
                 await shell.close()
@@ -73,6 +75,9 @@ class ToolContext:
         if self.browser is not None:
             await self.browser.close()
             self.browser = None
+        if self.jobs is not None:  # (a rebuild takes them over first: agents/main.py)
+            await self.jobs.close()
+            self.jobs = None
 
     def __post_init__(self) -> None:
         # Compare like with like: tool paths are resolved, so the roots must be

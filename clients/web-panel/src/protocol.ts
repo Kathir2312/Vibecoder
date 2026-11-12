@@ -76,6 +76,18 @@ export interface HistoryItem {
   text: string;
 }
 
+/** One background job (a command started with `run_in_background`). */
+export interface JobInfo {
+  id: number;
+  command: string;
+  state: "running" | "exited" | "stopped" | "failed";
+  exit_code: number | null;
+  elapsed_ms: number;
+  tail: string;
+  outside_sandbox: boolean;
+  note: string;
+}
+
 export interface ReviewIssue {
   severity: "high" | "medium" | "low";
   problem: string;
@@ -100,6 +112,25 @@ export interface SessionSummary {
   title: string;
   updated: number;
   messages: number;
+}
+
+/** One setting of the settings page. */
+export interface SettingsField {
+  key: string;
+  label: string;
+  group: string;
+  kind: "text" | "choice" | "bool" | "number" | "lines";
+  help: string;
+  value: unknown;
+  choices: string[];
+  locked: boolean;
+  note: string;
+}
+
+export interface SettingsGateway {
+  name: string;
+  base_url: string;
+  key: "set" | "missing" | "not needed";
 }
 
 export interface SystemInit {
@@ -264,6 +295,37 @@ export interface TurnChanges {
 export interface AttachmentsChanged {
   type: "attachments";
   items: AttachmentInfo[];
+}
+
+/**
+ * The background jobs, all of them (newest last), whenever one starts, ends or prints.
+ * Stopping one: send `/jobs stop <id>` as a message.
+ */
+export interface JobsChanged {
+  type: "jobs_changed";
+  jobs: JobInfo[];
+}
+
+/**
+ * The settings page: sent when it is opened (`/settings`), after a change (`/settings set
+ * <key> <value>`, value as JSON for a list) and after a connection test (`/settings test`).
+ */
+export interface SettingsState {
+  type: "settings_state";
+  fields: SettingsField[];
+  gateways: SettingsGateway[];
+  file: string;
+  notice: string;
+  models: string[];
+}
+
+/** The answer to `/settings test`: whether the gateway answered, and how fast. */
+export interface ConnectionTested {
+  type: "connection_tested";
+  ok: boolean;
+  gateway: string;
+  message: string;
+  elapsed_ms: number;
 }
 
 export interface ModelChanged {
@@ -475,6 +537,9 @@ export type AgentEvent =
   | ModeChanged
   | TurnChanges
   | AttachmentsChanged
+  | JobsChanged
+  | SettingsState
+  | ConnectionTested
   | ModelChanged
   | IdeToolRequest
   | AgentList

@@ -124,6 +124,7 @@ test("a title without buttons is a card with no button row", async () => {
 
 test("a fallback model is named on the model label, the failed reply is dropped, and the usual model comes back", async () => {
   const { page, ev } = await panel("vscode");
+  await page.setViewportSize({ width: 460, height: 700 }); // a VS Code side bar
   await ev({ type: "system_init", protocol_version: 1, session_id: "s", cwd: "/p", model: "qwen3-27b", provider: "mock", tools: [], permission_mode: "default", critique: false, version: "1", features: [] });
   assert.equal((await page.textContent(".model")) ?? "", "qwen3-27b");
   await page.fill("textarea", "go");
@@ -133,6 +134,12 @@ test("a fallback model is named on the model label, the failed reply is dropped,
   await ev({ type: "warning", message: "qwen3-27b: The model gateway is not answering (502). Finishing this request with qwen3-7b; your next message tries qwen3-27b again." });
   await ev({ type: "model_changed", model: "qwen3-7b", context_window: 32768, reason: "fallback" });
   assert.equal(await page.textContent(".model"), "qwen3-7b · fallback");
+  const cutOff = () => page.evaluate(() => { const m = document.querySelector(".model") as HTMLElement; return m.scrollWidth > m.clientWidth; });
+  assert.equal(await cutOff(), false, "the whole label is visible, not cut off");
+  // (and a sidebar this narrow does cut it off without the header's own row for it)
+  await page.evaluate(() => document.querySelector("header")!.classList.remove("fallback"));
+  assert.equal(await cutOff(), true, "the test's width is one where the label would be cut");
+  await page.evaluate(() => document.querySelector("header")!.classList.add("fallback"));
   assert.match((await page.getAttribute(".model", "title")) ?? "", /next message tries the usual model/);
   assert.equal(await page.locator(".msg.assistant").count(), 0, "what the failed model wrote is not kept");
   await ev({ type: "assistant_delta", text: "The whole answer." });
@@ -143,5 +150,6 @@ test("a fallback model is named on the model label, the failed reply is dropped,
   await ev({ ...result });
   await ev({ type: "model_changed", model: "qwen3-27b", context_window: 32768, reason: "restore" });
   assert.equal(await page.textContent(".model"), "qwen3-27b");
+  assert.equal(await page.locator("header.fallback").count(), 0, "back to the usual header");
   await page.close();
 });

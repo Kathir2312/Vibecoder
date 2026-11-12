@@ -109,6 +109,10 @@ header .model {
   header { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
   header .model { flex-basis: 100%; }
 }
+/* While another model finishes the request (the main one's gateway failed) the name is the news: it
+   gets its own row, whole, at any width. */
+header.fallback { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+header.fallback .model { flex-basis: 100%; opacity: 1; color: var(--vscode-editorWarning-foreground); }
 
 select, input, textarea {
   color: var(--vscode-input-foreground);
@@ -213,6 +217,35 @@ select { padding: 2px 4px; }
   overflow-y: auto;
   padding: 0 10px 5px 27px;
   line-height: 1.5;
+}
+
+/* The Jobs panel: background commands, each with how it stands, its last lines and a Stop. */
+.job { padding: 2px 0 4px; }
+.job-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.job-mark { flex: none; }
+.job.running .job-mark { color: var(--vscode-textLink-foreground); }
+.job.exited .job-mark { color: var(--cm-ok); }
+.job.failed .job-mark, .job.bad .job-mark { color: var(--cm-err); }
+.job-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+.job-detail { flex: none; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+.stop-job { flex: none; padding: 0 8px; font-size: 0.9em; line-height: 1.6; }
+.job-tail {
+  margin: 2px 0 0 1.4em;
+  max-height: 7em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: calc(var(--vscode-editor-font-size) * 0.92);
 }
 
 /* The Tasks panel: done/total, a meter, the task in progress; open, the numbered list. */
@@ -398,6 +431,35 @@ footer .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 
 .changes-sub { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
 .changes-actions { display: flex; gap: var(--cm-space-3); }
 .changes-counts { font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
+
+/* The settings page: a view in place of the conversation. */
+.settings-view { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: var(--cm-space-4) 10px; }
+.settings-head { display: flex; align-items: center; gap: var(--cm-space-4); }
+.settings-title { flex: 1; }
+.settings-notice {
+  margin: var(--cm-space-4) 0;
+  padding: var(--cm-space-3) var(--cm-space-4);
+  border-left: 3px solid var(--vscode-textLink-foreground);
+  background: var(--vscode-textCodeBlock-background);
+}
+.settings-group { margin: var(--cm-space-4) 0; padding-top: var(--cm-space-3); border-top: 1px solid var(--vscode-panel-border, transparent); }
+.settings-heading { margin: 0 0 var(--cm-space-3); font-size: 1em; font-weight: 700; }
+.settings-row { margin: var(--cm-space-3) 0 var(--cm-space-4); }
+.settings-label { display: block; font-weight: 600; margin-bottom: 2px; }
+.settings-row.bool { display: flex; align-items: center; flex-wrap: wrap; column-gap: var(--cm-space-3); }
+.settings-row.bool .settings-label { display: inline; margin: 0; }
+.settings-row.bool .settings-help { flex-basis: 100%; }
+.settings-row input[type="text"], .settings-row input[type="number"], .settings-row select, .settings-row textarea { width: 100%; box-sizing: border-box; padding: 3px 6px; }
+.settings-row textarea { font-family: var(--vscode-editor-font-family); resize: vertical; }
+.settings-help { color: var(--vscode-descriptionForeground); font-size: 0.92em; }
+.settings-gateway { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cm-space-3) var(--cm-space-4); margin: var(--cm-space-3) 0; }
+.gw-name { font-weight: 600; }
+.gw-url { overflow-wrap: anywhere; }
+.gw-key.ok, .settings-tested.ok { color: var(--cm-ok); }
+.gw-key.missing, .settings-tested.fail { color: var(--cm-err); }
+.settings-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cm-space-4); }
+.settings-foot { color: var(--vscode-descriptionForeground); font-size: 0.92em; }
+.settings-loading { color: var(--vscode-descriptionForeground); }
 
 .changes-view { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: var(--cm-space-4) 10px; }
 .review-head { display: flex; align-items: center; gap: var(--cm-space-4); flex-wrap: wrap; }

@@ -370,6 +370,64 @@ commands (`vscode.executeDefinitionProvider`, `executeReferenceProvider`,
 `executeWorkspaceSymbolProvider`), reached through a small structural `CodeApi` so that its
 logic is tested in plain Node, without VS Code.
 
+### 6e. The audit trail: `audit.py`
+
+Telemetry (section 2) counts; an audit log says *what happened*: which command ran, who
+allowed it, which files a request changed. It is not a callback handler on purpose. A
+handler sees model and tool runs, but not the permission **answers** (those happen in the
+session, between an interrupt and its resume) and not the user's rewinds. The session
+yields every one of these as a protocol event, so [`AuditLog.observe`](../../../src/cmcoder/audit.py)
+is called in the same two places `Telemetry.observe` is, and `Session._drive` adds the
+answer to each `permission_request`. The subagents' tool calls arrive the same way (on the
+custom stream), so nothing needs to be wired into a nested graph.
+
+Three decisions: the file is plain JSON lines, appended with `O_APPEND` and mode 600, so
+it can be read and collected without cmcoder; file contents, replies and tool output are
+never recorded (`summarize_input` keeps a Write as its path and size), and `redact` hides
+what looks like a key in the text that is; and a repository can never set it
+(`_PROJECT_NEVER` in `config/settings.py`), because a repository must not be able to
+switch your audit trail off or write it somewhere else.
+
+### 6f. Work that outlives a tool call: `tools/jobs.py`
+
+A LangGraph tool call returns a result and is over, but a dev server must keep running after
+the call that started it. LangChain has nothing for processes that outlive a tool call, so
+[`JobManager`](../../../src/cmcoder/tools/jobs.py) is plain asyncio around the same
+`PersistentShell` the Bash tool uses: each job is a shell of its own with a task awaiting its
+`run()`. That one decision gives a job the sandbox, the process-tree kill and live output
+for free. Three things are worth reading:
+
+* **Ownership.** A job belongs to the agent, not to a graph, and `rebuild_agent` hands the
+  manager to the new agent (`old.ctx.jobs = None` before the old one is closed). A `/model`
+  switch or a model fallback therefore never kills your dev server.
+* **Telling the chat.** The manager calls `on_change`; the stdio server turns it into a
+  `jobs_changed` event. Output changes are coalesced to one a second, state changes are sent
+  at once.
+* **Stop while busy.** While a request runs the engine refuses every other user message,
+  but `/jobs stop` ends a process and takes nothing from the request, so `handle()` lets it
+  through. The panel's Stop button is then just that message, and no IDE needs to change.
+
+### 6g. A settings page that cannot do harm: `config/editor.py`
+
+A settings form is a way to write to a file the whole program trusts, so the engine, not the
+panel, decides everything. [`editor.py`](../../../src/cmcoder/config/editor.py) holds a **fixed
+table** of the settings the page may touch (`FIELDS`): `write_value` refuses any other key, so a
+gateway, a hook or a sandbox rule cannot be changed through it, whatever the panel sends. A
+change is parsed for its kind, put into the user's JSON (every other key stays), checked by
+validating the whole file as `Settings`, and only then replaced in one step (`os.replace`
+of a temp file). The managed settings win: a key the organisation sets is `locked` in the
+page and refused by `write_value`. After saving, the stdio server loads the settings again,
+rebuilds the agent (the same `rebuild_agent` as `/model`) and sets again the few switches a
+rebuild keeps from the old agent (`/critic`, `/verify`, `/audit`), and tells the user if
+something with more say (an environment variable, the project) still decides differently.
+
+The panel ([`settings.ts`](../../../clients/web-panel/src/chat/settings.ts)) only draws the
+`settings_state` event and says which control changed, as the message
+`/settings set <key> <value>`: the same "no host change" route as `/pick` and `/jobs stop`,
+so every IDE gets the page. There is no field for an API key on purpose: it would travel
+through the IDE and its logs, so the page shows whether one was found and names
+`cmcoder login`.
+
 ### 7. Shipping without Python: the standalone build
 
 Developers' PCs have no Python. PyInstaller bundles the interpreter, cmcoder

@@ -9,6 +9,7 @@ from pydantic import Field
 
 from ..compat import SHELL_HELP, find_shell
 from .base import Tool, ToolContext, ToolInput, ToolResult, truncate_middle
+from .jobs import start_background
 from .progress import LiveOutput, current_call, register_stop, unregister_stop
 from .shell import PersistentShell
 
@@ -32,6 +33,11 @@ class BashInput(ToolInput):
         description="Run outside the sandbox. Only after a command failed because of the "
         "sandbox (read-only file system, blocked network) and it is really needed; the user "
         "is always asked.",
+    )
+    run_in_background: bool = Field(
+        False,
+        description="Start it and return at once with a job number, for a command that keeps "
+        "running (dev server, watcher); read or stop it with the Jobs tool.",
     )
 
 
@@ -59,6 +65,9 @@ class BashTool(Tool):
         shell = find_shell()
         if shell is None and (ctx.shell is None or ctx.unsandboxed_shell is None):
             return ToolResult(f"No shell available. {SHELL_HELP}", is_error=True)
+        if args.run_in_background:
+            assert shell is not None
+            return start_background(args, ctx, shell, sandboxed=not outside_sandbox(args, ctx))
         if outside_sandbox(args, ctx):
             if ctx.unsandboxed_shell is None:
                 assert shell is not None
