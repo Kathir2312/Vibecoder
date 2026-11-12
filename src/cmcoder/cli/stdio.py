@@ -93,7 +93,7 @@ PANEL_COMMANDS = {
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
-PROMPT_COMMANDS = ("team", "init", "review", "webtest", "playwright")
+PROMPT_COMMANDS = ("team", "init", "review", "commit", "pr", "webtest", "playwright")
 _READ = ReadTool()
 
 

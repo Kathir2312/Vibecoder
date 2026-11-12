@@ -62,6 +62,8 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ),
     ("team", "<feature>", "PM, developer, tester and DevOps build a feature (team.enabled)"),
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
+    ("commit", "[what it is for]", "Commit the uncommitted changes, with a message from the diff"),
+    ("pr", "[base branch]", "Prepare a pull request for this branch: title, body, push"),
     ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     (
         "pick",
@@ -293,6 +295,23 @@ async def review_command(session: Session, target: str) -> CommandResult:
     return CommandResult(send=review_prompt(change))
 
 
+async def git_command(session: Session, name: str, arg: str) -> CommandResult:
+    """/commit and /pr: cmcoder collects the facts, the model writes and runs the git commands
+    (each of which asks the user first, like any command that changes something)."""
+    from ..gitflow import commit_prompt, pr_prompt
+    from ..review import ReviewError
+
+    root = session.agent.ctx.project_root
+    sandbox = session.agent.sandbox
+    try:
+        text = await (
+            commit_prompt(root, arg, sandbox) if name == "commit" else pr_prompt(root, arg, sandbox)
+        )
+    except ReviewError as e:
+        return CommandResult([str(e)])
+    return CommandResult(send=text)
+
+
 def revert_command(session: Session, arg: str) -> CommandResult:
     """`/revert <request> all | <file> [<hunk>]`: take back part of what a request changed.
 
@@ -445,6 +464,8 @@ async def run_command(
         return init_command(session, arg)
     if name == "review":
         return await review_command(session, arg)
+    if name in ("commit", "pr"):
+        return await git_command(session, name, arg)
     if name == "webtest":
         return webtest_command(session, arg)
     if name == "playwright":
