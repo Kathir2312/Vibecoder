@@ -31,7 +31,7 @@ async function violations(page: Page): Promise<string[]> {
 
 const toolResult: Extract<AgentEvent, { type: "tool_result" }> = { type: "tool_result", id: "", name: "Bash", content: "a\nb", is_error: false, summary: "exit 0", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] };
 
-const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>) => Promise<void>> = {
+const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) => Promise<void>> = {
   "an empty conversation with its starters": async (ev) => {
     await ev({ type: "command_list", commands: [{ name: "playwright", description: "", argument_hint: "", origin: "built-in" }, { name: "pick", description: "", argument_hint: "", origin: "built-in" }] });
   },
@@ -69,6 +69,21 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>) => Promise<v
     await ev({ type: "agent_changed", agent: "explore", reason: "" });
     await ev({ ...result, subtype: "max_turns", is_error: true, result: "Stopped after 50 model calls. Say continue, or raise the limit with /turns 100." });
   },
+  "the changes bar and the review of every file": async (ev, page) => {
+    const lines = (a: [string, string][]) => a.map(([kind, text]) => ({ kind: kind as "ctx" | "add" | "del", text }));
+    const files = [
+      { index: 0, path: "Controllers/OrdersController.cs", status: "modified" as const, added: 2, removed: 1, binary: false, truncated: false, reverted: false, note: "changed since cmcoder wrote it, so it is left alone", hunks: [
+        { id: 0, old_start: 24, new_start: 24, reverted: false, lines: lines([["ctx", "[HttpGet]"], ["del", "Index(int page = 1)"], ["add", "Index(OrderStatus? status, int page = 1)"]]) },
+        { id: 1, old_start: 40, new_start: 40, reverted: true, lines: lines([["ctx", "return View(model);"], ["add", "ViewBag.Status = status;"]]) },
+      ] },
+      { index: 1, path: "Tests/OrdersControllerTests.cs", status: "added" as const, added: 34, removed: 0, binary: false, truncated: false, reverted: true, note: "", hunks: [] },
+    ];
+    await ev({ type: "turn_changes", turn: 1, files, added: 36, removed: 1 });
+    await page.click('.changes-bar button:has-text("Review changes")');
+  },
+  "the agent's plan": async (ev) => {
+    await ev(ask({ request_id: "plan1", tool_use_id: "7", name: "ExitPlanMode", label: "Plan: Orders status filter", input: { title: "Orders status filter", steps: [{ text: "Add a status parameter to Index", files: ["Controllers/OrdersController.cs"] }, { text: "Add tests", files: [] }], out_of_scope: "The database" }, suggested_rule: "", can_remember: false }));
+  },
   "a permission question with a diff": async (ev) => {
     await ev(ask({ request_id: "r2", tool_use_id: "8", name: "Edit", label: "Edit(src/app.py)", input: {}, suggested_rule: "Edit(src/app.py)", change: { path: "/p/src/app.py", before: "x\na\ny\n", after: "x\nb\ny\n" } }));
   },
@@ -98,7 +113,7 @@ for (const mode of ["dark", "light"] as const) {
     test(`axe finds nothing in ${name}, ${mode} theme`, async () => {
       const { page, ev } = await panel("vscode", undefined, true, "stopTool sessionRules agents openLog");
       await themed(page, mode);
-      await setup(ev);
+      await setup(ev, page);
       assert.deepEqual(await violations(page), []);
       await page.close();
     });

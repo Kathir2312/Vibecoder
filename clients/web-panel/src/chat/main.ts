@@ -21,7 +21,9 @@ import { lineDiff } from "./diff";
 import { copyText } from "./clipboard";
 import { enhanceCodeBlocks } from "./codeblock";
 import { Dock } from "./dock";
+import { changesBar, reviewView, updateBar, type ChangesHost, type TurnChanges } from "./changes";
 import { errorCard, retireErrorCards } from "./errorcard";
+import { planCard, planOf } from "./plancard";
 import { dangerousParts, renderShell } from "./shell";
 import { watchTheme } from "./theme";
 import type { AgentState, FromWebview, ImageAttachment, ToWebview } from "../messages";
@@ -140,6 +142,7 @@ app.innerHTML = `
     <div class="log" role="log" aria-live="polite" aria-label="Conversation"></div>
     <button class="to-end secondary" type="button" hidden title="Go to the newest output and follow it again">↓ Latest</button>
   </div>
+  <section class="changes-view" hidden tabindex="-1" aria-label="Changes of a request"></section>
   <section class="starters" hidden aria-label="Ways to start"></section>
   <div class="progress" hidden aria-hidden="true"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
@@ -165,6 +168,8 @@ app.innerHTML = `
 
 const $ = <T extends HTMLElement>(sel: string) => app.querySelector(sel) as T;
 const log = $<HTMLElement>(".log");
+const logWrap = $<HTMLElement>(".log-wrap");
+const changesView = $<HTMLElement>(".changes-view");
 const announcer = $<HTMLElement>(".announcer");
 
 /** Tell a screen reader something that is not in the conversation (the work started, it needs an answer). */
@@ -324,6 +329,7 @@ function setBusy(value: boolean): void {
   input.placeholder = value ? "Queue another message… (Esc to stop)" : idlePlaceholder();
   agentSelect.disabled = value; // an agent can't be changed in the middle of a turn
   log.setAttribute("aria-busy", String(value)); // a reader waits for the finished text, not each streamed piece
+  renderReview(); // its buttons wait while a request runs
   if (value && !was) announce(`${PRODUCT} is working`);
   if (!value) showStatus();
   if (value && !was) startProgress();
@@ -609,6 +615,57 @@ function append(node: HTMLElement): HTMLElement {
 
 function note(text: string, cls: string): void {
   append(el("div", `note ${cls}`, text));
+}
+
+// --- what a request changed: a bar in the conversation, and a review of every file and hunk ----------
+//
+// The engine lists the files a request wrote or edited (`turn_changes`) and takes parts back on
+// `/revert <request> <file> <hunk>`, then lists them again with what is back marked; this draws them.
+
+const reviews = new Map<number, TurnChanges>();
+const changeBars = new Map<number, HTMLElement>();
+let reviewing: number | undefined;
+
+const changesHost: ChangesHost = {
+  review: (turn) => openReview(turn),
+  revert: (turn, file, hunk) => {
+    if (busy) return;
+    setBusy(true);
+    post({ kind: "send", text: `/revert ${turn} ${file === null ? "all" : file}${hunk === null ? "" : ` ${hunk}`}`, includeContext: false });
+  },
+  back: () => closeReview(),
+};
+
+function renderReview(): void {
+  if (reviewing === undefined) return;
+  const ev = reviews.get(reviewing);
+  if (!ev) return closeReview();
+  const scroll = changesView.scrollTop;
+  changesView.replaceChildren(reviewView(ev, changesHost, busy));
+  changesView.scrollTop = scroll;
+}
+
+function openReview(turn: number): void {
+  reviewing = turn;
+  renderReview();
+  logWrap.hidden = true;
+  changesView.hidden = false;
+  (changesView.querySelector(".review-back") as HTMLElement | null)?.focus();
+}
+
+function closeReview(): void {
+  const turn = reviewing;
+  reviewing = undefined;
+  changesView.hidden = true;
+  logWrap.hidden = false;
+  toEnd();
+  if (turn !== undefined) (changeBars.get(turn)?.querySelector("button") as HTMLElement | null)?.focus();
+}
+
+function forgetReviews(): void {
+  reviews.clear();
+  changeBars.clear();
+  if (reviewing !== undefined) closeReview();
 }
 
 // --- a long conversation is drawn newest first -------------------------------------------------
@@ -992,6 +1049,18 @@ function onEvent(ev: AgentEvent): void {
     case "warning":
       note(`⚠ ${ev.message}`, "warn");
       break;
+    case "turn_changes": {
+      reviews.set(ev.turn, ev);
+      const bar = changeBars.get(ev.turn);
+      if (bar) updateBar(bar, ev);
+      else {
+        const made = changesBar(ev, changesHost);
+        changeBars.set(ev.turn, made);
+        append(made);
+      }
+      renderReview();
+      break;
+    }
     case "error":
       if (ev.title || ev.actions?.length) {
         // Said in plain words, with the buttons that make sense for it (the engine chooses them).
@@ -1078,6 +1147,7 @@ function onEvent(ev: AgentEvent): void {
       const files = ev.code ? ` Files: ${restored} restored, ${deleted} deleted (changes made by Bash commands are not undone).` : "";
       if (ev.conversation) {
         forgetEarlier();
+        forgetReviews();
         log.replaceChildren(); // the history that follows redraws it
         following = true;
         toolCards.clear();
@@ -1519,7 +1589,38 @@ function askBody(ev: PermissionRequest): HTMLElement | null {
 
 type Scope = "once" | "project" | "session";
 
+/** The agent's plan (a request for ExitPlanMode): a card to approve, edit or send back. */
+function planRequest(ev: PermissionRequest): void {
+  progress.waiting = true;
+  if (busy) renderProgress();
+  const card = planCard(planOf(ev.input), {
+    canAcceptEdits: can("sessionRules"), // "accept edits" travels as the session flag of an approval
+    product: PRODUCT,
+    answer: (a, said) => {
+      post({
+        kind: "permission",
+        requestId: ev.request_id,
+        allow: a.allow,
+        remember: false,
+        ...(a.allow && a.acceptEdits ? { rememberSession: true } : {}),
+        // An approval carries the edited steps, a denial the note; the engine reads both as feedback.
+        ...(a.allow ? (a.edited ? { feedback: a.edited } : {}) : { feedback: (a.note ?? "").trim() }),
+      });
+      permissionCards.delete(ev.request_id);
+      if (!a.allow) deniedHere.add(ev.tool_use_id);
+      answered(card, said);
+    },
+  });
+  card.dataset.toolUseId = ev.tool_use_id;
+  permissionCards.set(ev.request_id, append(card));
+  updateAskQueue();
+}
+
 function permissionCard(ev: PermissionRequest): void {
+  if (ev.name === "ExitPlanMode") {
+    planRequest(ev);
+    return;
+  }
   progress.waiting = true;
   if (busy) renderProgress();
   const risky = ev.high_risk === true;
@@ -1660,7 +1761,7 @@ function updateAskQueue(): void {
 function answered(card: HTMLElement, text: string): void {
   progress.waiting = false;
   // Only what was asked stays; the ways to answer go.
-  card.querySelectorAll(".ask-actions, .ask-always, .ask-deny, .ask-note, button, input").forEach((e) => e.remove());
+  card.querySelectorAll(".ask-actions, .ask-always, .ask-deny, .ask-note, .plan-edit, button, input").forEach((e) => e.remove());
   card.querySelector(".ask-count")?.remove();
   card.classList.add("answered");
   card.append(el("div", "answer", `└ ${text}`));
@@ -1777,6 +1878,7 @@ function send(): void {
 
 function submit(text: string, includeContext: boolean, images: ImageAttachment[] = []): void {
   retireErrorCards(log); // their buttons would act on the wrong request now
+  if (reviewing !== undefined) closeReview(); // the answer comes in the conversation
   const bubble = append(el("div", "msg user", text));
   if (images.length) {
     const thumbs = el("div", "thumbs");
@@ -2074,6 +2176,7 @@ window.addEventListener("message", (e: MessageEvent<ToWebview>) => {
     case "reset":
       sessionsPanel.hidden = true;
       forgetEarlier();
+      forgetReviews();
       log.replaceChildren();
       following = true;
       dock.reset();

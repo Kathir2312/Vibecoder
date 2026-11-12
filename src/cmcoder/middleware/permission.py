@@ -48,6 +48,7 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import ToolCall, ToolMessage
+from langgraph.config import get_stream_writer
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
@@ -56,12 +57,15 @@ from pydantic import ValidationError
 from ..core.hooks import ApproveHookFn, HookRunner
 from ..core.permissions import (
     Decision,
+    ModeNotAllowed,
     PermissionCheck,
     PermissionPolicy,
     shell_cwd,
     suggest_rules,
 )
+from ..protocol import events as ev
 from ..tools.base import Tool, ToolContext
+from ..tools.plan import PlanInput, steps_from_lines, todos_from
 from .hooks import warn
 
 # The `kind` field of our interrupt payload, so the runtime can tell
@@ -70,6 +74,8 @@ PERMISSION_KIND = "permission"
 # Marks the tool result of a call the user denied without feedback: the turn stops.
 STOP_KEY = "cmcoder_stop_turn"
 STOPPED = "Stopped: the user denied a tool call."
+# The tool that puts a plan in front of the user (tools/plan.py); it is handled here, not by the rules.
+PLAN_TOOL = "ExitPlanMode"
 
 
 def denied(call: ToolCall, text: str) -> ToolMessage:
@@ -119,9 +125,13 @@ class PermissionMiddleware(AgentMiddleware):
         hooks: HookRunner | None = None,
         approve_hook: ApproveHookFn | None = None,
         agent: str | None = None,
+        plan_todos: bool = False,
     ) -> None:
         super().__init__()
         self.agent = agent  # a subagent's name, shown in the request; None: the main agent
+        # An approved plan becomes the todo list, when this agent has one in its state.
+        self.plan_todos = plan_todos
+        self._plan_answered: dict[str, ToolMessage | Command[Any]] = {}
         self.hooks = hooks
         self.approve_hook = approve_hook
         # PreToolUse answers per tool call (`call_key`). When LangGraph resumes after a
@@ -156,6 +166,9 @@ class PermissionMiddleware(AgentMiddleware):
         except ValidationError:
             # Let LangChain's tool validation produce its usual error for the model.
             return await handler(request)
+
+        if tool.name == PLAN_TOOL and isinstance(args, PlanInput):
+            return await self._exit_plan_mode(request, tool, args, handler)
 
         check = self.policy.check(tool, args, self.ctx)
         hook_asks = False
@@ -239,17 +252,7 @@ class PermissionMiddleware(AgentMiddleware):
         )
         # ---- resumed: `answer` is what Command(resume=...) carried ----
         if not answer.get("allow"):
-            feedback = str(answer.get("feedback") or "").strip()
-            text = "The user denied this action."
-            text += (
-                f" Their feedback: {feedback}"
-                if feedback
-                else " Stop and wait for the user's instructions."
-            )
-            result = denied(call, text)
-            if not feedback:
-                result.additional_kwargs[STOP_KEY] = True
-            return result
+            return self._denied_by_user(call, answer)
         if answer.get("remember") and can_remember:
             for r in rules:
                 self.policy.add_allow(r)
@@ -259,6 +262,104 @@ class PermissionMiddleware(AgentMiddleware):
             for r in rules:  # until cmcoder exits: in the policy, never written to settings
                 self.policy.add_allow(r)
         return await handler(request)
+
+    @staticmethod
+    def _denied_by_user(call: ToolCall, answer: dict[str, Any]) -> ToolMessage:
+        feedback = str(answer.get("feedback") or "").strip()
+        text = "The user denied this action."
+        text += (
+            f" Their feedback: {feedback}"
+            if feedback
+            else " Stop and wait for the user's instructions."
+        )
+        result = denied(call, text)
+        if not feedback:
+            result.additional_kwargs[STOP_KEY] = True
+        return result
+
+    async def _exit_plan_mode(
+        self,
+        request: ToolCallRequest,
+        tool: Tool,
+        args: PlanInput,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        """The agent's plan: always put to the user, never allowed by a rule.
+
+        Approving it ends plan mode (to `default`, or `acceptEdits` when the user chose "and accept
+        edits", which arrives as remember_session) and makes the steps the todo list. The user may
+        have edited the steps: the edited lines come back as the answer's feedback. Sending the plan
+        back with a note is an ordinary denial with feedback, so the model changes it and asks again.
+        """
+        call = request.tool_call
+        key = call_key(call)
+        if key in self._plan_answered:  # LangGraph ran this call again after another question
+            return self._plan_answered[key]
+        if self.policy.mode != "plan":
+            return denied(
+                call,
+                "You are not in plan mode, so there is no plan to approve: go ahead with the work.",
+            )
+        if not self.interactive:
+            return denied(
+                call,
+                "Permission denied: a plan needs a person's approval, which is not available "
+                "in non-interactive mode.",
+            )
+        # ---- the graph pauses here until the user answers (nothing above has a side effect) ----
+        answer: dict[str, Any] = interrupt(
+            {
+                "kind": PERMISSION_KIND,
+                "tool_use_id": call["id"] or "",
+                "name": tool.name,
+                "label": tool.describe(args, self.ctx),
+                "input": args.model_dump(),
+                "suggested_rule": "",
+                "reason": "the plan needs your approval before anything is changed",
+                "can_remember": False,
+                "cwd": None,
+                "reasons": ["plan mode: nothing changes until you approve"],
+                "high_risk": False,
+                "agent": self.agent,
+                "change": None,
+            }
+        )
+        # ---- resumed ----
+        if not answer.get("allow"):
+            return self._denied_by_user(call, answer)
+        edited = str(answer.get("feedback") or "").strip()
+        steps = steps_from_lines(edited, args.steps) if edited else args.steps
+        approved = args.model_copy(update={"steps": steps})
+        for mode in ("acceptEdits" if answer.get("remember_session") else "default", "default"):
+            try:
+                self.policy.mode = mode
+                break
+            except (ValueError, ModeNotAllowed):  # not allowed here: the next one
+                continue
+        try:  # the chat's mode list follows at once, not at the end of the turn
+            get_stream_writer()(
+                {"type": "event", "event": ev.ModeChanged(mode=self.policy.mode).model_dump()}
+            )
+        except RuntimeError:  # not inside a graph run: nobody to tell
+            pass
+        result = await handler(request.override(tool_call={**call, "args": approved.model_dump()}))
+        if not isinstance(result, ToolMessage):
+            return result
+        if edited and steps != args.steps:
+            result.content = (
+                f"{result.content}\n\nThe user changed the plan. Follow this version:\n"
+                f"{_numbered(steps)}"
+            )
+        update: dict[str, Any] = {"messages": [result]}
+        if self.plan_todos:
+            update["todos"] = todos_from(steps)
+        out: ToolMessage | Command[Any] = Command(update=update)
+        self._plan_answered[key] = out
+        return out
+
+
+def _numbered(steps: list[Any]) -> str:
+    return "\n".join(f"{i}. {s.text}" for i, s in enumerate(steps, 1))
 
 
 def why_asked(tool: str, check: PermissionCheck, mode: str, hook_asks: bool) -> list[str]:

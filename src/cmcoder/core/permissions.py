@@ -277,7 +277,9 @@ class PermissionPolicy:
                 )
             if self.mode == "plan":
                 return PermissionCheck(
-                    Decision.DENY, "plan mode is read-only; propose a plan instead", high_risk=True
+                    Decision.DENY,
+                    "plan mode is read-only; call ExitPlanMode with your plan instead",
+                    high_risk=True,
                 )
             return PermissionCheck(Decision.ASK, f"high-risk: {risk}", high_risk=True)
         if (
@@ -294,7 +296,8 @@ class PermissionPolicy:
                 )
             if self.mode == "plan":
                 return PermissionCheck(
-                    Decision.DENY, "plan mode is read-only; propose a plan instead"
+                    Decision.DENY,
+                    "plan mode is read-only; call ExitPlanMode with your plan instead",
                 )
             if self.mode != "bypassPermissions":
                 return PermissionCheck(Decision.ASK, "runs outside the sandbox", high_risk=True)
@@ -344,7 +347,8 @@ class PermissionPolicy:
         if tool.name in FILE_EDIT_TOOLS:
             if self.mode == "plan":
                 return PermissionCheck(
-                    Decision.DENY, "plan mode is read-only; propose a plan instead"
+                    Decision.DENY,
+                    "plan mode is read-only; call ExitPlanMode with your plan instead",
                 )
             if self.mode in ("acceptEdits", "auto") and inside:
                 return PermissionCheck(Decision.ALLOW)
@@ -363,7 +367,9 @@ class PermissionPolicy:
         if self.mode == "bypassPermissions":
             return PermissionCheck(Decision.ALLOW)
         if self.mode == "plan":
-            return PermissionCheck(Decision.DENY, "plan mode is read-only; propose a plan instead")
+            return PermissionCheck(
+                Decision.DENY, "plan mode is read-only; call ExitPlanMode with your plan instead"
+            )
         if target is None:
             return PermissionCheck(Decision.ALLOW)
         if isinstance(target, Path):
@@ -419,7 +425,9 @@ class PermissionPolicy:
         if self.mode == "bypassPermissions":
             return PermissionCheck(Decision.ALLOW)
         if self.mode == "plan":
-            return PermissionCheck(Decision.DENY, "plan mode is read-only; propose a plan instead")
+            return PermissionCheck(
+                Decision.DENY, "plan mode is read-only; call ExitPlanMode with your plan instead"
+            )
         if ctx.sandbox is not None and ctx.sandbox.auto_allow:
             return PermissionCheck(Decision.ALLOW, "runs in the sandbox")
         if self.mode != "auto":

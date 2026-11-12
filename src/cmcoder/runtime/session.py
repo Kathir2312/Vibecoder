@@ -75,6 +75,7 @@ from ..models.chat import REASONING_KEY
 from ..models.errors import classify
 from ..models.reasoning import ThinkSplitter, split_think
 from ..protocol import events as ev
+from .changes import ChangeReviews
 from .store import SessionStore, sessions_dir
 from .titles import fallback_title, make_title
 
@@ -139,6 +140,8 @@ class Session:
         self._session_started = False  # SessionStart hooks have run
         # Notes for the model that wait for the user's next message (a `/pick`ed page element).
         self.attachments: list[str] = []
+        # What each request changed, for review and for taking parts back (runtime/changes.py).
+        self.reviews = ChangeReviews()
         self._background: set[asyncio.Task[Any]] = set()
         self._use_thread(session_id or uuid.uuid4().hex)
         if agent.telemetry is not None:  # counted when it starts, even without a turn
@@ -167,6 +170,7 @@ class Session:
         """Continue a saved conversation: just point at its thread."""
         self._use_thread(thread_id)
         self.attachments.clear()
+        self.reviews = ChangeReviews()
         messages = await self.messages()
         self.turn = max((int(m.additional_kwargs.get(TURN_KEY, 0)) for m in messages), default=0)
         self._titled = bool(messages)  # a resumed session keeps its title
@@ -177,6 +181,7 @@ class Session:
         self.turn = 0
         self._titled = False
         self.attachments.clear()
+        self.reviews = ChangeReviews()
 
     async def messages(self) -> list[AnyMessage]:
         snapshot = await self.agent.graph.aget_state(self.config)
@@ -448,6 +453,9 @@ class Session:
             error is None and not step_limit and state.final_text.startswith(MODEL_LIMIT_TEXT)
         )
         await self._after_turn(prompt)
+        changes = self.reviews.build(self.turn, self.checkpoints, self.agent.ctx.project_root)
+        if changes is not None:  # the files this request wrote or edited, for review
+            yield changes
         yield ev.Result(
             subtype="error"
             if error

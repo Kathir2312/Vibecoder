@@ -89,7 +89,7 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick", "retry",
+    "critic", "index", "memory", "pick", "retry", "revert",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
@@ -530,6 +530,13 @@ class StdioServer:
             elif name == "retry":  # the failed step again, from the graph's checkpoint
                 async for event in session.retry():
                     self.emit(event)
+            elif name == "revert":  # part of a request's changes taken back: the review shows it
+                result = await run_command(session, text)
+                for event in result.events:
+                    self.emit(event)
+                if not result.events:  # nothing to show it in: say it
+                    self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
+                self.emit(self._result("success", "", False, started))
             elif name in PANEL_COMMANDS:  # answered here, not sent to the model
                 if name == "index":  # with progress, and the status bar after it
                     from ..rag.session import index_command

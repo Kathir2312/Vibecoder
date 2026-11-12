@@ -153,6 +153,47 @@ class FileChange(BaseModel):
     after: str
 
 
+class DiffLine(BaseModel):
+    kind: Literal["ctx", "add", "del"]
+    text: str
+
+
+class ChangedHunk(BaseModel):
+    """A part of a file's change: the changed lines with a few around them."""
+
+    id: int  # what `/revert` names
+    old_start: int  # 1-based line in the file as it was
+    new_start: int  # 1-based line in the file as it is
+    lines: list[DiffLine]
+    reverted: bool = False
+
+
+class ChangedFile(BaseModel):
+    index: int  # what `/revert` names
+    path: str  # relative to the project when it is inside it
+    status: Literal["modified", "added"]
+    added: int  # lines
+    removed: int
+    hunks: list[ChangedHunk]
+    binary: bool = False  # no text diff: only the whole file can be taken back
+    truncated: bool = (
+        False  # a rewrite too big to draw: counted, and the whole file can be taken back
+    )
+    reverted: bool = False  # taken back completely
+    note: str = ""  # why the last attempt to take it back was refused
+
+
+class TurnChanges(_Event):
+    """The files a request wrote or edited, for review. Sent at the end of the request, and again
+    (with `reverted` marks) each time part of it is taken back with `/revert`."""
+
+    type: Literal["turn_changes"] = "turn_changes"
+    turn: int
+    files: list[ChangedFile]
+    added: int
+    removed: int
+
+
 class PermissionRequest(_Event):
     """The agent needs the user's approval for a tool call (stdio protocol).
 
@@ -486,6 +527,8 @@ Event = Annotated[
     | PermissionRequest
     | TodoUpdate
     | ModeChanged
+    | TurnChanges
+    | TurnChanges
     | ModelChanged
     | IdeToolRequest
     | AgentList

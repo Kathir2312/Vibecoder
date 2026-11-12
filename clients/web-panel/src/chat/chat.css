@@ -336,6 +336,74 @@ select { padding: 2px 4px; }
 .tk-add { color: var(--cm-ok); }
 .tk-del { color: var(--cm-err); }
 
+/* The agent's plan, as a permission card: numbered steps with the files each one touches. */
+.plan-meta, .plan-scope { margin-top: var(--cm-space-2); color: var(--vscode-descriptionForeground); }
+.plan-steps { margin: var(--cm-space-3) 0 0; padding-left: 1.6em; }
+.plan-step { margin: var(--cm-space-2) 0; padding-left: var(--cm-space-1); }
+.plan-text { overflow-wrap: anywhere; }
+.plan-files { display: flex; flex-wrap: wrap; gap: var(--cm-space-2); margin-top: var(--cm-space-1); }
+.plan-file {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: var(--cm-radius-s);
+  padding: 0 var(--cm-space-3);
+}
+.plan-edit { margin-top: var(--cm-space-4); }
+.plan-edit-hint { color: var(--vscode-descriptionForeground); margin-bottom: var(--cm-space-2); }
+.plan-edit-box {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, transparent));
+  border-radius: var(--cm-radius-s);
+  padding: var(--cm-space-3) var(--cm-space-4);
+}
+
+/* What a request changed: the bar that ends it, and the review of every file and hunk. */
+.changes-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cm-space-3) var(--cm-space-5);
+  margin: var(--cm-space-4) 0;
+  padding: var(--cm-space-3) var(--cm-space-5);
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-left: 3px solid var(--vscode-testing-iconPassed);
+  border-radius: var(--cm-radius-m);
+}
+.changes-bar.all-back { border-left-color: var(--vscode-panel-border, transparent); }
+.changes-sub { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+.changes-actions { display: flex; gap: var(--cm-space-3); }
+.changes-counts { font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
+
+.changes-view { flex: 1 1 0; min-height: 0; overflow-y: auto; padding: var(--cm-space-4) 10px; }
+.review-head { display: flex; align-items: center; gap: var(--cm-space-4); flex-wrap: wrap; }
+.review-title { flex: 1; min-width: 0; }
+.review-hint { color: var(--vscode-descriptionForeground); margin: var(--cm-space-4) 0; }
+.review-file { margin: var(--cm-space-4) 0; border: 1px solid var(--vscode-panel-border, transparent); border-radius: var(--cm-radius-m); overflow: hidden; }
+.review-file.back .diff-hunks { display: none; }
+.file-head { display: flex; align-items: center; gap: var(--cm-space-3); flex-wrap: wrap; padding: var(--cm-space-3) var(--cm-space-4); background: var(--vscode-editorWidget-background, var(--vscode-textCodeBlock-background)); }
+.file-status { font-weight: 700; font-size: 0.85em; padding: 0 var(--cm-space-3); border-radius: var(--cm-radius-s); background: var(--vscode-textCodeBlock-background); }
+.file-path { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+.file-stat { font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
+.file-back { color: var(--vscode-descriptionForeground); }
+.file-note { padding: var(--cm-space-3) var(--cm-space-4); color: var(--cm-err); }
+.file-sub { padding: var(--cm-space-3) var(--cm-space-4); color: var(--vscode-descriptionForeground); }
+.hunk { border-top: 1px solid var(--vscode-panel-border, transparent); }
+/* A hunk that is back is no longer in the file: its lines go, its header says so. */
+.hunk.back .hunk-lines { display: none; }
+.hunk-head { display: flex; align-items: center; justify-content: space-between; gap: var(--cm-space-3); padding: var(--cm-space-2) var(--cm-space-4); color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+.hunk-lines { font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); overflow-x: auto; }
+.dl { display: flex; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 var(--cm-space-4) 0 0; }
+.dl-sign { flex: none; width: 1.6em; text-align: center; color: var(--vscode-foreground); }
+.dl.add { background: color-mix(in srgb, var(--vscode-testing-iconPassed) 16%, transparent); box-shadow: inset 3px 0 var(--vscode-testing-iconPassed); }
+.dl.del { background: color-mix(in srgb, var(--vscode-errorForeground) 16%, transparent); box-shadow: inset 3px 0 var(--vscode-errorForeground); }
+
 /* An error as a card: a headline, the engine's message, and the buttons that make sense for it. */
 .alert {
   margin: var(--cm-space-4) 0;

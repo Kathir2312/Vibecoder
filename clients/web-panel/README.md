@@ -109,6 +109,19 @@ Nothing scrolls the page: the conversation and each open list have their own scr
   2,000 messages took 2.7 s); a **Show earlier messages** button above them, and scrolling up to it, draws 150 more
   at a time. What is being read does not move (the oldest drawn message is put back where it was, which also covers
   browsers without scroll anchoring), and a screen reader is not told about the older messages (`aria-busy`).
+- **The plan** (`plancard.ts`): in plan mode the agent calls the tool `ExitPlanMode` with a title and steps (each with the
+  files it touches); that is a permission request, so the run is paused (a LangGraph `interrupt()`) until it is answered, and
+  the panel draws it as a card instead of the usual consent card: **Approve and run**, **Approve, accept edits** (the session
+  flag of a `permission` message; shown only with `sessionRules`), **Edit steps** (a box with one step per line; the edited
+  lines come back as the approval's `feedback`), **Revise…** (a denial whose feedback is the note) and **Reject**. Approval ends
+  plan mode (the engine sends `mode_changed`) and makes the steps the todo list. No new message is needed from an IDE.
+- **Change review** (`changes.ts`, engine side `src/cmcoder/runtime/changes.py`): a request that wrote or edited files ends with a
+  `turn_changes` event (the files, their hunks, lines added and removed). The panel draws a bar in the conversation (**Review changes**,
+  **Undo all**) and a review view that replaces the conversation while it is open: every file and hunk, each with a button that
+  takes it back. A button sends `/revert <request> <file> [<hunk>]`, **numbers only, never a path**, so the panel can only ask for what
+  is listed; the engine puts the file back as the snapshots `/rewind` keeps had it, refuses when the user edited the file since
+  (it never overwrites that), and sends the list again with what is back marked. Needs nothing from the IDE. Only Write and Edit
+  are tracked; changes made by shell commands are not (the same limit as `/rewind`).
 - **Design tokens** (top of `chat.css`): `--cm-space-1…6`, `--cm-radius-s/m/l`, and `--cm-ok` / `--cm-err`, the
   theme's green and red mixed toward the text colour so small text keeps its contrast. Colours otherwise
   stay the IDE's own (`theme.json`). Use a token, not a new pixel value, in new CSS.

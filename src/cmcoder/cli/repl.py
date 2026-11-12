@@ -45,6 +45,14 @@ def _preview(req: ev.PermissionRequest) -> str:
             lineterm="",
         )
         lines = list(diff)
+    elif req.name == "ExitPlanMode":  # the agent's plan: its steps and the files each touches
+        lines = []
+        for i, step in enumerate(req.input.get("steps") or [], 1):
+            if isinstance(step, dict):
+                files = ", ".join(str(f) for f in step.get("files") or [])
+                lines.append(f"{i}. {step.get('text', '')}" + (f"  [{files}]" if files else ""))
+        if req.input.get("out_of_scope"):
+            lines.append(f"Out of scope: {req.input['out_of_scope']}")
     else:
         lines = str(req.input.get("command") or req.input).splitlines()
     if len(lines) > PREVIEW_LINES:
@@ -112,8 +120,15 @@ async def run_repl(
             event.app.invalidate()
 
         async def ask(req: ev.PermissionRequest) -> dict[str, object]:
+            plan = req.name == "ExitPlanMode"
             console.print(
-                Panel(_preview(req), title=f"cmcoder wants to run {req.label}", subtitle=req.reason)
+                Panel(
+                    _preview(req),
+                    title=f"cmcoder's plan: {req.input.get('title', '')}"
+                    if plan
+                    else f"cmcoder wants to run {req.label}",
+                    subtitle=req.reason,
+                )
             )
             # The options are drawn after the preview and repeated in the input line.
             options = "1 yes · 2 always · 3 no" if req.can_remember else "1 yes · 3 no"
@@ -257,6 +272,11 @@ async def _show_turn(
                     f"  {marks.get(t.get('status', ''), '[ ]')} {t.get('content', '')}",
                     markup=False,
                 )
+        elif isinstance(event, ev.TurnChanges):
+            console.print(
+                f"[dim]Changed {len(event.files)} file{'s' if len(event.files) != 1 else ''} "
+                f"(+{event.added} -{event.removed}); /revert {event.turn} all takes it all back.[/dim]"
+            )
         elif isinstance(event, ev.Compacted):
             console.print(
                 f"[dim]Context nearly full: summarised {event.summarized_messages} earlier "

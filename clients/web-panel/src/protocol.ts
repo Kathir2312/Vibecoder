@@ -16,6 +16,28 @@ export interface AgentInfo {
   group: string;
 }
 
+export interface ChangedFile {
+  index: number;
+  path: string;
+  status: "modified" | "added";
+  added: number;
+  removed: number;
+  hunks: ChangedHunk[];
+  binary: boolean;
+  truncated: boolean;
+  reverted: boolean;
+  note: string;
+}
+
+/** A part of a file's change: the changed lines with a few around them. */
+export interface ChangedHunk {
+  id: number;
+  old_start: number;
+  new_start: number;
+  lines: DiffLine[];
+  reverted: boolean;
+}
+
 export interface CodeContextItem {
   path: string;
   start_line: number;
@@ -29,6 +51,11 @@ export interface CommandInfo {
   description: string;
   argument_hint: string;
   origin: "built-in" | "user" | "project" | "mcp";
+}
+
+export interface DiffLine {
+  kind: "ctx" | "add" | "del";
+  text: string;
 }
 
 /** A proposed file change, for review in a diff editor. */
@@ -210,6 +237,18 @@ export interface TodoUpdate {
 export interface ModeChanged {
   type: "mode_changed";
   mode: string;
+}
+
+/**
+ * The files a request wrote or edited, for review. Sent at the end of the request, and again
+ * (with `reverted` marks) each time part of it is taken back with `/revert`.
+ */
+export interface TurnChanges {
+  type: "turn_changes";
+  turn: number;
+  files: ChangedFile[];
+  added: number;
+  removed: number;
 }
 
 export interface ModelChanged {
@@ -418,6 +457,7 @@ export type AgentEvent =
   | PermissionRequest
   | TodoUpdate
   | ModeChanged
+  | TurnChanges
   | ModelChanged
   | IdeToolRequest
   | AgentList

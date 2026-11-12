@@ -26,6 +26,7 @@ from ..core.commands import (
 from ..core.commands import help_lines as custom_help_lines
 from ..core.permissions import ModeNotAllowed
 from ..middleware.compaction import CompactionBlocked
+from ..protocol import events as ev
 from .session import Session
 from .store import SessionInfo
 
@@ -34,6 +35,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("help", "", "Show the commands"),
     ("clear", "", "Start a new conversation (the old one stays saved)"),
     ("compact", "[focus]", "Summarise the conversation now to free context"),
+    (
+        "revert",
+        "<request> all|<file> [<hunk>]",
+        "Take back changes the chat showed for review (the numbers are in its list)",
+    ),
     (
         "retry",
         "",
@@ -91,6 +97,8 @@ class CommandResult:
     agent: str | None = None
     # `/retry`: the front end runs `Session.retry()` and shows it like a turn.
     retry: bool = False
+    # Events to send besides the lines (`/revert`: the review as it is now).
+    events: list[ev.Event] = field(default_factory=list)
 
 
 def help_lines(custom: dict[str, SlashCommand] | None = None) -> list[str]:
@@ -277,6 +285,25 @@ async def review_command(session: Session, target: str) -> CommandResult:
     return CommandResult(send=review_prompt(change))
 
 
+def revert_command(session: Session, arg: str) -> CommandResult:
+    """`/revert <request> all | <file> [<hunk>]`: take back part of what a request changed.
+
+    The numbers are the ones in the review the chat shows (a `turn_changes` event); a path is never
+    taken, so only files the agent changed, and only to how they were, can be asked for."""
+    usage = "Usage: /revert <request> all | <file> [<hunk>]  (the numbers are in the changes list)"
+    parts = arg.split()
+    try:
+        turn = int(parts[0])
+        file = None if parts[1] == "all" else int(parts[1])
+        hunk = int(parts[2]) if len(parts) > 2 else None
+        if len(parts) < 2 or len(parts) > 3 or (file is None and hunk is not None):
+            raise ValueError
+    except (ValueError, IndexError):
+        return CommandResult([usage])
+    lines, review = session.reviews.revert(turn, file, hunk)
+    return CommandResult(lines, events=[review] if review is not None else [])
+
+
 async def run_command(
     session: Session,
     line: str,
@@ -293,6 +320,8 @@ async def run_command(
         return CommandResult(help_lines(custom_commands(session)))
     if name == "retry":
         return CommandResult(retry=True)
+    if name == "revert":
+        return revert_command(session, arg)
     if name == "clear":
         await session.clear()
         return CommandResult(["Started a new conversation."])
