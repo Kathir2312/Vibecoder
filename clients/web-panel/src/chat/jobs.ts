@@ -138,9 +138,11 @@ export class JobsPanel {
     for (const { job, seen } of entries) {
       const r = this.row(job.id);
       const ms = job.state === "running" ? job.elapsed_ms + (Date.now() - seen) : job.elapsed_ms;
-      r.row.className = `job ${job.state}`;
+      // A job that ended with a failing exit code is not a success, whatever "exited" says.
+      const bad = job.state === "exited" && job.exit_code !== 0;
+      r.row.className = `job ${job.state}${bad ? " bad" : ""}`;
       r.row.dataset.job = String(job.id);
-      r.mark.textContent = MARKS[job.state];
+      r.mark.textContent = bad ? "✗" : MARKS[job.state];
       r.command.textContent = job.command;
       r.command.title = job.command;
       r.detail.textContent = detail(job, ms);

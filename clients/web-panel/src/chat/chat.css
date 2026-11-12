@@ -109,6 +109,10 @@ header .model {
   header { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
   header .model { flex-basis: 100%; }
 }
+/* While another model finishes the request (the main one's gateway failed) the name is the news: it
+   gets its own row, whole, at any width. */
+header.fallback { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+header.fallback .model { flex-basis: 100%; opacity: 1; color: var(--vscode-editorWarning-foreground); }
 
 select, input, textarea {
   color: var(--vscode-input-foreground);
@@ -221,7 +225,7 @@ select { padding: 2px 4px; }
 .job-mark { flex: none; }
 .job.running .job-mark { color: var(--vscode-textLink-foreground); }
 .job.exited .job-mark { color: var(--cm-ok); }
-.job.failed .job-mark { color: var(--cm-err); }
+.job.failed .job-mark, .job.bad .job-mark { color: var(--cm-err); }
 .job-cmd {
   flex: 1;
   min-width: 0;

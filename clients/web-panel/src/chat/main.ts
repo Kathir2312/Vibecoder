@@ -1289,6 +1289,7 @@ function onEvent(ev: AgentEvent): void {
       updatePick();
       break;
     case "model_changed":
+      modelLabel.parentElement?.classList.toggle("fallback", ev.reason === "fallback"); // its own row: never cut off
       modelLabel.textContent = ev.reason === "fallback" ? `${ev.model} · fallback` : ev.model;
       modelLabel.title = ev.reason === "fallback" ? `${ev.model} is finishing this request: the usual model's gateway failed. The next message tries the usual model again.` : modelLabel.title;
       if (ev.reason === "fallback" && reply) {

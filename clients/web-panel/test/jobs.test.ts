@@ -75,6 +75,9 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator('.job[data-job="1"] .job-detail').textContent(), "done · 3s");
     assert.equal(await page.locator('.job[data-job="2"] .job-detail').textContent(), "exit 3 · 2s");
     assert.equal(await page.locator('.job[data-job="3"] .job-detail').textContent(), "failed · 1s · the shell ended · outside the sandbox");
+    // The mark says the same as the words: done is a tick, a failing exit code or a failure is a cross.
+    assert.deepEqual(await page.locator(".job-mark").allTextContents(), ["✓", "✗", "✗"]);
+    assert.equal(await page.locator('.job[data-job="2"]').getAttribute("class"), "job exited bad");
     assert.equal(await page.locator(".stop-all").isVisible(), false);
     await page.close();
   });
