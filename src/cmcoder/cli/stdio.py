@@ -96,7 +96,7 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick", "retry", "revert", "verify", "audit", "jobs", "settings",
+    "critic", "index", "memory", "pick", "retry", "revert", "keep", "verify", "audit", "jobs", "settings",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
@@ -259,7 +259,7 @@ class StdioServer:
         assert session is not None
         if isinstance(message, msg.UserMessage):
             if self.busy:
-                if message.text.strip().startswith("/jobs stop"):
+                if message.text.strip().startswith(("/jobs stop", "/keep ")):
                     # Ending a background job takes nothing from the turn that is running, so
                     # the chat's Stop button on a job works at once (no new message for a host).
                     result = await run_command(session, message.text.strip())

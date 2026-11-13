@@ -675,6 +675,10 @@ let reviewing: number | undefined;
 
 const changesHost: ChangesHost = {
   review: (turn) => openReview(turn),
+  keep: (turn, file) => {
+    // A mark and nothing more: it works while a request runs, so the panel does not wait for it.
+    post({ kind: "send", text: `/keep ${turn} ${file === null ? "all" : file}`, includeContext: false });
+  },
   revert: (turn, file, hunk) => {
     if (busy) return;
     setBusy(true);

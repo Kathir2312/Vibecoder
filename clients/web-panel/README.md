@@ -117,11 +117,14 @@ Nothing scrolls the page: the conversation and each open list have their own scr
   lines come back as the approval's `feedback`), **Revise…** (a denial whose feedback is the note) and **Reject**. Approval ends
   plan mode (the engine sends `mode_changed`) and makes the steps the todo list. No new message is needed from an IDE.
 - **Change review** (`changes.ts`, engine side `src/cmcoder/runtime/changes.py`): a request that wrote or edited files ends with a
-  `turn_changes` event (the files, their hunks, lines added and removed). The panel draws a bar in the conversation (**Review changes**,
-  **Undo all**) and a review view that replaces the conversation while it is open: every file and hunk, each with a button that
-  takes it back. A button sends `/revert <request> <file> [<hunk>]`, **numbers only, never a path**, so the panel can only ask for what
-  is listed; the engine puts the file back as the snapshots `/rewind` keeps had it, refuses when the user edited the file since
-  (it never overwrites that), and sends the list again with what is back marked. Needs nothing from the IDE. Only Write and Edit
+  `turn_changes` event (the files, their hunks, lines added and removed, and whether each is `kept` or `reverted`). The panel draws a
+  bar in the conversation (**Review changes**, **Keep all**, **Reject all**) and a review view that replaces the conversation while
+  it is open: every file and hunk, each file with **Keep** (approve: a mark, nothing is written) and **Reject** (take it back; a
+  file the agent created is deleted), each hunk of a file with several with **Reject hunk**. The buttons send `/keep <request>
+  <file>` and `/revert <request> <file> [<hunk>]`, **numbers only, never a path**, so the panel can only ask for what is listed;
+  the engine puts the file back as the snapshots `/rewind` keeps had it, refuses when the user edited the file since (it never
+  overwrites that), and sends the list again with what is kept or back marked. `/keep` is let through while a request runs (it
+  writes nothing); Reject waits until the request ends, and the review says so. Needs nothing from the IDE. Only Write and Edit
   are tracked; changes made by shell commands are not (the same limit as `/rewind`).
 - **Attachment chips** (`renderChips` in `main.ts`): what waits to go with the next message (page elements picked with `/pick`) is
   drawn as removable chips above the message box, so nothing travels unseen. The engine keeps the list and sends it again whenever it

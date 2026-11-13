@@ -465,6 +465,17 @@ footer .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 
 .review-head { display: flex; align-items: center; gap: var(--cm-space-4); flex-wrap: wrap; }
 .review-title { flex: 1; min-width: 0; }
 .review-hint { color: var(--vscode-descriptionForeground); margin: var(--cm-space-4) 0; }
+.review-busy {
+  margin: var(--cm-space-4) 0;
+  padding: var(--cm-space-3) var(--cm-space-4);
+  border-left: 3px solid var(--vscode-editorWarning-foreground);
+  background: var(--vscode-textCodeBlock-background);
+}
+/* A button that has to wait must look like it waits (the review's Reject while a request runs). */
+.review button:disabled, .changes-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.review-file.kept { border-left: 3px solid var(--cm-ok); }
+.file-kept { color: var(--cm-ok); font-weight: 600; white-space: nowrap; }
+.changes-bar.all-decided .changes-text strong { color: var(--cm-ok); }
 .review-file { margin: var(--cm-space-4) 0; border: 1px solid var(--vscode-panel-border, transparent); border-radius: var(--cm-radius-m); overflow: hidden; }
 .review-file.back .diff-hunks { display: none; }
 .file-head { display: flex; align-items: center; gap: var(--cm-space-3); flex-wrap: wrap; padding: var(--cm-space-3) var(--cm-space-4); background: var(--vscode-editorWidget-background, var(--vscode-textCodeBlock-background)); }

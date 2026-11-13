@@ -295,3 +295,156 @@ async def test_over_stdio_the_review_arrives_before_the_result_and_revert_update
         assert "Usage: /revert" in (await agent.until("assistant_message"))["text"]
     finally:
         assert await agent.close() == 0
+
+
+# --- Keep: approving what a request changed -----------------------------------------------------
+
+
+def test_keeping_a_file_marks_it_and_changes_nothing_on_disk(tmp_path: Path) -> None:
+    after = edited(ORIGINAL, **{"line 3": "three"})
+    reviews, event, path, _ = review_of(tmp_path, "a.txt", ORIGINAL.encode(), after.encode())
+    assert event.files[0].kept is False
+    said, now = reviews.keep(1, 0)
+    assert said == ["a.txt: kept"] and now is not None and now.files[0].kept is True
+    assert path.read_text() == after, "approving writes nothing"
+    # the review is drawn again from the engine: kept stays marked
+    assert reviews.event(1).files[0].kept is True
+
+
+def test_keep_all_marks_every_file_that_is_still_there_and_skips_what_was_taken_back(
+    tmp_path: Path,
+) -> None:
+    a, b = tmp_path / "a.txt", tmp_path / "b.txt"
+    a.write_text("a\n")
+    cp = Checkpoints(None)
+    cp.capture(1, a)
+    cp.capture(1, b)  # b is created by the agent
+    a.write_text("a2\n")
+    b.write_text("b\n")
+    reviews = ChangeReviews()
+    assert reviews.build(1, cp, tmp_path) is not None
+    reviews.revert(1, 1, None)  # b (created) is taken back: deleted
+    said, now = reviews.keep(1, None)
+    assert said == ["a.txt: kept"] and now is not None
+    assert [(f.path, f.kept, f.reverted) for f in now.files] == [
+        ("a.txt", True, False),
+        ("b.txt", False, True),
+    ]
+    one, after = reviews.keep(1, 1)
+    assert one == ["b.txt: was taken back, so there is nothing to keep"]
+    assert after is not None and after.files[1].kept is False
+
+
+def test_taking_a_kept_file_back_is_a_new_decision_and_clears_the_mark(tmp_path: Path) -> None:
+    after = edited(ORIGINAL, **{"line 3": "three"})
+    reviews, _, path, _ = review_of(tmp_path, "a.txt", ORIGINAL.encode(), after.encode())
+    reviews.keep(1, 0)
+    _, now = reviews.revert(1, 0, None)
+    assert now is not None and (now.files[0].kept, now.files[0].reverted) == (False, True)
+    assert path.read_text() == ORIGINAL
+
+
+def test_keeping_something_that_is_not_there_says_so(tmp_path: Path) -> None:
+    reviews, _, _, _ = review_of(tmp_path, "a.txt", b"x\n", b"y\n")
+    assert reviews.keep(9, 0)[0] == ["There is nothing to review for request 9 any more."]
+    said, _ = reviews.keep(1, 5)
+    assert said == ["Request 1 has no file number 5."]
+
+
+async def test_slash_keep_is_a_quiet_command_that_resends_the_review_and_is_audited(
+    mock_server: Any, project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json as _json
+
+    monkeypatch.setenv("CMCODER_API_KEY", API_KEY)
+    server = mock_server(
+        [
+            {
+                "tool_calls": [
+                    {"name": "Write", "arguments": {"file_path": "new.py", "content": "x = 1\n"}}
+                ]
+            },
+            {"content": "done"},
+        ]
+    )
+
+    async def allow(request: ev.PermissionRequest) -> dict[str, Any]:
+        return {"allow": True}
+
+    audit_dir = tmp_path / "audit"
+    session = make_session(
+        server.base_url,
+        project,
+        ask=allow,
+        settings={"audit": {"enabled": True, "dir": str(audit_dir)}},
+    )
+    try:
+        events = await run_turn(session, "make new.py")
+        shown = [e for e in events if isinstance(e, ev.TurnChanges)]
+        assert shown and shown[0].files[0].kept is False
+        result = await run_command(session, "/keep 1 all")
+        assert result.quiet and result.lines == ["new.py: kept"]
+        (resent,) = [e for e in result.events if isinstance(e, ev.TurnChanges)]
+        assert resent.files[0].kept is True
+        assert (await run_command(session, "/keep nonsense")).lines == [
+            "Usage: /keep <request> all | <file>  (the numbers are in the changes list)"
+        ]
+        await run_command(session, "/revert 1 0")
+    finally:
+        await session.agent.close()
+    rows = [
+        _json.loads(line)
+        for p in audit_dir.glob("audit-*.jsonl")
+        for line in p.read_text().splitlines()
+    ]
+    reviews = [(r["action"], r["turn"]) for r in rows if r["event"] == "review"]
+    assert reviews == [("keep", 1), ("reject", 1)], "the user's decisions are in the audit log"
+
+
+async def test_over_stdio_keep_works_while_a_later_request_is_still_running(
+    mock_server: Any, project: Path
+) -> None:
+    from .test_stdio import write
+
+    server = mock_server(
+        [
+            write("notes.md", "# notes\n"),
+            {"content": "Wrote the notes."},
+            {
+                "tool_calls": [
+                    {
+                        "name": "Bash",
+                        "arguments": {"command": "sleep 60", "run_in_background": True},
+                    }
+                ]
+            },
+            # waits up to 30 s for output that never comes: the second request is busy meanwhile
+            {
+                "tool_calls": [
+                    {
+                        "name": "Jobs",
+                        "arguments": {"action": "output", "job_id": 1, "wait_seconds": 30},
+                    }
+                ]
+            },
+            {"content": "Stopped."},
+        ]
+    )
+    agent = await Agent.start(project, server, "--permission-mode", "bypassPermissions")
+    try:
+        await agent.until("agent_list")
+        await agent.send(type="user_message", text="write notes")
+        first = await agent.until("turn_changes")
+        assert first["files"][0]["kept"] is False
+        await agent.until("result")
+        await agent.send(type="user_message", text="start a server and watch it")
+        await agent.until("jobs_changed")
+        await agent.until("tool_use")  # the second request is now inside its wait
+        await agent.send(type="user_message", text="/keep 1 all")  # the chat's Keep button
+        kept = await agent.until("turn_changes")
+        assert kept["files"][0]["kept"] is True and kept["turn"] == 1
+        await agent.send(type="user_message", text="/jobs stop 1")
+        assert (await agent.until("result"))["subtype"] == "success"
+        assert not [e for e in agent.events if e["type"] == "error"], "never refused as busy"
+    finally:
+        assert await agent.close() == 0

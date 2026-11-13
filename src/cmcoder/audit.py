@@ -273,6 +273,16 @@ class AuditLog:
                 completion_tokens=event.usage.get("completion_tokens"),
             )
 
+    def reviewed(self, session_id: str, turn: int, action: str, lines: list[str]) -> None:
+        """The user's decision on a request's changes in the review: `keep` or `reject`."""
+        self.record(
+            session_id,
+            "review",
+            turn=turn,
+            action=action,
+            files=[_short(line) for line in lines[:20]],
+        )
+
     def rewound(self, session_id: str, turn: int, actions: list[ev.RewindAction]) -> None:
         self.record(
             session_id,
@@ -306,5 +316,6 @@ def line_for_humans(row: dict[str, Any]) -> str:
         + (f": {row['text']}" if row.get("text") else ""),
         "session_start": f"{row.get('model')} in {row.get('cwd')}",
         "rewind": f"{len(row.get('files', []))} file(s) put back",
+        "review": f"{row.get('action')}: " + "; ".join(row.get("files", [])[:3]),
     }.get(kind, "")
     return f"{when}  {kind:<13} {detail}".rstrip()

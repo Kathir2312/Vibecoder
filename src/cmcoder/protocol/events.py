@@ -180,6 +180,7 @@ class ChangedFile(BaseModel):
         False  # a rewrite too big to draw: counted, and the whole file can be taken back
     )
     reverted: bool = False  # taken back completely
+    kept: bool = False  # the user looked at it and said it stays (`/keep`)
     note: str = ""  # why the last attempt to take it back was refused
 
 

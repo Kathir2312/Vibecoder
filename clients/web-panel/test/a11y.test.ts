@@ -72,11 +72,14 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) 
   "the changes bar and the review of every file": async (ev, page) => {
     const lines = (a: [string, string][]) => a.map(([kind, text]) => ({ kind: kind as "ctx" | "add" | "del", text }));
     const files = [
-      { index: 0, path: "Controllers/OrdersController.cs", status: "modified" as const, added: 2, removed: 1, binary: false, truncated: false, reverted: false, note: "changed since cmcoder wrote it, so it is left alone", hunks: [
+      { index: 0, path: "Controllers/OrdersController.cs", status: "modified" as const, added: 2, removed: 1, binary: false, truncated: false, reverted: false, kept: false, note: "changed since cmcoder wrote it, so it is left alone", hunks: [
         { id: 0, old_start: 24, new_start: 24, reverted: false, lines: lines([["ctx", "[HttpGet]"], ["del", "Index(int page = 1)"], ["add", "Index(OrderStatus? status, int page = 1)"]]) },
         { id: 1, old_start: 40, new_start: 40, reverted: true, lines: lines([["ctx", "return View(model);"], ["add", "ViewBag.Status = status;"]]) },
       ] },
-      { index: 1, path: "Tests/OrdersControllerTests.cs", status: "added" as const, added: 34, removed: 0, binary: false, truncated: false, reverted: true, note: "", hunks: [] },
+      { index: 1, path: "Tests/OrdersControllerTests.cs", status: "added" as const, added: 34, removed: 0, binary: false, truncated: false, reverted: true, kept: false, note: "", hunks: [] },
+      { index: 2, path: "Views/Orders/Index.cshtml", status: "modified" as const, added: 12, removed: 1, binary: false, truncated: false, reverted: false, kept: true, note: "", hunks: [
+        { id: 0, old_start: 3, new_start: 3, reverted: false, lines: lines([["ctx", "<h1>Orders</h1>"], ["add", "<select id=\"status-filter\"></select>"]]) },
+      ] },
     ];
     await ev({ type: "turn_changes", turn: 1, files, added: 36, removed: 1 });
     await page.click('.changes-bar button:has-text("Review changes")');

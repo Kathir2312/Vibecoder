@@ -32,6 +32,7 @@ export interface ChangedFile {
   binary: boolean;
   truncated: boolean;
   reverted: boolean;
+  kept: boolean;
   note: string;
 }
 

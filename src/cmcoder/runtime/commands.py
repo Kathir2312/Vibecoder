@@ -41,6 +41,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
         "Take back changes the chat showed for review (the numbers are in its list)",
     ),
     (
+        "keep",
+        "<request> all|<file>",
+        "Approve changes the chat showed for review (numbers as in /revert)",
+    ),
+    (
         "retry",
         "",
         "Run the step that failed again (a gateway that was down), without sending your message twice",
@@ -334,6 +339,27 @@ def revert_command(session: Session, arg: str) -> CommandResult:
     except (ValueError, IndexError):
         return CommandResult([usage])
     lines, review = session.reviews.revert(turn, file, hunk)
+    if session.agent.audit is not None and review is not None:
+        session.agent.audit.reviewed(session.session_id, turn, "reject", lines)
+    return CommandResult(lines, events=[review] if review is not None else [], quiet=True)
+
+
+def keep_command(session: Session, arg: str) -> CommandResult:
+    """`/keep <request> all | <file>`: approve what a request changed (a mark, nothing is written).
+
+    The numbers are the ones in the review the chat shows, as for `/revert`."""
+    usage = "Usage: /keep <request> all | <file>  (the numbers are in the changes list)"
+    parts = arg.split()
+    try:
+        turn = int(parts[0])
+        file = None if parts[1] == "all" else int(parts[1])
+        if len(parts) != 2:
+            raise ValueError
+    except (ValueError, IndexError):
+        return CommandResult([usage])
+    lines, review = session.reviews.keep(turn, file)
+    if session.agent.audit is not None and review is not None:
+        session.agent.audit.reviewed(session.session_id, turn, "keep", lines)
     return CommandResult(lines, events=[review] if review is not None else [], quiet=True)
 
 
@@ -355,6 +381,8 @@ async def run_command(
         return CommandResult(retry=True)
     if name == "revert":
         return revert_command(session, arg)
+    if name == "keep":
+        return keep_command(session, arg)
     if name == "clear":
         await session.clear()
         return CommandResult(["Started a new conversation."])
