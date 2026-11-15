@@ -180,6 +180,7 @@ class McpManager:
             return []
         self.started = True
         pending: list[McpServer] = []
+        warnings: list[str] = []
         for s in self.servers:
             if s.status != "starting":
                 continue
@@ -189,7 +190,11 @@ class McpManager:
                     ok = approve_fn is not None and await approve_fn(s)
                     if not ok:
                         s.status = "not approved"
-                        s.error = "this project's server was not approved"
+                        if approve_fn is None:  # nobody to ask (`-p`): say how to approve it
+                            s.error = f"not approved yet: run `cmcoder mcp approve {s.name}`"
+                            warnings.append(f"MCP server {s.name} was not started: {s.error}")
+                        else:
+                            s.error = "this project's server was not approved"
                         continue
                     approve(self.root, s.key, fp)
             s._task = asyncio.create_task(self._run(s), name=f"mcp:{s.name}")
@@ -199,7 +204,6 @@ class McpManager:
                 [asyncio.create_task(s._ready.wait()) for s in pending],
                 timeout=max(s.config.startup_timeout for s in pending) + 1,
             )
-        warnings = []
         for s in pending:
             if s.status == "starting":
                 s.status, s.error = "failed", "timed out while starting"
