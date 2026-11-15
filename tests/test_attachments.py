@@ -70,8 +70,8 @@ async def test_over_stdio_the_chips_arrive_as_an_event_and_dropping_one_is_quiet
         await agent.until("agent_list")
         await agent.send(
             type="user_message", text="/pick"
-        )  # no page is open: it says so, and the chips are none
-        assert "No page is open yet" in (await agent.until("assistant_message"))["text"]
+        )  # no IDE browser here: it says so, and the chips are none
+        assert "no IDE browser" in (await agent.until("assistant_message"))["text"]
         assert (await agent.until("attachments"))["items"] == []
         assert (await agent.until("result"))["subtype"] == "success"
         await agent.send(
