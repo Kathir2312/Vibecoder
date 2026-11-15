@@ -291,7 +291,7 @@ function renderAgentSelect(): void {
   if (!show) return;
   agentSelect.replaceChildren(new Option(`${PRODUCT} (default)`, ""));
   // The origins' groups first (the project's, yours, built in); an agent with a `group` of its own
-  // ("Playwright") is listed under that heading instead, after them.
+  // is listed under that heading instead, after them.
   const own = Array.from(new Set(agents.filter((a) => a.group).map((a) => a.group)));
   const sections: [string, AgentInfo[]][] = [
     ...AGENT_GROUPS.map(([origin, label]): [string, AgentInfo[]] => [

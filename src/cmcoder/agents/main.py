@@ -111,14 +111,12 @@ from ..telemetry import Telemetry
 from ..telemetry import from_settings as telemetry_from_settings
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
-from ..tools.browser import BrowserTool, browser_session
 from ..tools.code_search import CodeSearchTool
 from ..tools.jobs import JobManager
 from ..tools.registry import default_tools
 from .context import RunContext
 from .limits import recursion_limit_for
 from .notes_tools import build_notes_tools
-from .playwright_tests import build_playwright_tool
 from .subagents import (
     CRITIC_NAME,
     SubagentRuntime,
@@ -376,7 +374,7 @@ def build_agent(
 ) -> Agent:
     """`sandbox`, `telemetry`, `code_index`, `memory`: reuse these (a rebuild, or
     /index turning code search on); else made from settings. `ide_browser`: tools the IDE
-    defines itself (VS Code's Integrated Browser), used instead of the Browser tool."""
+    defines itself (VS Code's Integrated Browser), offered to the model as they are."""
     cwd = opts.cwd.resolve()
     if not settings.browser.use_ide_browser:
         ide_browser = None
@@ -423,10 +421,6 @@ def build_agent(
     tools = {t.name: t for t in default_tools() if t.name != "TodoWrite"}
     if code_index is not None:
         tools["CodeSearch"] = CodeSearchTool()
-    # A real browser to test web apps (Playwright); started only when first used.
-    ctx.browser = browser_session(settings, root)
-    if ctx.browser is not None and not ide_browser:
-        tools["Browser"] = BrowserTool()  # (the IDE's own browser, when it has one, replaces it)
     # Tools an IDE runs for the agent (getDiagnostics, openFile; core/ide.py).
     tools.update({t.name: t for t in extra_tools or []})
     # Skills (SKILL.md folders): only their descriptions go in the prompt; the
@@ -559,10 +553,6 @@ def build_agent(
     # The team: a StateGraph (PM → developer → tester ↺ → DevOps) behind one tool.
     if settings.team.enabled and keep("Team"):
         lc_tools.append(build_team_tool(subagents, settings.team.max_rounds))
-    # `/playwright all`: map, plan, write, run and heal Playwright tests, area by area, as a
-    # StateGraph behind one tool.
-    if settings.playwright.enabled and keep("PlaywrightTests"):
-        lc_tools.append(build_playwright_tool(subagents))
     # The critic (after_agent): reviews the final answer when switched on.
     critic = CriticMiddleware(
         subagents,

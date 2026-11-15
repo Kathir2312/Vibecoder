@@ -268,29 +268,11 @@ class MemoryConfig(_Model):
 
 
 class BrowserConfig(_Model):
-    """The Browser tool (tools/browser.py): the agent drives a real browser (Playwright)
-    to test a web app. It uses the Chrome or Edge on this PC."""
+    """The IDE's own browser tools (ide_browser.py): VS Code's Integrated Browser. cmcoder has no
+    browser of its own: Playwright, as in Claude Code, is an MCP server you add (`mcpServers`)."""
 
-    enabled: bool = True
-    headless: bool = True  # false: show the window (demos)
-    # A browser program to use instead of looking for Chrome or Edge.
-    executable_path: str | None = Field(None, alias="executablePath")
-    # When the IDE has browser tools of its own (VS Code's Integrated Browser), use those:
-    # the page opens inside the IDE instead of in a separate Chrome or Edge window.
+    # When the IDE has browser tools of its own, offer them to the model; false: don't.
     use_ide_browser: bool = Field(True, alias="useIdeBrowser")
-
-
-class PlaywrightConfig(_Model):
-    """The /playwright commands (playwright_tests/): set up Playwright tests for a web app, plan,
-    generate, run and heal them. Nothing here is specific to a framework."""
-
-    enabled: bool = True
-    # The folder (in the project) that holds the Playwright project: its config, plans and tests.
-    dir: str = "playwright-tests"
-    # The address the app under test answers at (else: `/playwright setup <address>`).
-    app_url: str | None = Field(None, alias="appUrl")
-    # Failing tests the healer works through, then it stops and reports what is left.
-    max_heal_rounds: int = Field(3, alias="maxHealRounds", ge=1, le=10)
 
 
 class RethinkConfig(_Model):
@@ -377,9 +359,6 @@ class Settings(_Model):
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
-    playwright: PlaywrightConfig = Field(
-        default_factory=lambda: PlaywrightConfig.model_validate({})
-    )
     rethink: RethinkConfig = Field(default_factory=lambda: RethinkConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")

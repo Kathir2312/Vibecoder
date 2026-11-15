@@ -607,24 +607,6 @@ class Doctor:
         if find_shell() is None:
             self.report(FAIL, "Hooks need bash to run", SHELL_HELP)
 
-    def check_browser(self) -> None:
-        from ..tools.browser import find_browser, playwright_available
-
-        cfg = self.settings.browser
-        self.section("Browser (testing web apps)")
-        if not cfg.enabled:
-            self.report(INFO, "Off in settings (browser.enabled: false)")
-            return
-        if not playwright_available():
-            self.report(INFO, "Playwright isn't in this build: the Browser tool is off")
-            return
-        path, label = find_browser(cfg.executable_path)
-        if path is None:
-            self.report(WARN, "No browser found for the Browser tool", label)
-            return
-        mode = "headless" if cfg.headless else "with a visible window"
-        self.report(OK, f"The Browser tool will use {label}, {mode}", str(path))
-
     def check_sandbox(self) -> None:
         from ..sandbox import detect
 
@@ -840,7 +822,6 @@ class Doctor:
         await self.check_mcp(probe)
         self.check_hooks()
         self.check_sandbox()
-        self.check_browser()
         await self.check_code_search(probe)
         await self.check_telemetry()
         self.check_extensions()

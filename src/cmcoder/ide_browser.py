@@ -2,10 +2,10 @@
 
 VS Code has an Integrated Browser (a browser tab inside the editor) and registers tools to drive
 it (open a page, read it, click, type, take a screenshot, run Playwright code) that Copilot's
-agent uses. cmcoder's own `Browser` tool starts a separate Chrome or Edge window instead. With
-this, the VS Code extension finds those tools at run time, sends their names and JSON schemas
-with `ide_capabilities.tool_defs`, and every call travels back as an `ide_tool_request`: the page
-opens in VS Code, where the user can watch it, and the engine's own Browser tool steps aside.
+agent uses. cmcoder has no browser of its own (Playwright, as in Claude Code, is an MCP server you
+add). With this, the VS Code extension finds those tools at run time, sends their names and JSON
+schemas with `ide_capabilities.tool_defs`, and every call travels back as an `ide_tool_request`:
+the page opens in VS Code, where the user can watch it.
 
 LANGCHAIN / LANGGRAPH CONCEPTS IN THIS FILE
 

@@ -262,7 +262,7 @@
         "cmcoder.useIntegratedBrowser": {
           "type": "boolean",
           "default": true,
-          "description": "Test web apps in VS Code's built-in Integrated Browser (a tab inside VS Code, the one Copilot's agent uses) instead of a separate Chrome or Edge window. Needs VS Code 1.110 or newer with workbench.browser.enableChatTools on; without it cmcoder opens its own browser window."
+          "description": "Let cmcoder use VS Code's built-in Integrated Browser (a tab inside VS Code, the one Copilot's agent uses) to open and read web pages, and /pick to point at an element in it. Needs VS Code 1.110 or newer with workbench.browser.enableChatTools on. For browser tests anywhere else, add Playwright's MCP server."
         },
         "cmcoder.integratedBrowserTools": {
           "type": "array",

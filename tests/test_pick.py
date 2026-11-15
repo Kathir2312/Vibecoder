@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import http.server
+import importlib.util
 import json
+import os
+import shutil
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,13 +21,17 @@ from cmcoder.protocol import events as ev
 from cmcoder.protocol.messages import IdeToolDef
 from cmcoder.runtime.attachments import Attachment
 from cmcoder.runtime.commands import run_command
-from cmcoder.tools.base import ToolContext, ToolResult
-from cmcoder.tools.browser import BrowserInput, BrowserSession, find_browser
+from cmcoder.tools.base import ToolResult
 from cmcoder.tools.pick import (
     MARKER,
+    PICK_DONE,
+    PICK_READ,
+    PICK_START,
+    PICK_STOP,
     PickedElement,
     PickError,
     code_tool,
+    element_from,
     parse_answer,
     pick_in_ide,
     snippet,
@@ -65,8 +72,23 @@ def site() -> Iterator[str]:
     server.shutdown()
 
 
+def find_chromium() -> Path | None:
+    """A Chrome, Edge or Chromium on this machine (the tests drive it; cmcoder itself has none)."""
+    for name in ("google-chrome", "google-chrome-stable", "microsoft-edge", "chromium"):
+        if found := shutil.which(name):
+            return Path(found)
+    caches = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""), "/opt/pw-browsers"]
+    caches += [str(Path.home() / ".cache" / "ms-playwright")]
+    for cache in filter(None, caches):
+        for pattern in ("chromium-*/chrome-linux*/chrome", "chromium-*/chrome-win*/chrome.exe"):
+            if found := next(iter(sorted(Path(cache).glob(pattern), reverse=True)), None):
+                return found
+    return None
+
+
 needs_browser = pytest.mark.skipif(
-    find_browser()[0] is None, reason="no Chrome, Edge or Playwright Chromium here"
+    importlib.util.find_spec("playwright") is None or find_chromium() is None,
+    reason="needs Playwright for Python (a development dependency) and a Chromium here",
 )
 
 
@@ -90,15 +112,62 @@ ELEMENT = {
 # --- the script, in a real browser ------------------------------------------------------------
 
 
-async def opened(site: str, tmp_path: Path) -> tuple[BrowserSession, ToolContext]:
-    session = BrowserSession(headless=True)
-    ctx = ToolContext(cwd=tmp_path, project_root=tmp_path)
-    result = await session.run(BrowserInput.model_validate({"action": "open", "url": site}), ctx)
-    assert not result.is_error, result.content
-    return session, ctx
+class PickBrowser:
+    """A real Chromium with one page open, driven by Playwright for Python (a development
+    dependency of these tests only: cmcoder has no browser of its own). `pick` does what the
+    IDE's "run Playwright code" tool does for `/pick`: put the picker on the page, wait, read."""
+
+    def __init__(self, pw: Any, browser: Any, page: Any) -> None:
+        self.pw, self.browser, self.page = pw, browser, page
+
+    @classmethod
+    async def open(cls, url: str) -> PickBrowser:
+        from playwright.async_api import async_playwright
+
+        exe = find_chromium()
+        assert exe is not None
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=True, executable_path=str(exe), args=["--no-sandbox"]
+        )
+        page = await browser.new_page()
+        await page.goto(url)
+        return cls(pw, browser, page)
+
+    async def pick(self, timeout: float) -> PickedElement:
+        page = self.page
+        try:
+            await page.evaluate(PICK_START)
+            await page.wait_for_function(PICK_DONE, polling=250, timeout=timeout * 1000)
+            raw = await page.evaluate(PICK_READ)
+            answer = parse_answer(MARKER + raw) if isinstance(raw, str) else None
+            if answer is None:
+                raise PickError("The page didn't answer the picker.")
+        except PickError:
+            raise
+        except Exception as e:
+            if "Timeout" in type(e).__name__:
+                raise PickError(
+                    "Nothing was picked in time. Run /pick again when you are ready."
+                ) from e
+            raise PickError(f"The page changed while waiting for a click ({e}).") from e
+        finally:
+            try:  # off the page whatever happened, even when the user pressed Stop
+                await asyncio.shield(page.evaluate(PICK_STOP))
+            except Exception:  # the page is gone
+                pass
+        return element_from(answer)
+
+    async def close(self) -> None:
+        await self.browser.close()
+        await self.pw.stop()
 
 
-async def armed(session: BrowserSession) -> None:
+async def opened(site: str) -> PickBrowser:
+    return await PickBrowser.open(site)
+
+
+async def armed(session: PickBrowser) -> None:
     """Wait until the picker is on the page."""
     for _ in range(100):
         if await session.page.evaluate("!!window.__cmcoderPickStop"):
@@ -107,7 +176,7 @@ async def armed(session: BrowserSession) -> None:
     raise AssertionError("the picker never appeared on the page")
 
 
-async def gone(session: BrowserSession) -> bool:
+async def gone(session: PickBrowser) -> bool:
     return await session.page.evaluate(
         "!window.__cmcoderPickStop && document.querySelectorAll('[data-cmcoder-pick]').length === 0"
     )
@@ -117,7 +186,7 @@ async def gone(session: BrowserSession) -> bool:
 async def test_a_click_picks_the_element_and_the_page_never_sees_it(
     site: str, tmp_path: Path
 ) -> None:
-    session, _ = await opened(site, tmp_path)
+    session = await opened(site)
     try:
         task = asyncio.create_task(session.pick(10))
         await armed(session)
@@ -140,7 +209,7 @@ async def test_a_click_picks_the_element_and_the_page_never_sees_it(
 
 @needs_browser
 async def test_the_selector_finds_exactly_the_element_picked(site: str, tmp_path: Path) -> None:
-    session, _ = await opened(site, tmp_path)
+    session = await opened(site)
     try:
         for target, text in (("#items li:nth-child(2)", "second"), ("[data-testid=save]", "Save")):
             task = asyncio.create_task(session.pick(10))
@@ -161,7 +230,7 @@ async def test_the_selector_finds_exactly_the_element_picked(site: str, tmp_path
 async def test_passwords_and_hidden_fields_are_not_in_what_goes_to_the_model(
     site: str, tmp_path: Path
 ) -> None:
-    session, _ = await opened(site, tmp_path)
+    session = await opened(site)
     try:
         task = asyncio.create_task(session.pick(10))
         await armed(session)
@@ -178,7 +247,7 @@ async def test_passwords_and_hidden_fields_are_not_in_what_goes_to_the_model(
 
 @needs_browser
 async def test_escape_cancels_and_a_late_click_finds_no_picker(site: str, tmp_path: Path) -> None:
-    session, _ = await opened(site, tmp_path)
+    session = await opened(site)
     try:
         task = asyncio.create_task(session.pick(10))
         await armed(session)
@@ -194,7 +263,7 @@ async def test_escape_cancels_and_a_late_click_finds_no_picker(site: str, tmp_pa
 async def test_nothing_clicked_in_time_and_stop_both_take_the_picker_off(
     site: str, tmp_path: Path
 ) -> None:
-    session, _ = await opened(site, tmp_path)
+    session = await opened(site)
     try:
         with pytest.raises(PickError, match="in time"):
             await session.pick(0.4)
@@ -211,7 +280,7 @@ async def test_nothing_clicked_in_time_and_stop_both_take_the_picker_off(
 
 @needs_browser
 async def test_a_page_that_goes_elsewhere_while_waiting_says_so(site: str, tmp_path: Path) -> None:
-    session, _ = await opened(site, tmp_path)
+    session = await opened(site)
     try:
         task = asyncio.create_task(session.pick(3))
         await armed(session)
@@ -220,12 +289,6 @@ async def test_a_page_that_goes_elsewhere_while_waiting_says_so(site: str, tmp_p
             await asyncio.wait_for(task, 10)
     finally:
         await session.close()
-
-
-async def test_with_no_page_open_there_is_nothing_to_pick(tmp_path: Path) -> None:
-    session = BrowserSession(headless=True)
-    with pytest.raises(PickError, match="No page is open"):
-        await session.pick(1)
 
 
 # --- what the model is told -----------------------------------------------------------------------
@@ -404,28 +467,18 @@ def session_in(tmp_path: Path, **settings: Any) -> Any:
     return make_session("http://127.0.0.1:9", tmp_path, settings=settings)
 
 
-async def test_pick_without_a_page_says_what_to_do(tmp_path: Path) -> None:
+async def test_pick_without_the_ides_browser_says_what_it_needs(tmp_path: Path) -> None:
     session = session_in(tmp_path)
     lines = (await run_command(session, "/pick")).lines
-    assert "No page is open yet" in lines[0] and "/pick http://localhost:5080" in lines[0]
+    assert "VS Code's Integrated Browser" in lines[0] and "no IDE browser" in lines[0]
     assert session.attachments == []
 
 
-async def test_pick_with_the_browser_off_says_so(tmp_path: Path) -> None:
-    session = session_in(tmp_path, browser={"enabled": False})
-    assert "browser is off" in (await run_command(session, "/pick http://localhost:5080")).lines[0]
-    assert "no browser to pick in" in (await run_command(session, "/pick")).lines[0]
-
-
-async def test_an_address_cmcoder_would_ask_about_is_not_opened_by_pick(tmp_path: Path) -> None:
+async def test_pick_takes_no_address(tmp_path: Path) -> None:
     session = session_in(tmp_path)
-    for address, words in (
-        ("https://example.com/x", "isn't a page cmcoder opens by itself"),
-        ("javascript:alert(1)", "Only http, https and file"),
-        ((tmp_path.parent / "elsewhere.html").as_uri(), "only files inside this project"),
-    ):
+    for address in ("http://localhost:5080", "https://example.com/x", "javascript:alert(1)"):
         lines = (await run_command(session, f"/pick {address}")).lines
-        assert words in lines[0], (address, lines)
+        assert "takes no address" in lines[0], (address, lines)
     assert session.attachments == []
 
 
@@ -438,7 +491,7 @@ async def test_clear_and_help(tmp_path: Path) -> None:
     ]
     assert (await run_command(session, "/pick clear")).lines == ["Dropped 2 picked elements."]
     assert session.attachments == []
-    assert any("/pick <address>" in x for x in (await run_command(session, "/pick help")).lines)
+    assert any("/pick clear" in x for x in (await run_command(session, "/pick help")).lines)
 
 
 async def test_pick_in_vs_code_keeps_the_element_for_the_next_message(tmp_path: Path) -> None:
@@ -507,7 +560,7 @@ async def test_pick_over_stdio_is_listed_and_answered_in_the_chat(
         assert "element" in shown["description"] and "clear" in shown["argument_hint"]
         await agent.send(type="user_message", text="/pick")  # no page is open: it says what to do
         text = (await agent.until("assistant_message"))["text"]
-        assert "No page is open yet" in text
+        assert "no IDE browser" in text
         assert (await agent.until("result"))["subtype"] == "success"
         assert len(server.requests) == 0  # nothing went to the model
     finally:

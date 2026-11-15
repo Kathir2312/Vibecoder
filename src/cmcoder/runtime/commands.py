@@ -75,16 +75,10 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("commit", "[what it is for]", "Commit the uncommitted changes, with a message from the diff"),
     ("pr", "[base branch]", "Prepare a pull request for this branch: title, body, push"),
-    ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     (
         "pick",
-        "[url|clear]",
-        "Point at an element on the page in the browser; it goes with your next message",
-    ),
-    (
-        "playwright",
-        "[setup|map|plan|generate|run|heal|all|agents] [area]",
-        "Playwright tests for the web app: set up, plan, write, run, heal",
+        "[clear|drop <n>]",
+        "Point at an element on the page in VS Code's browser; it goes with your next message",
     ),
     ("init", "[focus]", "Learn this project and save notes about it for future sessions"),
     ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
@@ -111,7 +105,7 @@ class CommandResult:
     # these allow rules for that turn only (the command's `allowed-tools`).
     send: str | None = None
     allow: list[str] = field(default_factory=list)
-    # Run that request as this agent (a step of /playwright): the front end switches to it for the
+    # Run that request as this agent (a step of a command): the front end switches to it for the
     # request and back afterwards.
     agent: str | None = None
     # `/retry`: the front end runs `Session.retry()` and shows it like a turn.
@@ -260,39 +254,6 @@ def init_command(session: Session, focus: str) -> CommandResult:
         )
     titles = [n.title for n in a.memory.project.notes()]
     return CommandResult(send=init_prompt(titles, focus))
-
-
-def webtest_command(session: Session, arg: str) -> CommandResult:
-    """/webtest: the model starts the app and tests it with the Browser tool."""
-    from ..webtest import webtest_prompt
-
-    a = session.agent
-    if a.ctx.browser is None and not a.ide_tool_names:
-        return CommandResult(
-            [
-                "The Browser tool is off here: it is switched off in settings (browser.enabled), "
-                "or this is a slim build without Playwright."
-            ]
-        )
-    return CommandResult(send=webtest_prompt(a.ctx.project_root, arg, a.ide_tool_names))
-
-
-def playwright_command(session: Session, arg: str) -> CommandResult:
-    """/playwright: set up, plan, write, run and heal Playwright tests (playwright_tests/)."""
-    from ..playwright_tests.command import command
-
-    a = session.agent
-    settings = a.spec.get("settings")
-    if settings is None:
-        return CommandResult(["The /playwright commands need the settings; none here."])
-    stage = command(
-        arg,
-        root=a.ctx.project_root,
-        settings=settings,
-        ide_tools=a.ide_tool_names,
-        trusted=bool(settings.project_trusted),
-    )
-    return CommandResult(stage.lines, send=stage.prompt, allow=stage.allow, agent=stage.agent)
 
 
 async def review_command(session: Session, target: str) -> CommandResult:
@@ -511,10 +472,6 @@ async def run_command(
         return await review_command(session, arg)
     if name in ("commit", "pr"):
         return await git_command(session, name, arg)
-    if name == "webtest":
-        return webtest_command(session, arg)
-    if name == "playwright":
-        return playwright_command(session, arg)
     if name == "pick":
         from .attachments import changed
         from .pick import pick_lines

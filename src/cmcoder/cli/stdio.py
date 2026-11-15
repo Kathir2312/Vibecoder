@@ -100,7 +100,7 @@ PANEL_COMMANDS = {
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
-PROMPT_COMMANDS = ("team", "init", "review", "commit", "pr", "webtest", "playwright")
+PROMPT_COMMANDS = ("team", "init", "review", "commit", "pr")
 _READ = ReadTool()
 
 
@@ -434,7 +434,7 @@ class StdioServer:
         self.emit(self._agent_list())
 
     async def _switch_for_step(self, name: str) -> bool:
-        """A command's request runs as this agent (`/playwright plan` as the planner): the list in
+        """A command's request runs as this agent (as the agent the command names): the list in
         the chat shows it. False if it can't (then the request runs as the agent in use)."""
         try:
             await self._rebuild(agent=name)
@@ -956,7 +956,7 @@ class StdioServer:
 
 def command_list() -> list[ev.CommandInfo]:
     """The built-in commands an IDE's chat offers when "/" is typed: the ones answered here and the
-    ones that send a request to the model (/webtest, /review, /init, /team, /playwright)."""
+    ones that send a request to the model (/review, /init, /team, /commit, /pr)."""
     return [
         ev.CommandInfo(name=n, description=d, argument_hint=h, origin="built-in")
         for n, h, d in BUILT_IN

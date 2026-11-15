@@ -122,7 +122,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.log.appendLine(
       defs.length
         ? `Browser: using VS Code's own browser tools (${defs.map((d) => d.name).join(", ")})`
-        : `Browser: VS Code offers no browser tools here; ${productName()} opens its own browser window when it needs one`,
+        : `Browser: VS Code offers no browser tools here; add Playwright's MCP server if ${productName()} should drive a browser`,
     );
   }
 

@@ -371,7 +371,7 @@ class AgentChanged(_Event):
 
     type: Literal["agent_changed"] = "agent_changed"
     agent: str | None = None
-    # "step": a command (/playwright plan) runs this one request as the matching agent; "restore":
+    # "step": a command runs this one request as the agent it names; "restore":
     # the agent from before it is back (nothing to tell the user); "": the user chose it.
     reason: Literal["", "step", "restore"] = ""
 

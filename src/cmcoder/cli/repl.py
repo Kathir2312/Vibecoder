@@ -223,7 +223,7 @@ async def run_repl(
                         step_agent = result.agent
                 before = session.agent.persona
                 switched = step_agent is not None and step_agent != before
-                if switched:  # a step of a command (/playwright plan) runs as its own agent
+                if switched:  # a step of a command runs as its own agent
                     session.agent = await rebuild_agent(session.agent, agent=step_agent)
                     console.print(f"[dim]This step runs as the {step_agent} agent.[/dim]")
                 task = asyncio.create_task(_show_turn(console, session, prompt, allow, retrying))

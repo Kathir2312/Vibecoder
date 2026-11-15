@@ -85,7 +85,6 @@ from ..protocol import events as ev
 from ..sensitive import safe_project_file
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
-from ..tools.browser import browser_session
 from .limits import recursion_limit_for
 
 if TYPE_CHECKING:
@@ -96,7 +95,6 @@ NOT_FOR_SUBAGENTS = {
     "Task",
     "Jobs",
     "Team",
-    "PlaywrightTests",
     "write_todos",
     "ExitPlanMode",
 }  # no nesting; the todos and the plan the user approves are the main agent's
@@ -205,10 +203,7 @@ def user_agent_folders() -> list[Path]:
 
 def load_agents(project_root: Path, project_trusted: bool) -> dict[str, AgentDefinition]:
     """Built-in agents, a trusted project's, then yours (yours win on a name clash)."""
-    from .playwright_roles import ROLES  # not at the top: that module imports this one
-
     agents = dict(BUILT_IN_AGENTS)
-    agents.update(ROLES)  # built in, but a file of the same name (yours, a trusted project's) wins
     if project_trusted:
         for folder in project_agent_folders(project_root):
             agents.update(_load_dir(folder, "project", project_root))
@@ -276,15 +271,8 @@ def agent_infos(root: Path, project_trusted: bool) -> list[ev.AgentInfo]:
     built-in ones. The critic is an agent of its own and is left out."""
     found = load_agents(root, project_trusted)
     found.pop(CRITIC_NAME, None)
-    from .playwright_roles import ROLE_NAMES
-
     infos = [
-        ev.AgentInfo(
-            name=d.name,
-            description=short_description(d.description),
-            origin=d.origin,
-            group="Playwright" if d.name in ROLE_NAMES else "",
-        )
+        ev.AgentInfo(name=d.name, description=short_description(d.description), origin=d.origin)
         for d in found.values()
     ]
     if not project_trusted:
@@ -527,14 +515,7 @@ class TaskInput(BaseModel):
 
 
 def task_description(rt: SubagentRuntime) -> str:
-    from .playwright_roles import ROLE_NAMES
-
-    # The Playwright roles are for /playwright and the Agent list, not for the model to pick here.
-    agents = "\n".join(
-        f"- {d.name}: {d.description}"
-        for d in rt.definitions().values()
-        if d.name not in ROLE_NAMES
-    )
+    agents = "\n".join(f"- {d.name}: {d.description}" for d in rt.definitions().values())
     text = (
         "Hand a self-contained task to a subagent with its own fresh conversation; it "
         "works on its own and returns one report. Use it for broad searches and research "
@@ -662,7 +643,6 @@ async def run_agent(
                 cwd=rt.opts.cwd, project_root=rt.root, sandbox=rt.sandbox, code_index=rt.code_index
             )
             ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
-            ctx.browser = browser_session(rt.settings, rt.root)  # its own, if it has the tool
             rt.contexts[call_id] = ctx
         if run.stop_requested:  # stopped while it waited for a slot: never starts
             await _release(rt, call_id)
