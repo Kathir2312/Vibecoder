@@ -18,6 +18,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal
 
@@ -47,6 +48,28 @@ class ProviderConfig(_Model):
     max_retries: int = Field(2, alias="maxRetries")
 
 
+# Programs that fetch a package and run it: the first start downloads it.
+PACKAGE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "uvx"})
+PACKAGE_RUNNER_SUBCOMMANDS = frozenset({"npm", "pnpm", "yarn", "bun"})  # `npm exec`, `pnpm dlx`
+PACKAGE_RUNNER_STARTUP = 120.0
+
+
+class McpToolFilter(_Model):
+    """Which of one MCP server's tools reach the model (`mcpToolFilters`, keyed by server name).
+
+    Both lists are globs on the server's own tool names (`browser_*`), not on cmcoder's
+    `mcp__server__tool` names. A tool is kept when `allow` is not set or matches it, and no `deny`
+    glob matches it. It works for a project's `.mcp.json` servers too, which you don't write."""
+
+    allow: list[str] | None = None
+    deny: list[str] = Field(default_factory=list)
+
+    def keeps(self, tool: str) -> bool:
+        if self.allow is not None and not any(fnmatchcase(tool, g) for g in self.allow):
+            return False
+        return not any(fnmatchcase(tool, g) for g in self.deny)
+
+
 class McpServerConfig(_Model):
     """An MCP server, in Claude Code's `.mcp.json` format.
 
@@ -67,6 +90,21 @@ class McpServerConfig(_Model):
     startup_timeout: float = Field(30.0, alias="startupTimeout")
     tool_timeout: float = Field(120.0, alias="toolTimeout")
     disabled: bool = False
+
+    @property
+    def startup_seconds(self) -> float:
+        """How long to wait for the server to start: `startupTimeout` when it is set, else 30
+        seconds, or longer for a package runner (`npx @playwright/mcp` downloads the package the
+        first time it runs, which can take longer than a server that is already installed)."""
+        if "startup_timeout" in self.model_fields_set:
+            return self.startup_timeout
+        runner = Path(self.command or "").name.lower().rsplit(".", 1)[0]
+        first = self.args[0] if self.args else ""
+        if runner in PACKAGE_RUNNERS or (
+            runner in PACKAGE_RUNNER_SUBCOMMANDS and first in ("dlx", "exec", "x")
+        ):
+            return PACKAGE_RUNNER_STARTUP
+        return self.startup_timeout
 
     @property
     def transport(self) -> Literal["stdio", "http", "sse"]:
@@ -350,6 +388,9 @@ class Settings(_Model):
     lock_providers: bool = Field(False, alias="lockProviders")
     # MCP servers from your user (and managed) settings.
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict, alias="mcpServers")
+    # Per server name: which of its tools the model gets (a server with 90 tools costs 16k tokens
+    # on every request). Applies to servers from `.mcp.json` as well.
+    mcp_tool_filters: dict[str, McpToolFilter] = Field(default_factory=dict, alias="mcpToolFilters")
     sandbox: SandboxConfig = Field(default_factory=lambda: SandboxConfig.model_validate({}))
     telemetry: TelemetryConfig = Field(default_factory=lambda: TelemetryConfig.model_validate({}))
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))

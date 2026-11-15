@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 from typing import Any
 
@@ -212,3 +213,55 @@ def test_doctor_lists_the_projects_agents_and_says_why_unused(
     c = console()
     Doctor(Settings.model_validate({}), c).check_extensions()
     assert "Project agents not used: reviewer" in c.export_text()
+
+
+# --- servers that start with npx ---------------------------------------------------------------
+
+
+def npx_servers(project: Path) -> list[Any]:
+    from cmcoder.mcp import McpManager
+
+    s = Settings.model_validate(
+        {"mcpServers": {"playwright": {"command": "npx", "args": ["@playwright/mcp@latest"]}}}
+    )
+    return McpManager(s, project).servers
+
+
+def test_doctor_says_when_node_or_npx_is_missing(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("cmcoder.cli.doctor.find_program", lambda name: None)
+    c = console()
+    Doctor(Settings.model_validate({}), c).check_node(npx_servers(project))
+    text = c.export_text()
+    assert "node or npx was not found, so playwright can't start" in text
+    assert "Install Node.js 18 or newer" in text
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("v22.22.0\n", "Node.js v22.22.0 and npx are on the PATH"),
+        ("v16.20.0\n", "Node.js v16.20.0 is too old for playwright"),
+        ("what?\n", "Could not read the version of Node.js"),
+    ],
+)
+def test_doctor_checks_the_node_version(
+    said: str, expected: str, project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("cmcoder.cli.doctor.find_program", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "cmcoder.cli.doctor.subprocess.run", lambda *a, **k: types.SimpleNamespace(stdout=said)
+    )
+    c = console()
+    Doctor(Settings.model_validate({}), c).check_node(npx_servers(project))
+    assert expected in c.export_text()
+
+
+def test_doctor_does_not_mention_node_for_servers_that_do_not_use_npx(project: Path) -> None:
+    from cmcoder.mcp import McpManager
+
+    s = Settings.model_validate({"mcpServers": {"x": {"command": "python", "args": ["s.py"]}}})
+    c = console()
+    Doctor(s, c).check_node(McpManager(s, project).servers)
+    assert c.export_text().strip() == ""

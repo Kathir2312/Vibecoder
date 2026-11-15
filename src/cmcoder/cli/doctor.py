@@ -27,8 +27,10 @@ import base64
 import io
 import os
 import platform
+import re
 import socket
 import ssl
+import subprocess
 import sys
 import tempfile
 import time
@@ -702,6 +704,7 @@ class Doctor:
             return
         self.section("MCP servers")
         manager = McpManager(s, find_project_root(Path.cwd().resolve()))
+        self.check_node(manager.servers)
         if not probe:
             for server in manager.servers:
                 self.report(INFO, f"{server.name}: {server.config.describe()}", server.origin)
@@ -710,8 +713,14 @@ class Doctor:
             await manager.start(None)  # each failed server is reported below
             for server in manager.servers:
                 if server.status == "connected":
+                    kept, total = len(server.tools), server.total_tools or len(server.tools)
+                    counts = (
+                        f"{kept} of {total} tools (filtered)" if kept != total else f"{kept} tools"
+                    )
                     self.report(
-                        OK, f"{server.name}: {len(server.tools)} tools", server.config.describe()
+                        OK,
+                        f"{server.name}: {counts}, about {server.tokens:,} tokens in every request",
+                        server.config.describe(),
                     )
                 elif server.status == "not approved":
                     self.report(
@@ -723,6 +732,40 @@ class Doctor:
                     self.report(FAIL, f"{server.name}: could not start", server.error)
         finally:
             await manager.close()
+
+    def check_node(self, servers: list[Any]) -> None:
+        """MCP servers that start with `npx` (Playwright's, for one) need Node.js 18 or newer."""
+        wanted = [
+            s.name
+            for s in servers
+            if s.config.transport == "stdio"
+            and s.status != "disabled"
+            and Path(s.config.command or "").name.lower().rsplit(".", 1)[0] == "npx"
+        ]
+        if not wanted:
+            return
+        names = ", ".join(wanted)
+        node = find_program("node") or find_program("node.exe")
+        if node is None or not (find_program("npx") or find_program("npx.cmd")):
+            self.report(
+                WARN,
+                f"node or npx was not found, so {names} can't start",
+                "Install Node.js 18 or newer, then restart your editor so it is on the PATH.",
+            )
+            return
+        try:
+            said = subprocess.run(
+                [node, "--version"], capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            said = ""
+        found = re.match(r"v(\d+)\.", said)
+        if found is None:
+            self.report(WARN, f"Could not read the version of Node.js ({node})", names)
+        elif int(found.group(1)) < 18:
+            self.report(WARN, f"Node.js {said} is too old for {names}", "They need 18 or newer.")
+        else:
+            self.report(OK, f"Node.js {said} and npx are on the PATH", f"for {names}")
 
     async def check_code_search(self, probe: bool) -> None:
         """The embedding model answers, and the project's index."""

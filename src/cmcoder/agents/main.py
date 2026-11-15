@@ -490,6 +490,7 @@ def build_agent(
     if mcp is not None:
         # MCP servers' tools are already LangChain tools (langchain-mcp-adapters);
         # the permission rules see them through small stand-ins.
+        mcp.max_chars = ctx.max_output_chars  # a result is cut like a tool's of our own
         lc_tools += [t for t in mcp.langchain_tools() if keep(t.name)]
         tools.update({t.name: t for t in mcp.permission_tools() if keep(t.name)})
     ide_lc_tools: list[BaseTool] = []
