@@ -1,160 +1,204 @@
-# Testing a web app with cmcoder's browser
+# Testing a web app with Playwright in cmcoder
 
-cmcoder can open your web app in a real browser, look at the page, click and type, and
-report what is broken, like a person testing by hand. It is the `Browser` tool, built on
-[Playwright](https://playwright.dev/python/).
+cmcoder has no browser of its own. It works the way Claude Code does: **Playwright is a program
+you add**, which cmcoder starts with `npx` when it needs it (an MCP server), and in VS Code cmcoder
+can also use VS Code's built-in browser. There are two ways to use Playwright:
+
+1. **Playwright's test agents**: a planner, a generator and a healer that Playwright writes into
+   your project. Best for writing and fixing Playwright tests.
+2. **Playwright's browser server** (`@playwright/mcp`): a general browser the model can drive for
+   any job, such as "open the app and check the checkout works".
 
 ## What you need
 
-- **Google Chrome or Microsoft Edge** on the PC. Windows always has Edge. cmcoder uses it
-  as it is: nothing is downloaded.
-- To use another browser program, set it in `~/.cmcoder/settings.json`:
+- **Node.js 18 or newer** (it brings `npm` and `npx`), and access to the npm registry. Behind a
+  company mirror, set `npm_config_registry` as you do for npm.
+- A web app that answers on an address (for example `http://localhost:3000`) and a browser
+  program on the PC (Chrome or Edge). Playwright decides which browser it uses; if it can't find
+  one it says so and tells you to run `npx playwright install chromium`.
 
-  ```json
-  { "browser": { "executablePath": "C:\\Tools\\chrome\\chrome.exe" } }
-  ```
+## 1. Playwright's test agents (planner, generator, healer)
 
-`cmcoder doctor` shows which browser it found. To turn the tool off: `"browser": {"enabled": false}`.
+In the web project (it needs `@playwright/test`: `npm i -D @playwright/test`):
 
-## Use it
+```
+npx playwright init-agents --loop=claude
+```
 
-Ask in plain words, for example:
+That writes `.claude/agents/playwright-test-planner.md`, `-generator.md` and `-healer.md`, a
+`.mcp.json` (Playwright's test server, called `playwright-test`), `seed.spec.ts` and `specs/`.
+(`--loop=vscode` writes chat modes for GitHub Copilot instead: cmcoder can't use those.)
+
+**There is nothing to copy or edit.** cmcoder reads `.claude/agents/` (and `~/.claude/agents/`)
+as well as its own `.cmcoder/agents/`, and understands Claude's model names: `model: sonnet` and
+`opus` in an agent file mean *your* model, `haiku` means your small model. What is left to do:
+
+1. **Trust the project.** A project's agents and MCP servers are used only once you do. In VS Code
+   that is Workspace Trust; in the other editors the extension's trust setting; in the terminal
+   `cmcoder trust` in the project folder.
+2. **Approve the server.** The first message asks "Start MCP server playwright-test" in the chat.
+   Allow it: the answer is remembered until the server's settings change. (With `-p` nobody can
+   be asked, so cmcoder warns and you run `cmcoder mcp approve playwright-test`.)
+
+Then open the **Agent** dropdown above the message box (VS Code and Visual Studio; in the
+terminal `cmcoder --agent playwright-test-planner`) and pick the planner. The whole conversation
+is that agent: its instructions, the tools its file lists and nothing else. Ask for what it does:
+
+> Explore http://localhost:3000 and write a test plan for the checkout flow into `specs/`.
+
+Then pick `playwright-test-generator` ("write the tests for `specs/checkout.md`") and
+`playwright-test-healer` ("run the tests and fix the failing ones"). **cmcoder (default)** takes
+you back. After a Playwright update, run `init-agents` again: the files are used where they are.
+
+## 2. Playwright's browser server, for any job
+
+```
+cmcoder mcp add playwright -- npx @playwright/mcp@latest
+cmcoder mcp list --check          # playwright: connected · N tools
+```
+
+This is the command Claude Code uses too. In a config you share with others, name a version
+instead of `@latest` (`@playwright/mcp@<version>`), so everyone gets the same tools. Useful
+options go after the package name: `--headless` (no window), `--browser msedge` or `chrome`,
+`--isolated` (a clean profile each session). The tools are `mcp__playwright__browser_*`.
+
+Then ask in plain words:
 
 > Start the app with `npm run dev`, open it, add a todo called "Buy milk" and check it shows up.
 
-cmcoder starts the server (Bash, in the background), opens `http://localhost:3000`, reads the
-page, fills the form, clicks Add, and checks the page and the console. It stops with a
-report of what worked and what failed (JavaScript errors, failed requests, 404s).
+The first start downloads the package, which can be slower than the 30 seconds cmcoder waits;
+if it says the server timed out, set `"startupTimeout": 120` for it in `settings.json` and try
+again.
 
-With `"browser": {"headless": false}` you can watch the window.
+## Permissions and safety
 
-## In VS Code: the browser opens inside VS Code
+- **Each browser action asks first** (opening a page, clicking, typing, running code), like every
+  MCP tool. To stop the question for one server: `"permissions": {"allow": ["mcp__playwright-test"]}`
+  covers all its tools. To allow only the reading tools, name them
+  (`mcp__playwright__browser_snapshot`) and leave the rest asking.
+- **Be careful with "allow everything".** Playwright's browser can open any site, fill forms and
+  run scripts in a page. Its own `--allowed-origins` option is, in Playwright's words, not a
+  security boundary. cmcoder's rules match tool names, not addresses, so there is no rule like
+  "localhost only".
+- **Page text is data, not orders.** A page can contain text meant to steer the model. Read what
+  it asks to do before you allow it.
+- Every permission mode except `bypassPermissions` asks for a browser action, plan mode and
+  `acceptEdits` included; `bypassPermissions` skips the questions.
 
-VS Code has its own **Integrated Browser** (a browser tab inside the editor) and tools to drive
-it: the ones GitHub Copilot's agent uses. When the cmcoder extension finds them, cmcoder uses
-**those instead of starting Chrome or Edge**: the page opens in a VS Code tab and you watch it
-there; its own `Browser` tool steps aside. The tools are cmcoder's `ide_…` tools (for example
-`ide_open_browser_page`); opening a page, clicking and typing ask first like any command, and
-reading a page or taking a screenshot does not. Screenshots appear in the chat as before.
+## In VS Code: the Integrated Browser
 
-- **Needs** VS Code 1.110 or newer with the setting `workbench.browser.enableChatTools` on (VS
-  Code's default). Without the tools cmcoder opens its own browser window as before; the
-  extension's log (**cmcoder: Show Log**) says which it found.
-- **Look at what your VS Code offers:** the command **cmcoder: Show the IDE's Browser Tools**
-  lists the tools and their inputs. If your VS Code names them differently from what the
-  extension expects, put the names in the setting `cmcoder.integratedBrowserTools`.
-- **Turn it off:** the setting `cmcoder.useIntegratedBrowser` (VS Code) or
-  `"browser": {"useIdeBrowser": false}` (settings file): cmcoder then uses its own browser.
-- VS Code only: Visual Studio, Eclipse and NetBeans have no browser of this kind, and keep
-  the separate window.
-- The tool names and inputs are VS Code's, and VS Code may change them: cmcoder passes on
-  whatever the tools say about themselves.
+VS Code has its own **Integrated Browser** (a tab inside the editor) and tools to drive it: the
+ones GitHub Copilot's agent uses. When the cmcoder extension finds them, the model can use them:
+the page opens in a VS Code tab and you watch it there. The tools are cmcoder's `ide_…` tools (for
+example `ide_open_browser_page`); opening a page, clicking and typing ask first, reading a page
+or taking a screenshot does not. Screenshots appear in the chat.
+
+- **Needs** VS Code 1.110 or newer with `workbench.browser.enableChatTools` on (VS Code's
+  default). The extension's log (**cmcoder: Show Log**) says what it found, and **cmcoder: Show
+  the IDE's Browser Tools** lists the tools and their inputs. If your VS Code names them
+  differently, put the names in the setting `cmcoder.integratedBrowserTools`.
+- **Turn it off:** the setting `cmcoder.useIntegratedBrowser`, or `"browser": {"useIdeBrowser": false}`
+  in the settings file.
+- VS Code only. In Visual Studio, Eclipse, NetBeans and IntelliJ use Playwright (above).
 
 ## `/pick`: point at an element and talk about it
 
 VS Code's Integrated Browser has a "select element" button, but it attaches the element to
 **Copilot's** chat, and an extension can't change that. cmcoder has its own: the **Pick element**
-button in the cmcoder chat (VS Code, Visual Studio, Eclipse, NetBeans, IntelliJ), or `/pick` in
-any chat or the terminal.
+button in the cmcoder chat, or `/pick`.
 
 ```
-/pick                          point at an element on the page that is open in the browser
-/pick http://localhost:5080    open that page in cmcoder's browser window first
+/pick                          point at an element on the page that is open in VS Code's browser
 /pick clear                    drop what is waiting for your next message
 /pick drop 1                   drop one of them (the number is on its chip, from 0)
 ```
 
-A highlight follows your mouse over the page (and a bar at the bottom says what to do). **Click
-the element**: the click is swallowed, so the page doesn't act on it. Esc on the page cancels;
-**Stop** in the chat ends the wait; two minutes without a click ends it too. The chat says what
-you picked, and the element goes to cmcoder **with your next message**: its page, a CSS selector,
-its text, its position and its HTML (cut at 6,000 characters), sent as a note the model reads
-before your words, so you can type "make this button red" or "why is this link wrong?". Pick
-more than one (up to five) before you write. Each one waits as a **chip above the message box**
-("With your next message: ⌖ button#save on /Orders ×"); the cross takes it off. They are sent once;
-the message after has none.
+A highlight follows your mouse over the page. **Click the element**: the click is swallowed, so
+the page doesn't act on it. Esc on the page cancels; **Stop** in the chat ends the wait; two
+minutes without a click ends it too. The element goes to cmcoder **with your next message**: its
+page, a CSS selector, its text, its position and its HTML (cut at 6,000 characters), as a note the
+model reads before your words, so you can type "make this button red". Pick up to five before you
+write; each waits as a chip above the message box, and they are sent once.
 
-- **Where it picks.** In VS Code, in the Integrated Browser tab, when the IDE offers a "run
-  Playwright code" tool (see the section above; **cmcoder: Show the IDE's Browser Tools** lists
-  it). Otherwise in cmcoder's own browser window: `/pick <address>` opens the page there (a
-  browser running without a window is restarted with one; its earlier pages are gone). Only
-  addresses cmcoder opens by itself work with `/pick <address>` (your own machine, a file in the
-  project, a host you already approved); for another site, ask cmcoder to open it, which asks you first.
-- **Secrets.** The HTML of the picked element has the values of password and hidden fields
-  (login tokens, anti-forgery tokens) replaced by `[hidden]`. Anything else on the element is sent
-  as it is, so pick the element, not the whole form, when a field holds something private.
-- **Limits.** Only the top page: not inside an iframe, and not in a closed shadow root. The page's
-  words go to the model as data: it is told they are not instructions.
+- **Only in VS Code's Integrated Browser**, and only when VS Code offers a "run Playwright code"
+  tool (see the section above). cmcoder has no browser window of its own to pick in, and `/pick`
+  takes no address: open the page in VS Code first.
+- **Secrets.** The values of password and hidden fields (login and anti-forgery tokens) in the
+  element's HTML are replaced by `[hidden]`. Anything else is sent as it is, so pick the element,
+  not the whole form, when a field holds something private.
+- **Limits.** Only the top page: not inside an iframe or a closed shadow root. The page's words
+  go to the model as data.
 
-## `/webtest`: test the app in one command
+## Known limits
 
+- **Pictures from MCP tools** (a screenshot from Playwright's browser) are not shown in the
+  chat, and a model that can't see images may not cope with one. Ask for the page's text (a
+  *snapshot*, Playwright's default) unless your model sees images.
+- **Big pages.** cmcoder offers all of a server's tools to the model and, unlike its own tools,
+  doesn't cap an MCP tool's answer; a snapshot of a very large page can fill the window. Ask about
+  one part of the app at a time.
+- **A mid-sized model.** Playwright's agent prompts are written for Claude. Other models can
+  follow them, but expect weaker planning and healing.
+
+## A `/webtest`-style command of your own
+
+cmcoder used to have a `/webtest` command. The same thing, as a file you own, in
+`.cmcoder/commands/webtest.md` (or `~/.cmcoder/commands/` for every project):
+
+```markdown
+---
+description: Start the web app and test it in a browser
+---
+Test the web app of this project in a real browser, and report what works and what doesn't. Do
+not change any project file unless I ask afterwards.
+
+If $ARGUMENTS starts with an address, the app already runs there: don't start it. Otherwise find
+the start command (the dev, start, serve or preview scripts in package.json, manage.py, the
+README), run it with Bash in the background with its output sent to a file and its process id
+printed, and wait until it answers.
+
+Then, with the browser tools, open the app, read the page, and go through the main things a user
+can do (each page, form and button), or what I asked in $ARGUMENTS. Read the page again whenever it
+changes. JavaScript errors, failed requests and 404s matter even when the page looks fine.
+
+When you are done, close the page and stop the server you started. Report: what you tested; what
+worked; and for each failure the element or page, what you did, what happened, what you expected,
+and where in the code the cause probably is (read the code to check before you say so).
 ```
-/webtest                          find how to start the app, start it, test its main flows
-/webtest add a todo and tick it   the same, testing this
-/webtest http://localhost:3000    the app already runs there: just test it
-```
 
-cmcoder looks for the start command (the `dev`, `start`, `serve` and `preview` scripts in
-`package.json`, `manage.py`) and tells the model. The model starts the server in the
-background with Bash (which asks, as usual), waits until it answers, tests it in the browser,
-takes screenshots, stops the server it started, and reports what worked and what failed, with
-where in the code the cause probably is. It doesn't change any file unless you ask afterwards.
+## Moving from `/playwright`, `/webtest` and the Browser tool
 
-## Screenshots in the chat
-
-The `screenshot` action shows the picture in the chat panel (VS Code, Visual Studio, Eclipse,
-NetBeans, IntelliJ), small under the tool's line; click it to enlarge. The model never receives
-the picture (it may not see images): it reads pages with `snapshot`. In the terminal, the
-tool's answer gives the file's path while the session is open. The files are deleted when the
-browser closes.
-
-## What the agent can do
-
-| Action | Does |
+| Before | Now |
 |---|---|
-| `open` | go to an address |
-| `snapshot` | read the page as text, with its buttons, links and fields numbered |
-| `click`, `type`, `press` | act on a numbered element, or press a key |
-| `wait_for` | wait until some text appears |
-| `console` | JavaScript errors, warnings and failed requests since the last check |
-| `screenshot` | a picture for you, shown in the chat (the model reads pages with `snapshot`) |
+| `/playwright setup` | `npm i -D @playwright/test`, then `npx playwright init-agents --loop=claude` |
+| `/playwright map`, `plan` | the **playwright-test-planner** agent |
+| `/playwright generate` | the **playwright-test-generator** agent |
+| `/playwright run`, `heal` | the **playwright-test-healer** agent |
+| `/playwright all`, `agents` | gone: pick the agents in turn. Nothing to copy: `.claude/agents` is read as it is |
+| `.cmcoder/agents/playwright-*.md` overriding the built-in roles | the built-in roles are gone; your files are ordinary agents |
+| `/webtest` | the command file above, or just ask |
+| the `Browser` tool, `browser.enabled`, `headless`, `executablePath` | Playwright's browser server (section 2); the old settings are ignored |
+| `/pick <address>` | open the page in VS Code's browser, then `/pick` |
 
-## Safety
+The `playwright-tests/` folder `/playwright setup` made is yours: `npx playwright test` still
+runs what is in it, and the planner and generator can keep writing there if you tell them to.
 
-- **Localhost opens freely.** `localhost`, `127.0.0.1` and `[::1]` need no question.
-- **Any other site asks first**, once per site. "Always allow" saves a rule for that one
-  site only, e.g. `Browser(docs.example.com)`. You can also write the rule yourself in
-  `permissions.allow` or `permissions.deny`.
-- **A page can't lead the agent somewhere else.** A link to a site you haven't allowed isn't
-  clicked (the page keeps its state), and a navigation the page makes by itself is blocked; either
-  way the agent is told. It can ask to `open` that site, which asks you.
-- **A clean browser every session**: no cookies, no saved logins, no downloads, no camera or
-  location prompts. Nothing is kept after the session.
-- **Page text is data, not orders.** Every snapshot says so to the model.
-- **Plan mode** doesn't allow the browser; `bypassPermissions` skips the questions.
-- Only `http`, `https` and project files open. `javascript:`, `chrome:` and the like are refused.
-
-## If it doesn't start
+## If it doesn't work
 
 | You see | Do |
 |---|---|
-| *No browser found* | Install Chrome or Edge, or set `browser.executablePath` |
-| *The browser did not start* | Run `cmcoder doctor`; on Linux in a container the browser needs its usual system libraries |
-| The page works by hand but not here | Ask the agent for a `console` check; it lists errors and failed requests |
+| The agent is greyed out: "(trust this project)" | Trust the project (see step 1), then start a new conversation |
+| `MCP server … not approved` | Allow it when the chat asks, or run `cmcoder mcp approve NAME` |
+| `'npx' was not found` | Install Node.js 18 or newer and restart the editor (it must be on the PATH) |
+| `timed out while starting` | The first `npx` run downloads the package: raise `startupTimeout` for that server |
+| A browser is missing | Run `npx playwright install chromium`, or pass `--browser msedge` / `--browser chrome` to `@playwright/mcp` |
+| `cmcoder mcp list --check` shows the server failed | The line says why; run the same `npx …` command in a terminal to see Playwright's own message |
 
-## For IT: what the standalone program contains
+## For IT: what ships
 
-- **Playwright and its Node.js driver are inside the program** (`packaging/build.py` collects
-  them), so a PC needs no Python, Node.js, npm or download. Playwright starts its own copy of
-  Node to talk to the browser; nothing else is installed.
-- **The browser is not inside.** cmcoder uses the PC's Chrome or Edge, so there is no 150 MB
-  Chromium to ship or update, and the browser gets the company's normal security updates.
-- **Size** (measured on a Linux build): the unpacked folder grows from 160 MB to 299 MB
-  (the Node driver is 122 MB of it) and the release zip from 65 MB to 112 MB (+47 MB).
-  Startup is unchanged (about 0.6 s), because Playwright is loaded only when the browser is
-  first used.
-- **A slim build without it:** `uv run --with pyinstaller python packaging/build.py --without-browser`.
-  The Browser tool is then not offered to the model, and `cmcoder doctor` says so.
-- **Checked in the release build:** `packaging/smoke_browser.py <program>` runs the built
-  program with Python and uv hidden. A scripted model opens a local page, reads it and clicks a
-  button through the bundled Playwright, in the runner's Chrome or Edge.
+cmcoder ships **no browser, no Node.js and no Playwright**: the program and the Python install
+are about 140 MB smaller than when Playwright was bundled. Node.js and npm access are needed on
+a PC only for this feature, and the browser is the PC's Chrome or Edge, with the company's usual
+updates. Everything Playwright's server does runs under your permissions, so MCP servers from a
+project's `.mcp.json` are approved by each user before they first start, and managed settings
+can allow or deny servers by name (`allowedMcpServers`, `deniedMcpServers`).

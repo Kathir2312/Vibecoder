@@ -80,12 +80,8 @@ Nothing scrolls the page: the conversation and each open list have their own scr
   when there is something to show, and `p.autoOpen()` if it should open by itself. Sharing the
   height and folding on scroll then work for it too.
 - **The conversation** follows new output until the user scrolls up; **↓ Latest** resumes it.
-- **Starters** (`updateStarters` in `src/chat/main.ts`): on an empty conversation, a row of buttons for
-  ready-made commands (now the `/playwright` ones), shown only when `command_list` has the command; the
-  panel asks for the list once after `system_init` (`listCommands`). A button fills the input, or sends
-  the command when it needs nothing.
 - **Agent dropdown** (`renderAgentSelect`): agents are grouped by origin (This project, Yours, Built in);
-  an agent with its own `group` (the Playwright roles) gets that heading instead. `agent_changed` carries a
+  an agent with its own `group` gets that heading instead. `agent_changed` carries a
   `reason`: `""` is the user's choice (a note), `"step"` a command switching agent for one request (a note
   saying why), `"restore"` the switch back afterwards (silent, the dropdown just moves).
 - **Pick element** (`updatePick`): the button next to Image sends `/pick` as a message (the engine does the

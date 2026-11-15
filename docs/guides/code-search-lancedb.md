@@ -108,7 +108,9 @@ or you want exact-name search through hybrid mode.
   (Flight, the S3 and HDFS file systems, ORC, C++ headers, Cython sources, and a second copy of
   the arrow libraries that PyInstaller makes on Linux). The Parquet and Substrait libraries stay:
   every `pyarrow` module is linked against them, and the program does not start without them.
-- **Size** (measured on a Linux build, with the Browser tool): unpacked 300 MB without LanceDB,
+- **Size** (measured on a Linux build while it still bundled the Browser tool, which added
+  about 139 MB unpacked and 47 MB zipped and has since been removed, so a build today is
+  smaller by that much; not re-measured): unpacked 300 MB without LanceDB,
   780 MB with it untrimmed, **586 MB** trimmed; the release zip goes from 112 MB to **218 MB**
   (+106 MB). Startup is unchanged (about 0.6 s): `lancedb` and `pyarrow` are loaded only when a
   LanceDB index is first used. LanceDB's own engine is a single 180 MB native library that can't
@@ -118,7 +120,7 @@ or you want exact-name search through hybrid mode.
   script drops it. The flags below are for a build you make yourself.
 - **A smaller build:** `build.py --without-lancedb` leaves LanceDB and `pyarrow` out (the
   built-in and Chroma stores still work, and choosing LanceDB says "This cmcoder doesn't include
-  LanceDB"); `--without-browser` leaves out Playwright; `--slim` is both.
+  LanceDB"); `--slim` is the same.
 - **Checked in the release build:** `packaging/smoke_rag.py <program>` runs the built program with
   Python and uv hidden: it builds an index of a small project, finds nothing to redo on the next
   run, searches through a scripted model, and checks the store's folder is private. It runs for

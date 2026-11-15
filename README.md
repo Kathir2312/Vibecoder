@@ -20,9 +20,10 @@ framework concepts it uses.
   subagents (`Task`), the critic (`/critic`) and the team (`/team`: a
   LangGraph `StateGraph` of PM, developer, tester and DevOps), and the
   memory between sessions on a LangGraph store (`/memory`; `/init` learns a
-  project and saves notes about it; `/review` checks your changes for bugs; the `Browser` tool drives a real
-  browser through Playwright to test web apps (`/webtest` runs a whole test; screenshots appear
-  in the chat; **Pick element** / `/pick` sends an element you click on the page to cmcoder), see
+  project and saves notes about it; `/review` checks your changes for bugs; Playwright works as
+  in Claude Code, an MCP server you add and Playwright's own planner, generator and healer agents
+  read from `.claude/agents`; in VS Code the Integrated Browser works too, and **Pick element** /
+  `/pick` sends an element you click on the page to cmcoder, see
   [docs/guides/browser-testing.md](docs/guides/browser-testing.md)), and the
   hardening: Open WebUI as a gateway, the Bash sandbox, images through a
   `visionModel`, OpenTelemetry (off by default), the full `cmcoder doctor`,
@@ -71,8 +72,8 @@ uv run cmcoder -p "explain src/cmcoder/agents/main.py" --output-format stream-js
 | MCP servers | `mcpServers` in settings, `.mcp.json` in a project (approved before first start), `--mcp-config`; `/mcp` |
 | Hooks | `hooks` in settings: PreToolUse, PostToolUse, Stop, SubagentStop, UserPromptSubmit, SessionStart, PreCompact, Notification |
 | Custom commands, skills | `.cmcoder/commands/*.md`, `.cmcoder/skills/<name>/SKILL.md` (yours in `~/.cmcoder/`) |
-| Subagents | the `Task` tool; your own in `.cmcoder/agents/*.md`; `/agents`. **Talk to one yourself:** the Agent dropdown in the VS Code and Visual Studio chat, or `cmcoder --agent NAME`: the whole conversation is that agent (its instructions, tools, model) |
-| Playwright tests | **`/playwright`** sets up Playwright tests for any web app and walks you through them: `setup <address>`, `map` (every page), `plan`, `generate`, `run`, `heal` (fixes tests that are wrong; the app's own problems are listed as `test.fixme`, never hidden). Each step runs as its own agent, picked in the Agent dropdown for you (and put back afterwards). Plain `/playwright` says where you are and what to type next: [docs/guides/playwright-commands.md](docs/guides/playwright-commands.md) |
+| Subagents | the `Task` tool; your own in `.cmcoder/agents/*.md` (Claude Code's `.claude/agents/*.md` are read too, and `model: sonnet`/`opus` mean your model, `haiku` your small one); `/agents`. **Talk to one yourself:** the Agent dropdown in the VS Code and Visual Studio chat, or `cmcoder --agent NAME`: the whole conversation is that agent (its instructions, tools, model) |
+| Playwright | Not built in, as in Claude Code: run `npx playwright init-agents --loop=claude` in your web project and use Playwright's planner, generator and healer agents from the Agent dropdown (cmcoder reads `.claude/agents` and the `.mcp.json` it writes), or add its browser server with `cmcoder mcp add playwright -- npx @playwright/mcp@latest`: [docs/guides/browser-testing.md](docs/guides/browser-testing.md) |
 | Length of a request | `maxTurns` (default 50) is how many model calls one request may use; subagents have `subagentMaxTurns` (100). **`/turns`** shows it and **`/turns 200`** changes it while cmcoder runs (terminal and IDE chats; until the window closes), `--max-turns` sets it at start. A request that uses them all says `Stopped after 50 model calls …` and the IDE chat offers **Continue**; the work is kept and a new request gets a fresh budget |
 | When the model fails | An error says what happened in plain words and offers what helps: a gateway that was down or too slow gets **Retry** (or `/retry`), which runs the failed step again from LangGraph's checkpoint (the message is not sent twice, finished tool work is not redone) and **Switch model**; a conversation that is too long gets **Compact** and **New conversation**; a refused key gets neither retry nor switch, only the fix (`cmcoder login`) |
 | Planning before changing | In **plan** mode (the mode list, or `--permission-mode plan`) cmcoder only looks. When it knows what to do it shows its plan as a card (title, numbered steps, the files each touches) and waits: **Approve and run**, **Approve, accept edits**, **Edit steps** (change, drop or add lines), **Revise…** (send it back with a note) or **Reject**. Approving ends plan mode and the steps become the task list; nothing is changed before that. In the terminal the plan is printed and answered with 1 or 3 |

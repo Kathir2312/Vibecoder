@@ -32,8 +32,8 @@ async function violations(page: Page): Promise<string[]> {
 const toolResult: Extract<AgentEvent, { type: "tool_result" }> = { type: "tool_result", id: "", name: "Bash", content: "a\nb", is_error: false, summary: "exit 0", parent_tool_use_id: null, exit_code: null, duration_ms: null, total_lines: null, stopped: false, images: [] };
 
 const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) => Promise<void>> = {
-  "an empty conversation with its starters": async (ev) => {
-    await ev({ type: "command_list", commands: [{ name: "playwright", description: "", argument_hint: "", origin: "built-in" }, { name: "pick", description: "", argument_hint: "", origin: "built-in" }] });
+  "an empty conversation with the Pick element button": async (ev) => {
+    await ev({ type: "command_list", commands: [{ name: "pick", description: "", argument_hint: "", origin: "built-in" }] });
   },
   "a reply with code, a list and a link, tool cards and a todo list": async (ev) => {
     await ev({ type: "assistant_message", text: "Here is **the fix**:\n\n- one\n- two\n\n```csharp\nvar x = 1;\n```\n\nSee [docs](https://example.com).", reasoning: "", tool_calls: [], model: null });
