@@ -24,7 +24,6 @@ dependencies = [
     "pillow>=13.0.0",
     "langchain-mcp-adapters>=0.3,<0.4",
     "numpy>=2.1",
-    "playwright>=1.56,<2",
     "lancedb>=0.41.0",
 ]
 
@@ -39,6 +38,7 @@ dev = [
     "pyright>=1.1.370",
     "pexpect>=4.9; sys_platform != 'win32'",  # REPL tests in a pseudo-terminal
     "defusedxml>=0.7.1",
+    "playwright>=1.56,<2",  # drives the real-browser tests of /pick (tests/test_pick.py); cmcoder itself has no browser
 ]
 
 [build-system]

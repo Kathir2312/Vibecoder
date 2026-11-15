@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -77,6 +78,22 @@ def find_chromium() -> Path | None:
     for name in ("google-chrome", "google-chrome-stable", "microsoft-edge", "chromium"):
         if found := shutil.which(name):
             return Path(found)
+    if sys.platform == "win32":
+        for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            base = Path(os.environ.get(var) or "nowhere")
+            for exe in (
+                "Google/Chrome/Application/chrome.exe",
+                "Microsoft/Edge/Application/msedge.exe",
+            ):
+                if (base / exe).exists():
+                    return base / exe
+    elif sys.platform == "darwin":
+        for exe in (
+            "Google Chrome.app/Contents/MacOS/Google Chrome",
+            "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ):
+            if (Path("/Applications") / exe).exists():
+                return Path("/Applications") / exe
     caches = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""), "/opt/pw-browsers"]
     caches += [str(Path.home() / ".cache" / "ms-playwright")]
     for cache in filter(None, caches):
