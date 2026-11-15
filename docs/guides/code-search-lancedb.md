@@ -108,13 +108,13 @@ or you want exact-name search through hybrid mode.
   (Flight, the S3 and HDFS file systems, ORC, C++ headers, Cython sources, and a second copy of
   the arrow libraries that PyInstaller makes on Linux). The Parquet and Substrait libraries stay:
   every `pyarrow` module is linked against them, and the program does not start without them.
-- **Size** (measured on a Linux build while it still bundled the Browser tool, which added
-  about 139 MB unpacked and 47 MB zipped and has since been removed, so a build today is
-  smaller by that much; not re-measured): unpacked 300 MB without LanceDB,
-  780 MB with it untrimmed, **586 MB** trimmed; the release zip goes from 112 MB to **218 MB**
-  (+106 MB). Startup is unchanged (about 0.6 s): `lancedb` and `pyarrow` are loaded only when a
-  LanceDB index is first used. LanceDB's own engine is a single 180 MB native library that can't
-  be made smaller.
+- **Size** (measured on a Linux build on 15 November 2026, zipped with deflate level 6 as a
+  stand-in for the release zip): unpacked **174 MB** without LanceDB and **460 MB** with it,
+  trimmed; zipped 68 MB and **174 MB** (+106 MB). The program no longer bundles Playwright: the
+  same build with it was 586 MB unpacked and 218 MB zipped (780 MB untrimmed). Startup is
+  unchanged (about 0.55 s, five runs of `--version`): `lancedb` and `pyarrow` are loaded only when
+  a LanceDB index is first used. LanceDB's own engine is a single 180 MB native library that
+  can't be made smaller.
 - **Always in the download:** every build the project publishes (the release, the IDE
   plugins, the terminal package) includes LanceDB; a test fails if a workflow or packaging
   script drops it. The flags below are for a build you make yourself.

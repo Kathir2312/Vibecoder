@@ -13,9 +13,10 @@ can also use VS Code's built-in browser. There are two ways to use Playwright:
 
 - **Node.js 18 or newer** (it brings `npm` and `npx`), and access to the npm registry. Behind a
   company mirror, set `npm_config_registry` as you do for npm.
-- A web app that answers on an address (for example `http://localhost:3000`) and a browser
-  program on the PC (Chrome or Edge). Playwright decides which browser it uses; if it can't find
-  one it says so and tells you to run `npx playwright install chromium`.
+- A web app that answers on an address (for example `http://localhost:3000`) and a browser on
+  the PC: **Google Chrome**, or Microsoft Edge with `--browser msedge`. Playwright's browser
+  server (section 2) uses the PC's Chrome as it is and downloads nothing. Playwright's test
+  server (section 1) uses the browser its `playwright.config.ts` names: see the next section.
 
 ## 1. Playwright's test agents (planner, generator, healer)
 
@@ -28,6 +29,21 @@ npx playwright init-agents --loop=claude
 That writes `.claude/agents/playwright-test-planner.md`, `-generator.md` and `-healer.md`, a
 `.mcp.json` (Playwright's test server, called `playwright-test`), `seed.spec.ts` and `specs/`.
 (`--loop=vscode` writes chat modes for GitHub Copilot instead: cmcoder can't use those.)
+
+**Tell it which browser to use.** The test server runs your project's `playwright.config.ts`.
+With no config it needs Playwright's own browser, which is a download: it fails with
+`Executable doesn't exist at …chromium_headless_shell… Please run npx playwright install`.
+To use the Chrome or Edge that is already on the PC, say so in the config (nothing downloads):
+
+```ts
+import { defineConfig } from '@playwright/test';
+export default defineConfig({
+  use: { channel: 'chrome' },   // or 'msedge'
+});
+```
+
+Or run `npx playwright install chromium` once. The server also writes snapshots, screenshots and
+console logs into a `.playwright-mcp/` folder in the project: add it to `.gitignore`.
 
 **There is nothing to copy or edit.** cmcoder reads `.claude/agents/` (and `~/.claude/agents/`)
 as well as its own `.cmcoder/agents/`, and understands Claude's model names: `model: sonnet` and
@@ -54,21 +70,49 @@ you back. After a Playwright update, run `init-agents` again: the files are used
 
 ```
 cmcoder mcp add playwright -- npx @playwright/mcp@latest
-cmcoder mcp list --check          # playwright: connected · N tools
+cmcoder mcp list --check          # playwright: connected · 25 tools, about 5,084 tokens in every request
 ```
 
 This is the command Claude Code uses too. In a config you share with others, name a version
 instead of `@latest` (`@playwright/mcp@<version>`), so everyone gets the same tools. Useful
-options go after the package name: `--headless` (no window), `--browser msedge` or `chrome`,
-`--isolated` (a clean profile each session). The tools are `mcp__playwright__browser_*`.
+options go after the package name: `--headless` (no window), `--browser msedge` (the default is
+the PC's Chrome), `--isolated` (a clean profile each session). The tools are
+`mcp__playwright__browser_*`. If the browser is missing, Playwright says so, for example
+`Chromium distribution 'msedge' is not found … Run "npx playwright install msedge"`.
 
 Then ask in plain words:
 
 > Start the app with `npm run dev`, open it, add a todo called "Buy milk" and check it shows up.
 
-The first start downloads the package, which can be slower than the 30 seconds cmcoder waits;
-if it says the server timed out, set `"startupTimeout": 120` for it in `settings.json` and try
-again.
+The first start downloads the package. cmcoder gives a server that starts with `npx` (or `uvx`,
+`bunx`, `npm exec`, `pnpm dlx`) 120 seconds for that, and 30 for any other; set `"startupTimeout"`
+on a server in `settings.json` to change it. `cmcoder doctor` checks that Node.js 18 or newer
+and `npx` are on the PATH.
+
+## Fewer tools: `mcpToolFilters`
+
+Every tool of a server is described to the model in every request. Measured with the versions
+above: Playwright's browser server has **25 tools (about 5,100 tokens)** and Playwright's test
+server **92 tools (about 15,700 tokens)**, which is half the window of a 32k model. A server with
+more than 40 tools or 8,000 tokens gets a warning when it starts. Keep the ones you use, by
+the server's own tool names (globs), in your settings. It works for the servers in a project's
+`.mcp.json` too, which you don't write:
+
+```json
+{
+  "mcpToolFilters": {
+    "playwright": { "allow": ["browser_navigate", "browser_snapshot", "browser_take_screenshot",
+                              "browser_console_messages", "browser_close"] },
+    "playwright-test": { "allow": ["browser_*", "planner_*", "test_*"],
+                         "deny": ["browser_cookie_*", "browser_network_*", "browser_pdf_*"] }
+  }
+}
+```
+
+A tool is kept when `allow` is not set or matches it, and no `deny` glob matches it. `/mcp` shows
+the result: `playwright: connected · 5 of 25 tools (filtered), about 1,032 tokens in every
+request`. An agent's own `tools:` line (the three Playwright agents list 21, 19 and 9) narrows it
+further for that agent.
 
 ## Permissions and safety
 
@@ -131,12 +175,14 @@ write; each waits as a chip above the message box, and they are sent once.
 
 ## Known limits
 
-- **Pictures from MCP tools** (a screenshot from Playwright's browser) are not shown in the
-  chat, and a model that can't see images may not cope with one. Ask for the page's text (a
-  *snapshot*, Playwright's default) unless your model sees images.
-- **Big pages.** cmcoder offers all of a server's tools to the model and, unlike its own tools,
-  doesn't cap an MCP tool's answer; a snapshot of a very large page can fill the window. Ask about
-  one part of the app at a time.
+- **The model doesn't see pictures from MCP tools.** A screenshot from Playwright's browser
+  appears in the chat, small under the tool's line (click it to enlarge), and the model is told
+  it was shown to you and to read the page as text (a *snapshot*, Playwright's default) instead.
+  This holds for every model, so a model that can't see images never gets one. The pictures are
+  deleted when the session ends.
+- **Big pages are cut.** An MCP tool's text answer is cut to what cmcoder's own tools get, about a
+  fifth of the context window and at most 30,000 characters, keeping the start and the end and
+  saying how much was cut. Ask about one part of the app at a time.
 - **A mid-sized model.** Playwright's agent prompts are written for Claude. Other models can
   follow them, but expect weaker planning and healing.
 
@@ -190,15 +236,18 @@ runs what is in it, and the planner and generator can keep writing there if you 
 | The agent is greyed out: "(trust this project)" | Trust the project (see step 1), then start a new conversation |
 | `MCP server … not approved` | Allow it when the chat asks, or run `cmcoder mcp approve NAME` |
 | `'npx' was not found` | Install Node.js 18 or newer and restart the editor (it must be on the PATH) |
-| `timed out while starting` | The first `npx` run downloads the package: raise `startupTimeout` for that server |
-| A browser is missing | Run `npx playwright install chromium`, or pass `--browser msedge` / `--browser chrome` to `@playwright/mcp` |
+| `timed out while starting` | A slow network or registry: raise `startupTimeout` for that server (120 s is the default for `npx`), or run the same `npx …` command once in a terminal |
+| `Executable doesn't exist … Please run npx playwright install` (test server) | Put `use: { channel: 'chrome' }` in `playwright.config.ts`, or run `npx playwright install chromium` |
+| `Chromium distribution 'chrome' is not found` (browser server) | Install Google Chrome, or pass `--browser msedge`, or run `npx playwright install chrome` |
+| `Must setup test before interacting with the page` (test server) | The agent has to call `planner_setup_page` before any browser tool: use the planner agent, which does |
 | `cmcoder mcp list --check` shows the server failed | The line says why; run the same `npx …` command in a terminal to see Playwright's own message |
 
 ## For IT: what ships
 
-cmcoder ships **no browser, no Node.js and no Playwright**: the program and the Python install
-are about 140 MB smaller than when Playwright was bundled. Node.js and npm access are needed on
-a PC only for this feature, and the browser is the PC's Chrome or Edge, with the company's usual
+cmcoder ships **no browser, no Node.js and no Playwright**: the standalone program is smaller by
+what Playwright and its Node.js driver were (measured in
+[code-search-lancedb.md](code-search-lancedb.md#for-it-what-the-standalone-program-contains)). Node.js and npm access are needed on a PC
+only for this feature, and the browser is the PC's Chrome or Edge, with the company's usual
 updates. Everything Playwright's server does runs under your permissions, so MCP servers from a
 project's `.mcp.json` are approved by each user before they first start, and managed settings
 can allow or deny servers by name (`allowedMcpServers`, `deniedMcpServers`).
