@@ -387,8 +387,9 @@ def build_agent(
         persona = load_agents(root, settings.project_trusted).get(opts.agent)
         if persona is None or persona.name == CRITIC_NAME:
             raise ValueError(
-                f"No agent named {opts.agent!r}. Agents are definitions in .cmcoder/agents "
-                "(of a trusted project) or ~/.cmcoder/agents; /agents lists them."
+                f"No agent named {opts.agent!r}. Agents are definitions in .claude/agents or "
+                ".cmcoder/agents (of a trusted project) or ~/.claude/agents or "
+                "~/.cmcoder/agents; /agents lists them."
             )
 
     def keep(tool: str) -> bool:

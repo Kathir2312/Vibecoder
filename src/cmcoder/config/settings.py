@@ -437,6 +437,13 @@ def config_dir() -> Path:
     return Path(os.environ.get("CMCODER_CONFIG_DIR", Path.home() / ".cmcoder"))
 
 
+def claude_dir() -> Path:
+    """Claude Code's folder for the user (`~/.claude`, or `CLAUDE_CONFIG_DIR` as there): cmcoder
+    reads the agents in it, so what you made for Claude Code, or what `npx playwright init-agents
+    --loop=claude` writes, works here without a copy."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+
+
 def managed_settings_path() -> Path:
     """Where the organisation's managed settings live: a location only
     administrators can write. Deliberately not configurable by environment

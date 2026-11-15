@@ -24,6 +24,7 @@ def _isolate_config(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CMCODER_CONFIG_DIR", str(tmp_path_factory.mktemp("cmcoder-config")))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-config")))
     for var in list(os.environ):
         if var.startswith(("CMCODER_", "OPENAI_", "LANGSMITH_", "LANGCHAIN_")) and (
             var != "CMCODER_CONFIG_DIR"

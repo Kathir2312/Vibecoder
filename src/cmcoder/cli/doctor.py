@@ -699,7 +699,7 @@ class Doctor:
             self.report(
                 INFO,
                 f"agent {a.name}: {a.description}",
-                f"{a.origin} · tools: {', '.join(a.tools) if a.tools else 'all'}"
+                f"{a.origin} ({a.folder}) · tools: {', '.join(a.tools) if a.tools else 'all'}"
                 f" · model: {a.model or 'inherit'}",
             )
         if ignored:

@@ -468,7 +468,10 @@ async def run_command(
         rt = a.subagents
         if rt is None:
             return CommandResult(["No subagents."])
-        lines = [f"  {d.name} ({d.origin}): {d.description}" for d in rt.definitions().values()]
+        lines = [
+            f"  {d.name} ({d.origin + ', ' + d.folder if d.path else d.origin}): {d.description}"
+            for d in rt.definitions().values()
+        ]
         for r in rt.runs.values():
             lines.append(
                 f"  #{r.number} {r.agent_type}: {r.description} · {r.state} · "
