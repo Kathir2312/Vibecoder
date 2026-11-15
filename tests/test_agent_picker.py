@@ -91,7 +91,6 @@ def test_the_list_puts_the_projects_agents_first_and_greys_out_untrusted_ones(
         ("explore", "built-in", True),
         ("general-purpose", "built-in", True),
     ]
-    assert all(i.group == "" for i in trusted)  # no agent has a heading of its own
     assert trusted[1].description.startswith("Use this agent when you need to create")
     assert "<example>" not in trusted[1].description
     untrusted = {i.name: i for i in agent_infos(project, False)}

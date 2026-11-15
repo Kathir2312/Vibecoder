@@ -66,7 +66,7 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) 
   },
   "every kind of todo, and a stop that offers Continue": async (ev) => {
     await ev({ type: "todo_update", todos: [{ content: "Done thing", status: "completed" }, { content: "Doing thing", status: "in_progress" }, { content: "Next thing", status: "pending" }] });
-    await ev({ type: "agent_changed", agent: "explore", reason: "" });
+    await ev({ type: "agent_changed", agent: "explore" });
     await ev({ ...result, subtype: "max_turns", is_error: true, result: "Stopped after 50 model calls. Say continue, or raise the limit with /turns 100." });
   },
   "the changes bar and the review of every file": async (ev, page) => {

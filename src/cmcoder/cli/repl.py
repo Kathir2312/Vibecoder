@@ -202,7 +202,6 @@ async def run_repl(
                     prompt = None
                     continue
                 allow: list[str] = []
-                step_agent: str | None = None
                 retrying = False
                 if prompt.startswith("/"):
                     result = await run_command(
@@ -220,12 +219,6 @@ async def run_repl(
                         continue
                     else:
                         prompt, allow = result.send, result.allow  # a custom command
-                        step_agent = result.agent
-                before = session.agent.persona
-                switched = step_agent is not None and step_agent != before
-                if switched:  # a step of a command runs as its own agent
-                    session.agent = await rebuild_agent(session.agent, agent=step_agent)
-                    console.print(f"[dim]This step runs as the {step_agent} agent.[/dim]")
                 task = asyncio.create_task(_show_turn(console, session, prompt, allow, retrying))
                 interrupt.arm(task.cancel)
                 try:
@@ -234,8 +227,6 @@ async def run_repl(
                     console.print("[yellow]interrupted[/yellow]")
                 finally:
                     interrupt.disarm()
-                    if switched:
-                        session.agent = await rebuild_agent(session.agent, agent=before)
                 prompt = None
         finally:
             await session.close()

@@ -105,9 +105,6 @@ class CommandResult:
     # these allow rules for that turn only (the command's `allowed-tools`).
     send: str | None = None
     allow: list[str] = field(default_factory=list)
-    # Run that request as this agent (a step of a command): the front end switches to it for the
-    # request and back afterwards.
-    agent: str | None = None
     # `/retry`: the front end runs `Session.retry()` and shows it like a turn.
     retry: bool = False
     # Events to send besides the lines (`/revert`: the review as it is now; `/pick`: the chips).

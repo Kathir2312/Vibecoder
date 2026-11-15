@@ -353,8 +353,6 @@ class AgentInfo(BaseModel):
     # once the project is trusted: `cmcoder trust`).
     usable: bool = True
     hint: str = ""
-    # A heading of its own in the list ("Playwright"), instead of its origin's.
-    group: str = ""
 
 
 class AgentList(_Event):
@@ -371,9 +369,6 @@ class AgentChanged(_Event):
 
     type: Literal["agent_changed"] = "agent_changed"
     agent: str | None = None
-    # "step": a command runs this one request as the agent it names; "restore":
-    # the agent from before it is back (nothing to tell the user); "": the user chose it.
-    reason: Literal["", "step", "restore"] = ""
 
 
 class CommandInfo(BaseModel):
