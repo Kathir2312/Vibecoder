@@ -147,7 +147,7 @@ const STATES: Record<string, (ev: (e: AgentEvent) => Promise<void>, page: Page) 
     await ev({ type: "warning", message: "Context is 90% full" });
   },
   "the agent list": async (ev) => {
-    await ev({ type: "agent_list", agents: [{ name: "explore", description: "Search", origin: "built-in", usable: true, hint: "", group: "" }], current: null });
+    await ev({ type: "agent_list", agents: [{ name: "explore", description: "Search", origin: "built-in", usable: true, hint: "" }], current: null });
   },
 };
 
