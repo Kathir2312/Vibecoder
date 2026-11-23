@@ -13,7 +13,7 @@ and `gh pr create` asks the user first, like any command that changes something:
 approves them. The prompts forbid `git add -A`, force pushes, amending and resetting; a force push is
 also one of the high-risk commands the permission card always asks about.
 
-LANGCHAIN / LANGGRAPH: the prompts are LangChain `PromptTemplate`s (as webtest.py and review.py);
+LANGCHAIN / LANGGRAPH: the prompts are LangChain `PromptTemplate`s (as review.py does);
 the rest is reading git's output.
 """
 

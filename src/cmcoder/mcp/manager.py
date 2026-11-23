@@ -15,7 +15,11 @@ LANGCHAIN CONCEPTS IN THIS FILE
   way cmcoderagent did, because the MCP SDK's context managers must be closed
   by the task that opened them.
 * `tool_interceptors`: middleware for MCP tool calls. We use one to put a
-  timeout (`toolTimeout`) on every call.
+  timeout (`toolTimeout`) on every call, and one to tidy each result.
+
+cmcoder's own additions: `mcpToolFilters` (which of a server's tools the model gets: a server
+with 90 tools costs 16k tokens on every request), a cap on the size of a result, and pictures in a
+result (a screenshot) go to the chat, never to the model, as with the tools cmcoder has itself.
 
 cmcoder's rules on top of that: tools are named `mcp__<server>__<tool>`
 (permission rules like `mcp__github` match a whole server); a project's own
@@ -27,14 +31,20 @@ or deny servers by name.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import re
+import shutil
+import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+from langchain_core.messages import HumanMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.tools import BaseTool
 from pydantic import ConfigDict
 
@@ -47,9 +57,21 @@ from ..config.settings import (
     is_approved,
 )
 from ..providers.transport import TransportOptions, build_ssl_context
-from ..tools.base import Tool, ToolContext, ToolInput, ToolResult
+from ..tools.base import MAX_RESULT_CHARS, Tool, ToolContext, ToolInput, ToolResult, truncate_middle
+from ..tools.progress import call_artifact
 
 MAX_DESCRIPTION_CHARS = 2000
+# A server that adds this many tools, or this many tokens of tool descriptions, to every request
+# gets a warning (unless `mcpToolFilters` already cuts it down).
+BIG_SERVER_TOOLS = 40
+BIG_SERVER_TOKENS = 8_000
+MAX_PICTURE_BASE64 = 14_000_000  # characters of one picture; a bigger one is left out
+PICTURE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
 VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
@@ -103,6 +125,8 @@ class McpServer:
     status: Status = "starting"
     error: str = ""
     tools: list[BaseTool] = field(default_factory=list)
+    total_tools: int = 0  # what the server offers, before `mcpToolFilters`
+    tokens: int = 0  # about what the tools kept cost in every request
     prompts: list[Any] = field(default_factory=list)  # MCP prompts, offered as /commands
     session: Any = None  # the open ClientSession, while connected
     _task: asyncio.Task[None] | None = None
@@ -114,7 +138,11 @@ class McpServer:
         return f"mcp:{self.name}"
 
     def summary(self) -> str:
-        detail = self.error or (f"{len(self.tools)} tools" if self.status == "connected" else "")
+        detail = self.error
+        if not detail and self.status == "connected":
+            kept, total = len(self.tools), self.total_tools or len(self.tools)
+            counts = f"{kept} of {total} tools (filtered)" if kept != total else f"{kept} tools"
+            detail = f"{counts}, about {self.tokens:,} tokens in every request"
         origin = " (project)" if self.origin == "project" else ""
         return f"{self.name}{origin}: {self.status}" + (f" · {detail}" if detail else "")
 
@@ -149,6 +177,10 @@ class McpManager:
         self.root = project_root
         allowed = settings.allowed_mcp_servers
         denied = set(settings.denied_mcp_servers)
+        self.filters = settings.mcp_tool_filters
+        self.max_chars = MAX_RESULT_CHARS  # per result; build_agent sets it from the window
+        self._pictures: Path | None = None  # where pictures from results wait for the chat
+        self._picture_count = 0
         self.servers: list[McpServer] = []
         for origin, configs in (
             ("user", settings.mcp_servers),
@@ -180,6 +212,7 @@ class McpManager:
             return []
         self.started = True
         pending: list[McpServer] = []
+        warnings: list[str] = []
         for s in self.servers:
             if s.status != "starting":
                 continue
@@ -189,7 +222,11 @@ class McpManager:
                     ok = approve_fn is not None and await approve_fn(s)
                     if not ok:
                         s.status = "not approved"
-                        s.error = "this project's server was not approved"
+                        if approve_fn is None:  # nobody to ask (`-p`): say how to approve it
+                            s.error = f"not approved yet: run `cmcoder mcp approve {s.name}`"
+                            warnings.append(f"MCP server {s.name} was not started: {s.error}")
+                        else:
+                            s.error = "this project's server was not approved"
                         continue
                     approve(self.root, s.key, fp)
             s._task = asyncio.create_task(self._run(s), name=f"mcp:{s.name}")
@@ -197,14 +234,23 @@ class McpManager:
         if pending:
             await asyncio.wait(
                 [asyncio.create_task(s._ready.wait()) for s in pending],
-                timeout=max(s.config.startup_timeout for s in pending) + 1,
+                timeout=max(s.config.startup_seconds for s in pending) + 1,
             )
-        warnings = []
         for s in pending:
             if s.status == "starting":
                 s.status, s.error = "failed", "timed out while starting"
             if s.status == "failed":
                 warnings.append(f"MCP server {s.name} could not start: {s.error}")
+            elif (
+                s.status == "connected"
+                and len(s.tools) == s.total_tools
+                and (len(s.tools) > BIG_SERVER_TOOLS or s.tokens > BIG_SERVER_TOKENS)
+            ):
+                warnings.append(
+                    f"MCP server {s.name} adds {len(s.tools)} tools (about {s.tokens:,} tokens) to "
+                    "every request. Keep the ones you use with mcpToolFilters in your settings: "
+                    "docs/guides/browser-testing.md"
+                )
         return warnings
 
     async def _run(self, s: McpServer) -> None:
@@ -219,16 +265,21 @@ class McpManager:
                     load_mcp_tools(
                         session,
                         server_name=s.name,
-                        tool_interceptors=[_timeout(s.config.tool_timeout)],
+                        tool_interceptors=[_timeout(s.config.tool_timeout), _tidy(self)],
                     ),
-                    s.config.startup_timeout,
+                    s.config.startup_seconds,
                 )
+                s.total_tools = len(tools)
+                rule = self.filters.get(s.name)
+                if rule is not None:  # the server's own names, before ours
+                    tools = [t for t in tools if rule.keeps(t.name)]
                 for t in tools:
                     # Our naming, and say where the tool comes from.
                     t.name = tool_name(s.name, t.name)
                     text = (t.description or t.name).strip()
                     t.description = f"[MCP server {s.name}] {text}"[:MAX_DESCRIPTION_CHARS]
                 s.tools = tools
+                s.tokens = tool_tokens(tools)
                 try:  # prompts are optional: servers without them answer with an error
                     s.prompts = list((await session.list_prompts()).prompts)
                 except Exception:
@@ -288,6 +339,88 @@ class McpManager:
             for t in still:
                 t.cancel()
             await asyncio.gather(*still, return_exceptions=True)
+        if self._pictures is not None:  # the chat has had them by now
+            shutil.rmtree(self._pictures, ignore_errors=True)
+            self._pictures = None
+
+    def tidy(self, result: Any) -> Any:
+        """What the model reads of an MCP tool's result: each text cut to the budget (head and tail
+        kept, the cut said), and a picture (a screenshot) saved for the chat and taken out, with a
+        note that it can't be seen: the model reads the page as text."""
+        from mcp.types import ImageContent, TextContent
+
+        content = getattr(result, "content", None)
+        if not isinstance(content, list):
+            return result
+        kept: list[Any] = []
+        shown = left_out = changed = False
+        used = 0
+        for block in content:
+            if isinstance(block, ImageContent):
+                changed = True
+                holder = call_artifact.get()  # middleware/toolcall.py puts it on the tool message
+                path = self._save_picture(block) if holder is not None else None
+                images = holder.setdefault("images", []) if holder is not None else None
+                if path is not None and isinstance(images, list):
+                    images.append(str(path))
+                    shown = True
+                else:  # nowhere to show it (not inside a tool call), or not a picture we take
+                    left_out = True
+            elif isinstance(block, TextContent):
+                text = truncate_middle(block.text, max(self.max_chars - used, 2_000))
+                used += len(text)
+                if text is not block.text:
+                    changed = True
+                    block = block.model_copy(update={"text": text})
+                kept.append(block)
+            else:
+                kept.append(block)
+        if shown:
+            kept.append(
+                TextContent(
+                    type="text",
+                    text="[A picture was shown to the user in the chat. You can't see it: "
+                    "read the page as text (a snapshot) instead.]",
+                )
+            )
+        if left_out:
+            kept.append(
+                TextContent(type="text", text="[A picture was left out: it can't be shown.]")
+            )
+        return result.model_copy(update={"content": kept}) if changed else result
+
+    def _save_picture(self, block: Any) -> Path | None:
+        ext = PICTURE_TYPES.get(str(block.mimeType).lower())
+        if ext is None or len(block.data) > MAX_PICTURE_BASE64:
+            return None
+        try:
+            raw = base64.b64decode(block.data, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+        if self._pictures is None:
+            self._pictures = Path(tempfile.mkdtemp(prefix="cmcoder-mcp-"))
+        self._picture_count += 1
+        path = self._pictures / f"picture-{self._picture_count}{ext}"
+        path.write_bytes(raw)
+        return path
+
+
+def tool_tokens(tools: list[BaseTool]) -> int:
+    """About what these tools' names, descriptions and inputs cost in every request."""
+    schemas = [
+        {"name": t.name, "description": t.description, "parameters": t.args_schema} for t in tools
+    ]
+    text = json.dumps(schemas, default=str)
+    return count_tokens_approximately([HumanMessage(content=text)])
+
+
+def _tidy(manager: McpManager) -> Any:
+    """A tool interceptor: each result goes through `McpManager.tidy`."""
+
+    async def intercept(request: Any, handler: Any) -> Any:
+        return manager.tidy(await handler(request))
+
+    return intercept
 
 
 def _timeout(seconds: float) -> Any:

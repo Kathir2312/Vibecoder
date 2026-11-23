@@ -27,8 +27,10 @@ import base64
 import io
 import os
 import platform
+import re
 import socket
 import ssl
+import subprocess
 import sys
 import tempfile
 import time
@@ -607,24 +609,6 @@ class Doctor:
         if find_shell() is None:
             self.report(FAIL, "Hooks need bash to run", SHELL_HELP)
 
-    def check_browser(self) -> None:
-        from ..tools.browser import find_browser, playwright_available
-
-        cfg = self.settings.browser
-        self.section("Browser (testing web apps)")
-        if not cfg.enabled:
-            self.report(INFO, "Off in settings (browser.enabled: false)")
-            return
-        if not playwright_available():
-            self.report(INFO, "Playwright isn't in this build: the Browser tool is off")
-            return
-        path, label = find_browser(cfg.executable_path)
-        if path is None:
-            self.report(WARN, "No browser found for the Browser tool", label)
-            return
-        mode = "headless" if cfg.headless else "with a visible window"
-        self.report(OK, f"The Browser tool will use {label}, {mode}", str(path))
-
     def check_sandbox(self) -> None:
         from ..sandbox import detect
 
@@ -699,7 +683,7 @@ class Doctor:
             self.report(
                 INFO,
                 f"agent {a.name}: {a.description}",
-                f"{a.origin} · tools: {', '.join(a.tools) if a.tools else 'all'}"
+                f"{a.origin} ({a.folder}) · tools: {', '.join(a.tools) if a.tools else 'all'}"
                 f" · model: {a.model or 'inherit'}",
             )
         if ignored:
@@ -720,6 +704,7 @@ class Doctor:
             return
         self.section("MCP servers")
         manager = McpManager(s, find_project_root(Path.cwd().resolve()))
+        self.check_node(manager.servers)
         if not probe:
             for server in manager.servers:
                 self.report(INFO, f"{server.name}: {server.config.describe()}", server.origin)
@@ -728,8 +713,14 @@ class Doctor:
             await manager.start(None)  # each failed server is reported below
             for server in manager.servers:
                 if server.status == "connected":
+                    kept, total = len(server.tools), server.total_tools or len(server.tools)
+                    counts = (
+                        f"{kept} of {total} tools (filtered)" if kept != total else f"{kept} tools"
+                    )
                     self.report(
-                        OK, f"{server.name}: {len(server.tools)} tools", server.config.describe()
+                        OK,
+                        f"{server.name}: {counts}, about {server.tokens:,} tokens in every request",
+                        server.config.describe(),
                     )
                 elif server.status == "not approved":
                     self.report(
@@ -741,6 +732,40 @@ class Doctor:
                     self.report(FAIL, f"{server.name}: could not start", server.error)
         finally:
             await manager.close()
+
+    def check_node(self, servers: list[Any]) -> None:
+        """MCP servers that start with `npx` (Playwright's, for one) need Node.js 18 or newer."""
+        wanted = [
+            s.name
+            for s in servers
+            if s.config.transport == "stdio"
+            and s.status != "disabled"
+            and Path(s.config.command or "").name.lower().rsplit(".", 1)[0] == "npx"
+        ]
+        if not wanted:
+            return
+        names = ", ".join(wanted)
+        node = find_program("node") or find_program("node.exe")
+        if node is None or not (find_program("npx") or find_program("npx.cmd")):
+            self.report(
+                WARN,
+                f"node or npx was not found, so {names} can't start",
+                "Install Node.js 18 or newer, then restart your editor so it is on the PATH.",
+            )
+            return
+        try:
+            said = subprocess.run(
+                [node, "--version"], capture_output=True, text=True, timeout=10
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            said = ""
+        found = re.match(r"v(\d+)\.", said)
+        if found is None:
+            self.report(WARN, f"Could not read the version of Node.js ({node})", names)
+        elif int(found.group(1)) < 18:
+            self.report(WARN, f"Node.js {said} is too old for {names}", "They need 18 or newer.")
+        else:
+            self.report(OK, f"Node.js {said} and npx are on the PATH", f"for {names}")
 
     async def check_code_search(self, probe: bool) -> None:
         """The embedding model answers, and the project's index."""
@@ -840,7 +865,6 @@ class Doctor:
         await self.check_mcp(probe)
         self.check_hooks()
         self.check_sandbox()
-        self.check_browser()
         await self.check_code_search(probe)
         await self.check_telemetry()
         self.check_extensions()

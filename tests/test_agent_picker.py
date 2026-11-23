@@ -90,17 +90,7 @@ def test_the_list_puts_the_projects_agents_first_and_greys_out_untrusted_ones(
         ("planner", "project", True),
         ("explore", "built-in", True),
         ("general-purpose", "built-in", True),
-        ("playwright-generator", "built-in", True),
-        ("playwright-healer", "built-in", True),
-        ("playwright-mapper", "built-in", True),
-        ("playwright-planner", "built-in", True),
-        ("playwright-runner", "built-in", True),
     ]
-    # The Playwright agents have a heading of their own in the list, the others their origin's.
-    assert {i.name for i in trusted if i.group == "Playwright"} == {
-        n for n in (i.name for i in trusted) if n.startswith("playwright-")
-    }
-    assert all(i.group == "" for i in trusted if not i.name.startswith("playwright-"))
     assert trusted[1].description.startswith("Use this agent when you need to create")
     assert "<example>" not in trusted[1].description
     untrusted = {i.name: i for i in agent_infos(project, False)}

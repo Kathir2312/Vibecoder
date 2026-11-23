@@ -9,18 +9,15 @@ temp folder on every run (which antivirus software also dislikes).
 Branding (branding/, checked by packaging/brand.py) goes in as
 cmcoder/_brand; on Windows, cmcoder.exe also gets the icon and file details.
 
-Browser tool: Playwright is bundled (`--collect-all=playwright`: its Python package
-and the Node.js driver it starts, so a PC needs no Node, Python or download; the
-browser itself is the PC's Chrome or Edge). `--without-browser` makes a slim build
-without it; the Browser tool is then not offered.
-
-    uv run --with pyinstaller python packaging/build.py --without-browser
+No browser is bundled: cmcoder has no browser of its own (Playwright, as in Claude Code, is an
+MCP server a user adds, started with npx). The Playwright Python package is a development
+dependency of the tests only, and the build leaves it out (`--exclude-module=playwright`).
 
 LanceDB (a store for the code index, rag.store.type "lancedb") is bundled too,
 with the pyarrow it needs, trimmed by packaging/prune.py (Flight, S3, HDFS, ORC,
 headers and a second copy of the arrow libraries go: 780 MB becomes 586 MB unpacked
 on Linux). `--without-lancedb` leaves both out; the code index then offers only the
-built-in store (and Chroma), and says so if LanceDB is chosen. `--slim` is both flags.
+built-in store (and Chroma), and says so if LanceDB is chosen. `--slim` is the same.
 
 LangChain note: LangChain and LangGraph import some modules lazily (by name,
 at run time), which PyInstaller's import scan can't see, and read their own
@@ -87,7 +84,6 @@ LANCEDB = [
 
 def main() -> None:
     flags = sys.argv[1:]
-    with_browser = "--without-browser" not in flags and "--slim" not in flags
     with_lancedb = "--without-lancedb" not in flags and "--slim" not in flags
     try:
         import PyInstaller.__main__
@@ -149,7 +145,7 @@ def main() -> None:
             "--collect-submodules=keyring",
             "--copy-metadata=keyring",
             "--collect-submodules=truststore",
-            *(["--collect-all=playwright"] if with_browser else ["--exclude-module=playwright"]),
+            "--exclude-module=playwright",  # a development dependency of the tests only
             *(
                 LANCEDB
                 if with_lancedb

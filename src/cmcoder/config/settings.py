@@ -18,6 +18,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal
 
@@ -47,6 +48,28 @@ class ProviderConfig(_Model):
     max_retries: int = Field(2, alias="maxRetries")
 
 
+# Programs that fetch a package and run it: the first start downloads it.
+PACKAGE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "uvx"})
+PACKAGE_RUNNER_SUBCOMMANDS = frozenset({"npm", "pnpm", "yarn", "bun"})  # `npm exec`, `pnpm dlx`
+PACKAGE_RUNNER_STARTUP = 120.0
+
+
+class McpToolFilter(_Model):
+    """Which of one MCP server's tools reach the model (`mcpToolFilters`, keyed by server name).
+
+    Both lists are globs on the server's own tool names (`browser_*`), not on cmcoder's
+    `mcp__server__tool` names. A tool is kept when `allow` is not set or matches it, and no `deny`
+    glob matches it. It works for a project's `.mcp.json` servers too, which you don't write."""
+
+    allow: list[str] | None = None
+    deny: list[str] = Field(default_factory=list)
+
+    def keeps(self, tool: str) -> bool:
+        if self.allow is not None and not any(fnmatchcase(tool, g) for g in self.allow):
+            return False
+        return not any(fnmatchcase(tool, g) for g in self.deny)
+
+
 class McpServerConfig(_Model):
     """An MCP server, in Claude Code's `.mcp.json` format.
 
@@ -67,6 +90,21 @@ class McpServerConfig(_Model):
     startup_timeout: float = Field(30.0, alias="startupTimeout")
     tool_timeout: float = Field(120.0, alias="toolTimeout")
     disabled: bool = False
+
+    @property
+    def startup_seconds(self) -> float:
+        """How long to wait for the server to start: `startupTimeout` when it is set, else 30
+        seconds, or longer for a package runner (`npx @playwright/mcp` downloads the package the
+        first time it runs, which can take longer than a server that is already installed)."""
+        if "startup_timeout" in self.model_fields_set:
+            return self.startup_timeout
+        runner = Path(self.command or "").name.lower().rsplit(".", 1)[0]
+        first = self.args[0] if self.args else ""
+        if runner in PACKAGE_RUNNERS or (
+            runner in PACKAGE_RUNNER_SUBCOMMANDS and first in ("dlx", "exec", "x")
+        ):
+            return PACKAGE_RUNNER_STARTUP
+        return self.startup_timeout
 
     @property
     def transport(self) -> Literal["stdio", "http", "sse"]:
@@ -268,29 +306,11 @@ class MemoryConfig(_Model):
 
 
 class BrowserConfig(_Model):
-    """The Browser tool (tools/browser.py): the agent drives a real browser (Playwright)
-    to test a web app. It uses the Chrome or Edge on this PC."""
+    """The IDE's own browser tools (ide_browser.py): VS Code's Integrated Browser. cmcoder has no
+    browser of its own: Playwright, as in Claude Code, is an MCP server you add (`mcpServers`)."""
 
-    enabled: bool = True
-    headless: bool = True  # false: show the window (demos)
-    # A browser program to use instead of looking for Chrome or Edge.
-    executable_path: str | None = Field(None, alias="executablePath")
-    # When the IDE has browser tools of its own (VS Code's Integrated Browser), use those:
-    # the page opens inside the IDE instead of in a separate Chrome or Edge window.
+    # When the IDE has browser tools of its own, offer them to the model; false: don't.
     use_ide_browser: bool = Field(True, alias="useIdeBrowser")
-
-
-class PlaywrightConfig(_Model):
-    """The /playwright commands (playwright_tests/): set up Playwright tests for a web app, plan,
-    generate, run and heal them. Nothing here is specific to a framework."""
-
-    enabled: bool = True
-    # The folder (in the project) that holds the Playwright project: its config, plans and tests.
-    dir: str = "playwright-tests"
-    # The address the app under test answers at (else: `/playwright setup <address>`).
-    app_url: str | None = Field(None, alias="appUrl")
-    # Failing tests the healer works through, then it stops and reports what is left.
-    max_heal_rounds: int = Field(3, alias="maxHealRounds", ge=1, le=10)
 
 
 class RethinkConfig(_Model):
@@ -368,6 +388,9 @@ class Settings(_Model):
     lock_providers: bool = Field(False, alias="lockProviders")
     # MCP servers from your user (and managed) settings.
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict, alias="mcpServers")
+    # Per server name: which of its tools the model gets (a server with 90 tools costs 16k tokens
+    # on every request). Applies to servers from `.mcp.json` as well.
+    mcp_tool_filters: dict[str, McpToolFilter] = Field(default_factory=dict, alias="mcpToolFilters")
     sandbox: SandboxConfig = Field(default_factory=lambda: SandboxConfig.model_validate({}))
     telemetry: TelemetryConfig = Field(default_factory=lambda: TelemetryConfig.model_validate({}))
     rag: RagConfig = Field(default_factory=lambda: RagConfig.model_validate({}))
@@ -377,9 +400,6 @@ class Settings(_Model):
     memory: MemoryConfig = Field(default_factory=lambda: MemoryConfig.model_validate({}))
     browser: BrowserConfig = Field(default_factory=lambda: BrowserConfig.model_validate({}))
     team: TeamConfig = Field(default_factory=lambda: TeamConfig.model_validate({}))
-    playwright: PlaywrightConfig = Field(
-        default_factory=lambda: PlaywrightConfig.model_validate({})
-    )
     rethink: RethinkConfig = Field(default_factory=lambda: RethinkConfig.model_validate({}))
     # Managed settings only: server names allowed (if set) and denied.
     allowed_mcp_servers: list[str] | None = Field(None, alias="allowedMcpServers")
@@ -435,6 +455,13 @@ class SettingsError(Exception):
 
 def config_dir() -> Path:
     return Path(os.environ.get("CMCODER_CONFIG_DIR", Path.home() / ".cmcoder"))
+
+
+def claude_dir() -> Path:
+    """Claude Code's folder for the user (`~/.claude`, or `CLAUDE_CONFIG_DIR` as there): cmcoder
+    reads the agents in it, so what you made for Claude Code, or what `npx playwright init-agents
+    --loop=claude` writes, works here without a copy."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
 
 
 def managed_settings_path() -> Path:

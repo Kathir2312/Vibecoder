@@ -16,8 +16,6 @@ from PIL import Image
 from cmcoder.agents.main import AgentOptions, build_agent
 from cmcoder.ide_browser import IdeToolSet, looks_read_only, object_schema, tool_name
 from cmcoder.protocol.messages import IdeToolDef
-from cmcoder.runtime.commands import webtest_command
-from cmcoder.runtime.session import Session
 from cmcoder.tools.base import ToolResult
 
 from .conftest import API_KEY
@@ -142,7 +140,7 @@ async def test_an_ide_tool_that_fails_is_an_error_for_the_model(
     assert "no page open" in str(server.requests[-1]["messages"][-1])
 
 
-async def test_without_the_ides_tools_the_engines_browser_stays(
+async def test_without_the_ides_tools_the_model_has_no_browser_tools(
     mock_server: Any, project: Path
 ) -> None:
     server = mock_server([{"content": "hi"}])
@@ -155,7 +153,7 @@ async def test_without_the_ides_tools_the_engines_browser_stays(
         await agent.close()
     names = tool_names(server.requests[0])
     assert not [n for n in names if n.startswith("ide_")]
-    assert "Browser" in names  # Playwright is installed with cmcoder
+    assert "Browser" not in names  # cmcoder has no browser of its own: Playwright is an MCP server
 
 
 def test_names_schemas_and_the_read_only_guess() -> None:
@@ -190,7 +188,7 @@ async def test_a_tool_set_runs_its_tools_through_the_call_it_was_given() -> None
     assert stand_in.name == "ide_open_browser_page" and not stand_in.read_only
 
 
-async def test_webtest_uses_the_ides_browser_when_it_has_one(project: Path) -> None:
+async def test_the_agent_knows_the_names_of_the_ides_tools(project: Path) -> None:
     async def call_ide(name: str, data: dict[str, Any]) -> ToolResult:  # pragma: no cover
         return ToolResult("")
 
@@ -201,9 +199,5 @@ async def test_webtest_uses_the_ides_browser_when_it_has_one(project: Path) -> N
     )
     try:
         assert agent.ide_tool_names == ["ide_open_browser_page", "ide_screenshot_page"]
-        sent = webtest_command(Session(agent), "http://localhost:3000 the login").send
-        assert sent is not None
-        assert "browser tools (ide_open_browser_page, ide_screenshot_page" in sent
-        assert "Browser tool" not in sent and "http://localhost:3000" in sent
     finally:
         await agent.close()

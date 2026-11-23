@@ -572,41 +572,10 @@ for (const flavour of FLAVOURS) {
     await page.close();
   });
 
-  test(`${flavour}: an empty conversation offers ready-made commands once cmcoder lists them`, async () => {
-    const { page, ev, send, sent } = await panel(flavour);
-    const command = (name: string) => ({ name, description: "", argument_hint: "", origin: "built-in" as const });
-    const asked = () => sent().then((m) => m.filter((x) => x.kind === "listCommands").length);
-    assert.equal(await asked(), 1, "the chat asks for the commands once, when cmcoder says hello");
-    assert.equal(await page.isVisible(".starters"), false, "nothing to offer before they are listed");
-    await ev({ type: "command_list", commands: [command("help"), command("model")] });
-    assert.equal(await page.isVisible(".starters"), false, "an older cmcoder without the command: no chips");
-    await ev({ type: "command_list", commands: [command("help"), command("playwright")] });
-    assert.deepEqual(await page.locator(".starters .starter").allTextContents(), ["What's next?", "Set up", "Plan the tests", "Do it all"]);
-    assert.match((await page.textContent(".starters-heading")) ?? "", /Playwright/);
-    // Most chips put the command in the input for the user to finish; they send nothing.
-    await page.click(".starter >> text=Plan the tests");
-    assert.equal(await page.inputValue("textarea"), "/playwright plan");
-    await page.click(".starter >> text=Set up");
-    assert.equal(await page.inputValue("textarea"), "/playwright setup http://localhost:");
-    assert.equal((await sent()).filter((x) => x.kind === "send").length, 0);
-    await page.fill("textarea", "");
-    // "What's next?" needs nothing from the user: it is sent, and the starters make room.
-    await page.click(".starter >> text=What's next?");
-    assert.deepEqual((await sent()).filter((x) => x.kind === "send"), [{ kind: "send", text: "/playwright", includeContext: false }]);
-    assert.equal(await page.isVisible(".starters"), false);
-    await ev(result);
-    assert.equal(await page.isVisible(".starters"), false, "the conversation isn't empty any more");
-    // A new conversation is empty again.
-    await send({ kind: "reset" });
-    assert.equal(await page.isVisible(".starters"), true);
-    assert.equal(await page.inputValue("textarea"), "");
-    await page.close();
-  });
-
   const AGENTS = [
-    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "", group: "" },
-    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`.", group: "" },
-    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "", group: "" },
+    { name: "planner", description: "Plans tests for a web app.", origin: "project" as const, usable: true, hint: "" },
+    { name: "healer", description: "", origin: "project" as const, usable: false, hint: "This project's agents are used only once the project is trusted: run `cmcoder trust`." },
+    { name: "explore", description: "Read-only search.", origin: "built-in" as const, usable: true, hint: "" },
   ];
   const HOST = "stopTool sessionRules agents";
 
@@ -637,7 +606,7 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.locator('.agent option[value="planner"]').getAttribute("title"), "Plans tests for a web app.");
     await page.selectOption(".agent", "planner");
     assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: "planner" });
-    await ev({ type: "agent_changed", agent: "planner", reason: "" });
+    await ev({ type: "agent_changed", agent: "planner" });
     await ev({ type: "agent_list", agents: AGENTS, current: "planner" });
     assert.equal(await page.locator(".agent").inputValue(), "planner");
     assert.match((await page.textContent(".note.info")) ?? "", /Now talking to the planner agent/);
@@ -645,39 +614,13 @@ for (const flavour of FLAVOURS) {
     assert.equal(await page.getAttribute(".agent", "title"), "Plans tests for a web app.");
     await page.selectOption(".agent", "");
     assert.deepEqual((await sent()).at(-1), { kind: "setAgent", agent: null });
-    await ev({ type: "agent_changed", agent: null, reason: "" });
+    await ev({ type: "agent_changed", agent: null });
     assert.equal(await page.locator(".agent").inputValue(), "");
     assert.match((await page.locator(".note.info").last().textContent()) ?? "", /Back to cmcoder's default agent/);
     assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask cmcoder…/);
     await page.close();
   });
 
-  test(`${flavour}: the Playwright agents get their own heading and a step moves the dropdown there and back`, async () => {
-    const { page, ev } = await panel(flavour, undefined, true, HOST);
-    const roles = [
-      { name: "playwright-planner", description: "Plans the tests.", origin: "built-in" as const, usable: true, hint: "", group: "Playwright" },
-      { name: "playwright-healer", description: "Fixes tests.", origin: "built-in" as const, usable: true, hint: "", group: "Playwright" },
-    ];
-    const all = [...AGENTS, ...roles];
-    await ev({ type: "agent_list", agents: all, current: "explore" });
-    assert.deepEqual(await page.locator(".agent optgroup").evaluateAll((g) => g.map((x) => (x as HTMLOptGroupElement).label)), ["This project", "Built in", "Playwright"]);
-    assert.deepEqual(await page.locator('.agent optgroup[label="Playwright"] option').allTextContents(), ["playwright-planner", "playwright-healer"]);
-    assert.equal(await page.locator(".agent").inputValue(), "explore");
-    const notes = () => page.locator(".note.info").allTextContents();
-    const before = (await notes()).length;
-    // `/playwright plan` runs as the planner: the list shows it, with a note that says why.
-    await ev({ type: "agent_changed", agent: "playwright-planner", reason: "step" });
-    await ev({ type: "agent_list", agents: all, current: "playwright-planner" });
-    assert.equal(await page.locator(".agent").inputValue(), "playwright-planner");
-    assert.match((await notes()).at(-1) ?? "", /This step runs as the playwright-planner agent/);
-    // Afterwards the agent from before comes back, and that says nothing: it was not the user's doing.
-    await ev({ type: "agent_changed", agent: "explore", reason: "restore" });
-    await ev({ type: "agent_list", agents: all, current: "explore" });
-    assert.equal(await page.locator(".agent").inputValue(), "explore");
-    assert.equal((await notes()).length, before + 1, "only the step announced itself");
-    assert.match((await page.getAttribute("textarea", "placeholder")) ?? "", /^Ask explore…/);
-    await page.close();
-  });
 
   test(`${flavour}: the agent can't be changed during a turn, and a refused choice snaps back`, async () => {
     const { page, ev } = await panel(flavour, undefined, true, HOST);

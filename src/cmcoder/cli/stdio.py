@@ -96,11 +96,11 @@ IMAGE_DATA_URL = re.compile(
 # /mode) are the panel's own buttons.
 PANEL_COMMANDS = {
     "help", "compact", "rewind", "model", "turns", "cost", "todos", "context", "mcp", "agents",
-    "critic", "index", "memory", "pick", "retry", "revert", "verify", "audit", "jobs", "settings",
+    "critic", "index", "memory", "pick", "retry", "revert", "keep", "verify", "audit", "jobs", "settings",
 }  # fmt: skip
 # Commands that normally send a prompt to the model; when they only have a message
 # (their usage, "it is off", "no changes"), the panel just shows it.
-PROMPT_COMMANDS = ("team", "init", "review", "commit", "pr", "webtest", "playwright")
+PROMPT_COMMANDS = ("team", "init", "review", "commit", "pr")
 _READ = ReadTool()
 
 
@@ -259,7 +259,7 @@ class StdioServer:
         assert session is not None
         if isinstance(message, msg.UserMessage):
             if self.busy:
-                if message.text.strip().startswith("/jobs stop"):
+                if message.text.strip().startswith(("/jobs stop", "/keep ")):
                     # Ending a background job takes nothing from the turn that is running, so
                     # the chat's Stop button on a job works at once (no new message for a host).
                     result = await run_command(session, message.text.strip())
@@ -433,26 +433,6 @@ class StdioServer:
         self.emit(ev.ModelChanged(model=b.name, context_window=b.profile.context_window))
         self.emit(self._agent_list())
 
-    async def _switch_for_step(self, name: str) -> bool:
-        """A command's request runs as this agent (`/playwright plan` as the planner): the list in
-        the chat shows it. False if it can't (then the request runs as the agent in use)."""
-        try:
-            await self._rebuild(agent=name)
-        except (SettingsError, ValueError):
-            return False
-        self.emit(ev.AgentChanged(agent=self.agent.persona, reason="step"))
-        self.emit(self._agent_list())
-        return True
-
-    async def _switch_back(self, name: str | None) -> None:
-        """The agent from before the step is back (quietly: the chat only moves its list)."""
-        try:
-            await self._rebuild(agent=name)
-        except (SettingsError, ValueError):
-            await self._rebuild(agent=None)
-        self.emit(ev.AgentChanged(agent=self.agent.persona, reason="restore"))
-        self.emit(self._agent_list())
-
     async def _rebuild(self, model: str | None = None, **more: Any) -> None:
         """A new graph (another model, IDE tools, MCP tools, a code index) on the
         same checkpointer and thread."""
@@ -590,31 +570,16 @@ class StdioServer:
             else:
                 await self._start_mcp()
                 allow: list[str] = []
-                step_agent: str | None = None
                 if name:  # maybe a custom command or an MCP prompt; else a plain prompt
                     result = await run_command(session, text)
                     if result.send is not None:
-                        text, allow, step_agent = result.send, result.allow, result.agent
+                        text, allow = result.send, result.allow
                     elif name in PROMPT_COMMANDS:  # its usage or "it is off": no model turn
                         self.emit(ev.AssistantMessage(text="\n".join(result.lines)))
                         self.emit(self._result("success", "", False, started))
                         return
-                before = self.agent.persona
-                switched = False
-                if step_agent is not None and step_agent != before:
-                    switched = await self._switch_for_step(step_agent)
-                held: ev.Result | None = None
-                try:
-                    async for event in session.run(text, note=note, images=images, allow=allow):
-                        if isinstance(event, ev.Result) and switched:
-                            held = event  # after the agent is back: the chat is free again then
-                        else:
-                            self.emit(event)
-                finally:
-                    if switched:
-                        await asyncio.shield(self._switch_back(before))
-                if held is not None:
-                    self.emit(held)
+                async for event in session.run(text, note=note, images=images, allow=allow):
+                    self.emit(event)
         except asyncio.CancelledError:
             self.emit(self._result("interrupted", "Interrupted by the user.", False, started))
             raise
@@ -956,7 +921,7 @@ class StdioServer:
 
 def command_list() -> list[ev.CommandInfo]:
     """The built-in commands an IDE's chat offers when "/" is typed: the ones answered here and the
-    ones that send a request to the model (/webtest, /review, /init, /team, /playwright)."""
+    ones that send a request to the model (/review, /init, /team, /commit, /pr)."""
     return [
         ev.CommandInfo(name=n, description=d, argument_hint=h, origin="built-in")
         for n, h, d in BUILT_IN

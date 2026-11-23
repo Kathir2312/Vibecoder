@@ -103,7 +103,8 @@ def main(
         typer.Option(
             "--agent",
             help="Talk to this agent for the whole conversation: a definition from "
-            ".cmcoder/agents (a trusted project's) or ~/.cmcoder/agents. /agents lists them.",
+            ".claude/agents or .cmcoder/agents (a trusted project's), or ~/.claude/agents or "
+            "~/.cmcoder/agents. /agents lists them.",
         ),
     ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", help="With -p: show tool calls.")] = False,
@@ -373,7 +374,9 @@ def trust(
         return
     preview = project_settings_preview(root)
     if agents := untrusted_project_agents(root):
-        preview.append(f".cmcoder/agents: subagents ({', '.join(agents)}) for the Task tool")
+        preview.append(
+            f".claude/agents or .cmcoder/agents: subagents ({', '.join(agents)}) for the Task tool"
+        )
     for c in load_commands(root).values():
         if c.origin == "project" and c.allowed_tools:
             preview.append(

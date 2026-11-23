@@ -7,10 +7,14 @@ can't start subagents itself.
 
 Built in: `general-purpose` (every tool, the main model) and `explore`
 (read-only search: Read, Glob, Grep; `subagentModel`, else `smallFastModel`).
-Your own are Markdown files in Claude Code's format, as in cmcoderagent:
+Your own are Markdown files in Claude Code's format, and cmcoder reads Claude Code's folders as well
+as its own (so `npx playwright init-agents --loop=claude` needs no copying). On a name clash the
+later one wins:
 
-    ~/.cmcoder/agents/reviewer.md     (yours, every project)
+    .claude/agents/reviewer.md        (this project's, Claude Code's folder: only when it's trusted)
     .cmcoder/agents/reviewer.md       (this project's: only when it's trusted)
+    ~/.claude/agents/reviewer.md      (yours, every project; `CLAUDE_CONFIG_DIR` moves it)
+    ~/.cmcoder/agents/reviewer.md     (yours, every project)
 
     ---
     name: reviewer
@@ -19,6 +23,11 @@ Your own are Markdown files in Claude Code's format, as in cmcoderagent:
     model: small
     ---
     You are a careful code reviewer...
+
+`model:` takes `inherit` (the main model, also when absent), `small`, `subagent`, a model name, or
+one of Claude Code's own names: `sonnet` and `opus` mean the main model and `haiku` the small one
+(this gateway doesn't serve those names, so sending them on would fail). Keys cmcoder has no use
+for (`color:`) are ignored.
 
 LANGGRAPH / LANGCHAIN CONCEPTS IN THIS FILE
 
@@ -65,7 +74,7 @@ from langgraph.errors import GraphInterrupt
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, Field
 
-from ..config.settings import Settings, config_dir, find_project_root
+from ..config.settings import Settings, claude_dir, config_dir, find_project_root
 from ..core.commands import MAX_FILE_CHARS, parse_file, split_tools
 from ..core.hooks import HookRunner
 from ..core.permissions import PermissionPolicy
@@ -76,7 +85,6 @@ from ..protocol import events as ev
 from ..sensitive import safe_project_file
 from ..tools.adapter import as_langchain_tools
 from ..tools.base import Tool, ToolContext, output_budget_chars
-from ..tools.browser import browser_session
 from .limits import recursion_limit_for
 
 if TYPE_CHECKING:
@@ -87,12 +95,13 @@ NOT_FOR_SUBAGENTS = {
     "Task",
     "Jobs",
     "Team",
-    "PlaywrightTests",
     "write_todos",
     "ExitPlanMode",
 }  # no nesting; the todos and the plan the user approves are the main agent's
 CRITIC_NAME = "critic"  # reviews answers (middleware/critic.py); not offered to the Task tool
 MAX_REPORT_CHARS = 30_000
+# Claude Code's model names in an agent file, as cmcoder reads them: None is the main model.
+CLAUDE_MODEL_NAMES: dict[str, str | None] = {"sonnet": None, "opus": None, "haiku": "small"}
 
 GENERAL_PURPOSE_PROMPT = """\
 You are a subagent of cmcoder, a coding assistant. You were given one task by
@@ -124,6 +133,14 @@ class AgentDefinition:
     tools: list[str] | None = None  # None: every tool
     model: str | None = None  # None / "inherit": the main model
     path: Path | None = None
+
+    @property
+    def folder(self) -> str:
+        """Where a file-defined agent came from, short: `.claude/agents` or `~/.cmcoder/agents`."""
+        if self.path is None:
+            return self.origin
+        label = f"{self.path.parent.parent.name}/{self.path.parent.name}"
+        return f"~/{label}" if self.origin == "user" else label
 
 
 BUILT_IN_AGENTS = {
@@ -174,27 +191,42 @@ def _load_dir(
     return found
 
 
+def project_agent_folders(project_root: Path) -> list[Path]:
+    """A project's agent folders, the one that loses a name clash first: Claude Code's, then ours."""
+    return [project_root / ".claude" / "agents", project_root / ".cmcoder" / "agents"]
+
+
+def user_agent_folders() -> list[Path]:
+    """Your agent folders, the one that loses a name clash first: Claude Code's, then ours."""
+    return [claude_dir() / "agents", config_dir() / "agents"]
+
+
 def load_agents(project_root: Path, project_trusted: bool) -> dict[str, AgentDefinition]:
     """Built-in agents, a trusted project's, then yours (yours win on a name clash)."""
-    from .playwright_roles import ROLES  # not at the top: that module imports this one
-
     agents = dict(BUILT_IN_AGENTS)
-    agents.update(ROLES)  # built in, but a file of the same name (yours, a trusted project's) wins
     if project_trusted:
-        agents.update(_load_dir(project_root / ".cmcoder" / "agents", "project", project_root))
-    agents.update(_load_dir(config_dir() / "agents", "user"))
+        for folder in project_agent_folders(project_root):
+            agents.update(_load_dir(folder, "project", project_root))
+    for folder in user_agent_folders():
+        agents.update(_load_dir(folder, "user"))
     return agents
 
 
 def untrusted_project_agents(project_root: Path) -> list[str]:
     """The project's own agent definitions, which are used only once it's trusted."""
-    return sorted(_load_dir(project_root / ".cmcoder" / "agents", "project", project_root))
+    names: set[str] = set()
+    for folder in project_agent_folders(project_root):
+        names.update(_load_dir(folder, "project", project_root))
+    return sorted(names)
 
 
 def model_ref(settings: Settings, definition: AgentDefinition) -> str | None:
     """The model an agent definition asks for ("provider:model"), or None: the main model
-    (`model:` absent or `inherit`; `small` and `subagent` are the settings' own picks)."""
+    (`model:` absent or `inherit`; `small` and `subagent` are the settings' own picks, and
+    Claude Code's `sonnet`, `opus` and `haiku` mean the main model, the main model and `small`)."""
     ref = definition.model
+    if ref and ref.strip().lower() in CLAUDE_MODEL_NAMES:
+        ref = CLAUDE_MODEL_NAMES[ref.strip().lower()] or "inherit"
     if ref in (None, "", "inherit"):
         return None
     if ref == "small":
@@ -239,15 +271,8 @@ def agent_infos(root: Path, project_trusted: bool) -> list[ev.AgentInfo]:
     built-in ones. The critic is an agent of its own and is left out."""
     found = load_agents(root, project_trusted)
     found.pop(CRITIC_NAME, None)
-    from .playwright_roles import ROLE_NAMES
-
     infos = [
-        ev.AgentInfo(
-            name=d.name,
-            description=short_description(d.description),
-            origin=d.origin,
-            group="Playwright" if d.name in ROLE_NAMES else "",
-        )
+        ev.AgentInfo(name=d.name, description=short_description(d.description), origin=d.origin)
         for d in found.values()
     ]
     if not project_trusted:
@@ -490,14 +515,7 @@ class TaskInput(BaseModel):
 
 
 def task_description(rt: SubagentRuntime) -> str:
-    from .playwright_roles import ROLE_NAMES
-
-    # The Playwright roles are for /playwright and the Agent list, not for the model to pick here.
-    agents = "\n".join(
-        f"- {d.name}: {d.description}"
-        for d in rt.definitions().values()
-        if d.name not in ROLE_NAMES
-    )
+    agents = "\n".join(f"- {d.name}: {d.description}" for d in rt.definitions().values())
     text = (
         "Hand a self-contained task to a subagent with its own fresh conversation; it "
         "works on its own and returns one report. Use it for broad searches and research "
@@ -625,7 +643,6 @@ async def run_agent(
                 cwd=rt.opts.cwd, project_root=rt.root, sandbox=rt.sandbox, code_index=rt.code_index
             )
             ctx.max_output_chars = output_budget_chars(bundle.profile.context_window)
-            ctx.browser = browser_session(rt.settings, rt.root)  # its own, if it has the tool
             rt.contexts[call_id] = ctx
         if run.stop_requested:  # stopped while it waited for a slot: never starts
             await _release(rt, call_id)

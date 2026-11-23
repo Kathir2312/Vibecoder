@@ -219,3 +219,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 evals/.runs/
+
+# Playwright's MCP servers write snapshots and screenshots here
+.playwright-mcp/

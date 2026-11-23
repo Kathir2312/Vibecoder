@@ -150,7 +150,6 @@ app.innerHTML = `
   </div>
   <section class="changes-view" hidden tabindex="-1" aria-label="Changes of a request"></section>
   <section class="settings-view" hidden tabindex="-1" aria-label="Settings"></section>
-  <section class="starters" hidden aria-label="Ways to start"></section>
   <div class="progress" hidden aria-hidden="true"><span class="spark">✻</span><span class="verb"></span><span class="detail"></span><span class="meta"></span></div>
   <div class="status" hidden></div>
   <footer role="group" aria-label="Message">
@@ -213,7 +212,6 @@ const statusLine = $<HTMLElement>(".status");
 const progressLine = $<HTMLElement>(".progress");
 const queuedBox = $<HTMLElement>(".queued");
 const toEndButton = $<HTMLButtonElement>(".to-end");
-const startersBar = $<HTMLElement>(".starters");
 // The dock's panels, in the order they are shown (their content: further down).
 const dock = new Dock($<HTMLElement>(".dock"));
 const tasksDock = dock.add("tasks", "Tasks", {
@@ -290,16 +288,11 @@ function renderAgentSelect(): void {
   agentSelect.hidden = !show;
   if (!show) return;
   agentSelect.replaceChildren(new Option(`${PRODUCT} (default)`, ""));
-  // The origins' groups first (the project's, yours, built in); an agent with a `group` of its own
-  // ("Playwright") is listed under that heading instead, after them.
-  const own = Array.from(new Set(agents.filter((a) => a.group).map((a) => a.group)));
-  const sections: [string, AgentInfo[]][] = [
-    ...AGENT_GROUPS.map(([origin, label]): [string, AgentInfo[]] => [
-      label,
-      agents.filter((a) => !a.group && a.origin === origin),
-    ]),
-    ...own.map((g): [string, AgentInfo[]] => [g, agents.filter((a) => a.group === g)]),
-  ];
+  // Grouped by where they come from: the project's, yours, built in.
+  const sections = AGENT_GROUPS.map(([origin, label]): [string, AgentInfo[]] => [
+    label,
+    agents.filter((a) => a.origin === origin),
+  ]);
   for (const [label, group] of sections) {
     if (!group.length) continue;
     const box = document.createElement("optgroup");
@@ -367,7 +360,6 @@ pickButton.onclick = () => {
 function setBusy(value: boolean): void {
   const was = busy;
   busy = value;
-  updateStarters();
   updatePick();
   sendButton.hidden = value;
   stopButton.hidden = !value;
@@ -650,7 +642,6 @@ toEndButton.onclick = () => toEnd(true);
 // follows new output.)
 new MutationObserver(() => {
   queueToEnd();
-  updateStarters();
 }).observe(log, { childList: true, subtree: true, characterData: true });
 if (typeof ResizeObserver === "function") new ResizeObserver(queueToEnd).observe(log);
 
@@ -675,6 +666,10 @@ let reviewing: number | undefined;
 
 const changesHost: ChangesHost = {
   review: (turn) => openReview(turn),
+  keep: (turn, file) => {
+    // A mark and nothing more: it works while a request runs, so the panel does not wait for it.
+    post({ kind: "send", text: `/keep ${turn} ${file === null ? "all" : file}`, includeContext: false });
+  },
   revert: (turn, file, hunk) => {
     if (busy) return;
     setBusy(true);
@@ -1087,7 +1082,7 @@ function onEvent(ev: AgentEvent): void {
       critiqueBox.disabled = false;
       if (!commandsAsked) {
         commandsAsked = true;
-        post({ kind: "listCommands" }); // the starters need to know the commands before "/" is typed
+        post({ kind: "listCommands" }); // the Pick element button needs the commands before "/" is typed
       }
       break;
     case "critique_changed":
@@ -1238,13 +1233,10 @@ function onEvent(ev: AgentEvent): void {
     case "agent_changed":
       currentAgent = ev.agent;
       renderAgentSelect();
-      if (ev.reason === "restore") break; // the list moves back; nothing to tell
       note(
-        ev.reason === "step"
-          ? `◦ This step runs as the ${ev.agent} agent: its own instructions and tools.`
-          : ev.agent
-            ? `◦ Now talking to the ${ev.agent} agent: its instructions, tools and model, for this conversation.`
-            : `◦ Back to ${PRODUCT}'s default agent.`,
+        ev.agent
+          ? `◦ Now talking to the ${ev.agent} agent: its instructions, tools and model, for this conversation.`
+          : `◦ Back to ${PRODUCT}'s default agent.`,
         "info",
       );
       break;
@@ -1285,7 +1277,6 @@ function onEvent(ev: AgentEvent): void {
     case "command_list":
       commands = ev.commands;
       updateCommands();
-      updateStarters();
       updatePick();
       break;
     case "model_changed":
@@ -2039,86 +2030,7 @@ function renderSessions(sessions: { id: string; title: string; updated: number; 
   sessionsPanel.hidden = false;
 }
 
-// --- starters: ready-made commands on an empty conversation -----------------------------------
-//
-// A new user doesn't know the slash commands, so an empty conversation offers the ones that walk
-// through a job. A click puts the command in the input (the user adds what is missing, such as the
-// app's address, and presses Enter), or sends it when it needs nothing ("What's next?").
-// Shown only when this cmcoder lists the command (an older one doesn't, so nothing dangles).
-
-interface Starter {
-  command: string; // the slash command the chip belongs to
-  label: string;
-  title: string;
-  text: string; // what goes in the input
-  send?: boolean; // and is sent at once
-}
-
-const STARTERS: { heading: string; items: Starter[] }[] = [
-  {
-    heading: "Test your web app with Playwright:",
-    items: [
-      {
-        command: "playwright",
-        label: "What's next?",
-        title: "Shows where your Playwright tests stand and the command to type next",
-        text: "/playwright",
-        send: true,
-      },
-      {
-        command: "playwright",
-        label: "Set up",
-        title: "Creates the Playwright folder for your app: add its address, e.g. http://localhost:5080",
-        text: "/playwright setup http://localhost:",
-      },
-      {
-        command: "playwright",
-        label: "Plan the tests",
-        title: "Browses the app and writes a test plan, one area at a time",
-        text: "/playwright plan",
-      },
-      {
-        command: "playwright",
-        label: "Do it all",
-        title: "Plans, writes, runs and fixes the tests for every area, in one go",
-        text: "/playwright all",
-      },
-    ],
-  },
-];
-let commandsAsked = false;
-
-/** Show the starters while the conversation is empty and this cmcoder knows their commands. */
-function updateStarters(): void {
-  const known = new Set(commands.map((c) => c.name));
-  const groups = STARTERS.map((g) => ({ ...g, items: g.items.filter((i) => known.has(i.command)) })).filter(
-    (g) => g.items.length > 0,
-  );
-  const show = groups.length > 0 && ready && !busy && log.childElementCount === 0;
-  startersBar.hidden = !show;
-  if (!show) return;
-  startersBar.replaceChildren(
-    ...groups.flatMap((g) => [
-      el("span", "starters-heading", g.heading),
-      ...g.items.map((i) => {
-        const chip = el("button", "secondary starter", i.label) as HTMLButtonElement;
-        chip.type = "button";
-        chip.title = i.title;
-        chip.onclick = () => {
-          if (i.send) {
-            setInput(i.text);
-            send();
-          } else {
-            setInput(i.text);
-            input.focus();
-            input.setSelectionRange(input.value.length, input.value.length);
-          }
-        };
-        return chip;
-      }),
-    ]),
-  );
-}
+let commandsAsked = false; // the list of commands is asked for once, when cmcoder says hello
 
 // --- slash-command completion ---------------------------------------------------
 

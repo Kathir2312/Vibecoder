@@ -7,9 +7,9 @@ act on it), and the element's selector, text and HTML ride along with the user's
 note to the model, like the editor's open file does.
 
 The page side is one small script (`PICK_START`) put on the page, and two others that read and
-remove it. They run the same way in cmcoder's own browser (Playwright, `BrowserSession.pick`) and
-in VS Code's Integrated Browser (through its "run Playwright code" tool, `pick_in_ide`), which is
-why the answer comes back as base64 text: it survives however a tool wraps its output.
+remove it. They run in VS Code's Integrated Browser, through its "run Playwright code" tool
+(`pick_in_ide`), which is why the answer comes back as base64 text: it survives however a tool
+wraps its output. cmcoder has no browser of its own to pick in.
 
 LANGCHAIN / LANGGRAPH: nothing here has a LangChain or LangGraph building block. It is a script for
 a page, text parsing and a note (the message itself is handled by `Session`, where the note joins
@@ -241,14 +241,6 @@ def parse_answer(text: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def decode_answer(raw: Any) -> dict[str, Any]:
-    """The same, from a script's own return value (cmcoder's browser): base64 without a marker."""
-    data = parse_answer(MARKER + raw) if isinstance(raw, str) else None
-    if data is None:
-        raise PickError("The page didn't answer the picker.")
-    return data
-
-
 def element_from(answer: dict[str, Any]) -> PickedElement:
     state = answer.get("state")
     if state == "done":
@@ -307,14 +299,12 @@ async def pick_in_ide(ide: IdeToolSet, timeout: float = PICK_TIMEOUT) -> PickedE
     tool = code_tool(ide)
     if tool is None:
         raise PickError(
-            'This VS Code has no "run Playwright code" browser tool, which picking needs. '
-            "`/pick <address>` picks in cmcoder's own browser window instead."
+            'This VS Code has no "run Playwright code" browser tool, which picking needs.'
         )
     name, prop, other = tool
     if other:
         raise PickError(
-            f"VS Code's {name} tool also needs {', '.join(other)}, which cmcoder can't give it. "
-            "`/pick <address>` picks in cmcoder's own browser window instead."
+            f"VS Code's {name} tool also needs {', '.join(other)}, which cmcoder can't give it."
         )
 
     async def run(script: str, wait: bool = False) -> dict[str, Any]:

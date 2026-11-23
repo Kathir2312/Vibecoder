@@ -41,6 +41,11 @@ BUILT_IN: list[tuple[str, str, str]] = [
         "Take back changes the chat showed for review (the numbers are in its list)",
     ),
     (
+        "keep",
+        "<request> all|<file>",
+        "Approve changes the chat showed for review (numbers as in /revert)",
+    ),
+    (
         "retry",
         "",
         "Run the step that failed again (a gateway that was down), without sending your message twice",
@@ -70,16 +75,10 @@ BUILT_IN: list[tuple[str, str, str]] = [
     ("review", "[staged|branch|path]", "Review the changes for bugs (default: uncommitted)"),
     ("commit", "[what it is for]", "Commit the uncommitted changes, with a message from the diff"),
     ("pr", "[base branch]", "Prepare a pull request for this branch: title, body, push"),
-    ("webtest", "[url] [what to test]", "Start the web app and test it in a real browser"),
     (
         "pick",
-        "[url|clear]",
-        "Point at an element on the page in the browser; it goes with your next message",
-    ),
-    (
-        "playwright",
-        "[setup|map|plan|generate|run|heal|all|agents] [area]",
-        "Playwright tests for the web app: set up, plan, write, run, heal",
+        "[clear|drop <n>]",
+        "Point at an element on the page in VS Code's browser; it goes with your next message",
     ),
     ("init", "[focus]", "Learn this project and save notes about it for future sessions"),
     ("memory", "[forget <n>]", "Notes cmcoder keeps between sessions; delete one"),
@@ -106,9 +105,6 @@ class CommandResult:
     # these allow rules for that turn only (the command's `allowed-tools`).
     send: str | None = None
     allow: list[str] = field(default_factory=list)
-    # Run that request as this agent (a step of /playwright): the front end switches to it for the
-    # request and back afterwards.
-    agent: str | None = None
     # `/retry`: the front end runs `Session.retry()` and shows it like a turn.
     retry: bool = False
     # Events to send besides the lines (`/revert`: the review as it is now; `/pick`: the chips).
@@ -257,39 +253,6 @@ def init_command(session: Session, focus: str) -> CommandResult:
     return CommandResult(send=init_prompt(titles, focus))
 
 
-def webtest_command(session: Session, arg: str) -> CommandResult:
-    """/webtest: the model starts the app and tests it with the Browser tool."""
-    from ..webtest import webtest_prompt
-
-    a = session.agent
-    if a.ctx.browser is None and not a.ide_tool_names:
-        return CommandResult(
-            [
-                "The Browser tool is off here: it is switched off in settings (browser.enabled), "
-                "or this is a slim build without Playwright."
-            ]
-        )
-    return CommandResult(send=webtest_prompt(a.ctx.project_root, arg, a.ide_tool_names))
-
-
-def playwright_command(session: Session, arg: str) -> CommandResult:
-    """/playwright: set up, plan, write, run and heal Playwright tests (playwright_tests/)."""
-    from ..playwright_tests.command import command
-
-    a = session.agent
-    settings = a.spec.get("settings")
-    if settings is None:
-        return CommandResult(["The /playwright commands need the settings; none here."])
-    stage = command(
-        arg,
-        root=a.ctx.project_root,
-        settings=settings,
-        ide_tools=a.ide_tool_names,
-        trusted=bool(settings.project_trusted),
-    )
-    return CommandResult(stage.lines, send=stage.prompt, allow=stage.allow, agent=stage.agent)
-
-
 async def review_command(session: Session, target: str) -> CommandResult:
     """/review: collect the change, then the model reviews it (read-only)."""
     from ..review import ReviewError, collect, review_prompt
@@ -334,6 +297,27 @@ def revert_command(session: Session, arg: str) -> CommandResult:
     except (ValueError, IndexError):
         return CommandResult([usage])
     lines, review = session.reviews.revert(turn, file, hunk)
+    if session.agent.audit is not None and review is not None:
+        session.agent.audit.reviewed(session.session_id, turn, "reject", lines)
+    return CommandResult(lines, events=[review] if review is not None else [], quiet=True)
+
+
+def keep_command(session: Session, arg: str) -> CommandResult:
+    """`/keep <request> all | <file>`: approve what a request changed (a mark, nothing is written).
+
+    The numbers are the ones in the review the chat shows, as for `/revert`."""
+    usage = "Usage: /keep <request> all | <file>  (the numbers are in the changes list)"
+    parts = arg.split()
+    try:
+        turn = int(parts[0])
+        file = None if parts[1] == "all" else int(parts[1])
+        if len(parts) != 2:
+            raise ValueError
+    except (ValueError, IndexError):
+        return CommandResult([usage])
+    lines, review = session.reviews.keep(turn, file)
+    if session.agent.audit is not None and review is not None:
+        session.agent.audit.reviewed(session.session_id, turn, "keep", lines)
     return CommandResult(lines, events=[review] if review is not None else [], quiet=True)
 
 
@@ -355,6 +339,8 @@ async def run_command(
         return CommandResult(retry=True)
     if name == "revert":
         return revert_command(session, arg)
+    if name == "keep":
+        return keep_command(session, arg)
     if name == "clear":
         await session.clear()
         return CommandResult(["Started a new conversation."])
@@ -440,7 +426,10 @@ async def run_command(
         rt = a.subagents
         if rt is None:
             return CommandResult(["No subagents."])
-        lines = [f"  {d.name} ({d.origin}): {d.description}" for d in rt.definitions().values()]
+        lines = [
+            f"  {d.name} ({d.origin + ', ' + d.folder if d.path else d.origin}): {d.description}"
+            for d in rt.definitions().values()
+        ]
         for r in rt.runs.values():
             lines.append(
                 f"  #{r.number} {r.agent_type}: {r.description} · {r.state} · "
@@ -480,10 +469,6 @@ async def run_command(
         return await review_command(session, arg)
     if name in ("commit", "pr"):
         return await git_command(session, name, arg)
-    if name == "webtest":
-        return webtest_command(session, arg)
-    if name == "playwright":
-        return playwright_command(session, arg)
     if name == "pick":
         from .attachments import changed
         from .pick import pick_lines

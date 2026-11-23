@@ -49,6 +49,7 @@ class _File:
     reverted_blocks: set[int] = field(default_factory=set)
     on_disk: bytes = b""  # what this review expects to find now
     deleted: bool = False  # a file the agent created, taken back by deleting it
+    kept: bool = False  # the user approved it (`keep`): only a mark, the file is as it is
     note: str = ""  # why the last revert was refused, if it was
 
     def __post_init__(self) -> None:
@@ -212,6 +213,7 @@ class ChangeReviews:
                     binary=diff is None,
                     truncated=diff is not None and bool(diff.blocks) and not hunks,
                     reverted=back,
+                    kept=f.kept and not back,
                     note=f.note,
                 )
             )
@@ -240,9 +242,31 @@ class ChangeReviews:
             said.append(self._revert_file(turn, n, hunk if file is not None else None))
         return said, self.event(turn)
 
+    def keep(self, turn: int, file: int | None) -> tuple[list[str], ev.TurnChanges | None]:
+        """Approve a file, or every file of the request (`file` None) that is not already taken
+        back. Only a mark for the user and the audit log: the files are as they are."""
+        files = self._turns.get(turn)
+        if files is None:
+            return [f"There is nothing to review for request {turn} any more."], None
+        targets = range(len(files)) if file is None else [file]
+        said: list[str] = []
+        now = self.event(turn)
+        for n in targets:
+            if not 0 <= n < len(files):
+                return [f"Request {turn} has no file number {n}."], now
+            f = files[n]
+            if f.deleted or now.files[n].reverted:
+                if file is not None:
+                    said.append(f"{f.shown}: was taken back, so there is nothing to keep")
+                continue
+            f.kept = True
+            said.append(f"{f.shown}: kept")
+        return said or ["Everything in this request was already taken back."], self.event(turn)
+
     def _revert_file(self, turn: int, n: int, hunk: int | None) -> str:
         f = self._turns[turn][n]
         f.note = ""
+        f.kept = False  # taking something back is a new decision about this file
         if f.deleted:
             return f"{f.shown}: already deleted"
         try:
