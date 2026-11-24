@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from cmcoder.agents.team import TEAM_GRAPH
+from cmcoder.agents.team import TEAM_GRAPH, route_after_test
+from cmcoder.agents.team import TestReport as TeamTestReport
 from cmcoder.protocol import events as ev
 from cmcoder.runtime.commands import run_command
 
@@ -150,3 +151,113 @@ async def test_the_team_is_off_by_default(mock_server, project: Path) -> None:
         await session.agent.close()
     assert "Team" not in tool_names(server.requests[0])
     assert "Task" in tool_names(server.requests[0])
+
+
+def team_call(call_id: str, **args: object) -> dict:
+    return {"tool_calls": [{"id": call_id, "name": "Team", "arguments": args}]}
+
+
+def team_results(events: list) -> list[str]:
+    return [r.content for r in of_type(events, ev.ToolResult) if r.name == "Team"]
+
+
+def test_only_a_failing_test_sends_the_developer_back() -> None:
+    state = {"round": 1, "max_rounds": 3}
+    fail = TeamTestReport(verdict="fail", summary="x")
+    untested = TeamTestReport(verdict="untested", summary="no tests here")
+    assert route_after_test({**state, "test": fail}) == "developer"  # type: ignore[typeddict-item]
+    assert route_after_test({**state, "test": untested}) == "__end__"  # type: ignore[typeddict-item]
+    assert route_after_test({**state, "round": 3, "test": fail}) == "__end__"  # type: ignore[typeddict-item]
+
+
+async def test_a_tester_that_gives_no_verdict_ends_the_loop_untested(
+    mock_server, project: Path
+) -> None:
+    """The screenshot's loop: a tester out of steps was counted as a failed test, so the
+    developer was sent back to fix nothing, round after round."""
+    server = mock_server(
+        [
+            team_call("t1", feature="f", stories_file="docs/stories/f.md"),
+            {"content": "Did it."},  # developer
+            {"content": "I looked around and ran out of steps."},  # tester: no TestReport
+            {"content": "The change is untested."},  # the lead
+        ]
+    )
+    session = make_session(server.base_url, project, settings=TEAM_ON)
+    try:
+        events = await run_turn(session, "build f with the team")
+    finally:
+        await session.agent.close()
+    (result,) = team_results(events)
+    assert result.startswith("Team result: UNTESTED")
+    assert "ended without a verdict" in result and "do not start the team again" in result
+    assert len(server.requests) == 4  # no second developer round, no devops
+
+
+async def test_the_tester_can_say_it_has_nothing_to_run(mock_server, project: Path) -> None:
+    server = mock_server(
+        [
+            team_call("t1", feature="f", stories_file="docs/stories/f.md"),
+            {"content": "Did it."},
+            call("TestReport", verdict="untested", summary="There is no test project."),
+            {"content": "No tests exist."},
+        ]
+    )
+    session = make_session(server.base_url, project, settings=TEAM_ON)
+    try:
+        events = await run_turn(session, "build f with the team")
+    finally:
+        await session.agent.close()
+    (result,) = team_results(events)
+    assert result.startswith("Team result: UNTESTED")
+    assert "There is no test project." in result
+    assert len(server.requests) == 4
+
+
+async def test_the_team_runs_once_per_request_and_again_in_the_next(
+    mock_server, project: Path
+) -> None:
+    """The screenshot's three runs in one request (15 subagents, 177 minutes)."""
+    server = mock_server(
+        [
+            team_call("t1", feature="f", stories_file="docs/stories/f.md"),
+            {"content": "Did it."},  # developer
+            call("TestReport", verdict="fail", summary="Broken.", failures=[]),  # tester
+            team_call(
+                "t2", feature="f, once more", stories_file="docs/stories/f.md"
+            ),  # the lead tries again
+            {"content": "It still fails; here is what is left."},  # the lead, after the refusal
+            # the next request
+            team_call("t3", feature="f, as discussed", stories_file="docs/stories/f.md"),
+            {"content": "Fixed it."},  # developer
+            call("TestReport", verdict="pass", summary="All green."),  # tester
+            {"content": "Done."},  # the lead
+        ]
+    )
+    session = make_session(
+        server.base_url, project, settings={**TEAM_ON, "team": {"enabled": True, "maxRounds": 1}}
+    )
+    try:
+        first = await run_turn(session, "build f with the team")
+        refused_at = len(server.requests)
+        second = await run_turn(session, "try it again")
+    finally:
+        await session.agent.close()
+    first_results = team_results(first)
+    assert first_results[0].startswith("Team result: FAIL")
+    assert "already run in this request" in first_results[1]
+    assert refused_at == 5  # lead, developer, tester, lead (refused), lead: no second run
+    assert team_results(second)[0].startswith("Team result: PASS")  # a new request may run it
+
+
+async def test_the_team_command_asks_for_one_run_without_planning_first(
+    mock_server, project: Path
+) -> None:
+    server = mock_server([])
+    session = make_session(server.base_url, project, settings=TEAM_ON)
+    try:
+        sent = (await run_command(session, "/team add an export button")).send
+    finally:
+        await session.agent.close()
+    assert sent is not None and sent.endswith("add an export button")
+    assert "without planning" in sent and "do not run the team again" in sent

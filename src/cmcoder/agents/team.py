@@ -77,10 +77,14 @@ after your change and fix what breaks. Report every file you changed (path and
 what changed), how you checked it, and anything left open."""
 
 TESTER_PROMPT = """\
-You are the team's tester. Write tests for each acceptance criterion you are
-given, then run the project's whole test suite. Never change product code,
-only test files. Report each failure with the test's name, the exact error and
-the file and line it points to."""
+You are the team's tester. First find how this project runs its tests (CMCODER.md,
+the README, a test project or script) and look at nothing else for it. If there is
+no test project or no way to run tests here, say so at once with the verdict
+"untested" and the reason: do not keep searching. Otherwise write tests for each
+acceptance criterion you are given, then run the project's whole test suite. Never
+change product code, only test files. You have about 40 tool calls: near that,
+stop and give your verdict with what you have. Report each failure with the test's
+name, the exact error and the file and line it points to."""
 
 DEVOPS_PROMPT = """\
 You are the team's DevOps engineer. Change only build, CI and deployment files
@@ -129,9 +133,12 @@ class Failure(BaseModel):
 
 
 class TestReport(BaseModel):
-    """Your test result: pass, or fail with each failure."""
+    """Your test result: pass, fail with each failure, or untested."""
 
-    verdict: Literal["pass", "fail"]
+    verdict: Literal["pass", "fail", "untested"] = Field(
+        description="pass or fail when you ran tests; untested when you could not run any "
+        "(no test project, no way to run it): say why in the summary"
+    )
     summary: str = Field(description="One or two sentences: what you tested and the result")
     failures: list[Failure] = Field(default_factory=list, description="For fail: each failure")
 
@@ -269,8 +276,12 @@ async def tester(state: TeamState, runtime: Runtime[TeamContext]) -> dict[str, A
     )
     report = result.structured
     if not isinstance(report, TestReport):
+        # Usually its step limit. That is not a failing test: sending the developer back to
+        # "fix" nothing, round after round, is how a request runs for hours.
         report = TestReport(
-            verdict="fail", summary="The tester gave no verdict: " + result.report[:500]
+            verdict="untested",
+            summary="The tester ended without a verdict (usually its step limit): "
+            + result.report[:500],
         )
     return {"test": report}
 
@@ -294,6 +305,8 @@ def route_start(state: TeamState) -> Literal["pm", "developer"]:
 
 def route_after_test(state: TeamState) -> Literal["developer", "devops", "__end__"]:
     test = state.get("test")
+    if test is not None and test.verdict == "untested":
+        return "__end__"  # nothing a developer can fix: the person decides
     if test is None or test.verdict == "fail":
         return "developer" if state.get("round", 0) < state.get("max_rounds", 3) else "__end__"
     stories = state.get("stories")
@@ -327,6 +340,8 @@ def team_summary(state: TeamState) -> str:
         outcome = "The team stopped before testing."
     elif test.verdict == "pass":
         outcome = f"PASS after {rounds} developer round(s)."
+    elif test.verdict == "untested":
+        outcome = "UNTESTED: the tester could not run the tests, so the change is not verified."
     else:
         outcome = f"FAIL: the tests still fail after {rounds} of {limit} developer rounds."
     parts = [f"Team result: {outcome}"]
@@ -343,6 +358,11 @@ def team_summary(state: TeamState) -> str:
         parts.append(f"## Tester\n{test.summary}" + (f"\n{failures}" if failures else ""))
     if devops_report := state.get("devops"):
         parts.append(f"## DevOps\n{_clip(devops_report)}")
+    if test is None or test.verdict != "pass":
+        parts.append(
+            "The team has run once for this request. Tell the user what is left; "
+            "do not start the team again."
+        )
     return "\n\n".join(parts)
 
 
@@ -363,12 +383,27 @@ Run the whole team on a feature: a PM writes stories and acceptance criteria,
 a developer implements them, a tester tests them (failures go back to the
 developer, up to {rounds} rounds) and DevOps updates build and CI when needed.
 Use it when the user asks for a feature to be built by the team (or /team).
-It returns the team's result: summarise it for the user (stories, files
-changed, test result, anything open)."""
+Call it once, straight away, with the user's request as given: the PM does the
+planning, so don't plan, explore or write a todo list first. It runs at most once
+per request: if it reports FAIL or UNTESTED, tell the user what is left instead of
+starting it again. It returns the team's result: summarise it for the user
+(stories, files changed, test result, anything open)."""
+
+TEAM_ALREADY_RAN = (
+    "The team has already run in this request, and it runs once per request. Do not start it "
+    "again. Tell the user what it reported (or that it could not finish) and what is still "
+    "open, and let them decide what happens next."
+)
 
 
 def build_team_tool(rt: SubagentRuntime, max_rounds: int) -> BaseTool:
     async def team(feature: str, runtime: ToolRuntime, stories_file: str = "") -> str:
+        # One run per user request. LangGraph re-runs this tool, with the same call id, after a
+        # permission prompt inside the team: that is the same run, not a second one.
+        turn, call_id = getattr(runtime.context, "turn", 0), runtime.tool_call_id or "team"
+        if rt.team_call is not None and rt.team_call[0] == turn and rt.team_call[1] != call_id:
+            return TEAM_ALREADY_RAN
+        rt.team_call = (turn, call_id)
         final = await TEAM_GRAPH.ainvoke(
             {
                 "feature": feature,

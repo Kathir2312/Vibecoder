@@ -493,8 +493,11 @@ async def run_command(
         if not arg:
             return CommandResult(["Usage: /team <the feature to build>"])
         return CommandResult(
-            send="Run the Team tool for this feature request (pass it on complete, "
-            f"as `feature`), then summarise the team's result for me:\n\n{arg}"
+            send="Run the Team tool now, once, for this feature request: pass it on complete, "
+            "as `feature`, without planning, exploring or making a todo list first (the team's "
+            "PM does the planning). Then summarise the team's result for me. If it reports FAIL "
+            "or UNTESTED, tell me what is left and do not run the team again in this request."
+            f"\n\n{arg}"
         )
     if name == "todos":
         todos = await session.todos()

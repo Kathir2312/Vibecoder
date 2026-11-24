@@ -395,6 +395,9 @@ class SubagentRuntime:
     sandbox: Any = None  # the main agent's Bash sandbox (shared; its own shell)
     code_index: Any = None  # the project's code index (rag/), for CodeSearch
     runs: dict[str, SubagentRun] = field(default_factory=dict)
+    # The Team tool's run in this request: (the user turn, the tool call id). A second call in
+    # the same turn is refused (agents/team.py).
+    team_call: tuple[int, str] | None = None
     # A paused subagent's tool context (what it has read, its shell), by call id:
     # LangGraph re-runs the tool on resume and the subagent must continue with it.
     contexts: dict[str, ToolContext] = field(default_factory=dict)

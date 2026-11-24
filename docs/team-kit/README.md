@@ -117,6 +117,8 @@ To work in the team's voice for the whole conversation, pick **tech-lead** in th
 
 `/team <feature>` is a fixed pipeline (PM, developer, tester with a retry loop, DevOps). It uses the agents named `pm`, `developer`, `tester` and `devops` if the project has them, so this kit's versions take over those four roles with no setting. The other seven only work through the tech lead.
 
+`/team` runs at most once per request. A tester that can't run any test (no test project, or it runs out of steps) ends the run as **UNTESTED** and says so, instead of sending the developer back to fix nothing; a real failing test still goes back to the developer, up to `team.maxRounds` times.
+
 ## Settings worth adding
 
 In the project's `.cmcoder/settings.json` (it takes effect once the project is trusted):
