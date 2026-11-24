@@ -77,7 +77,7 @@ from pydantic import BaseModel, Field
 from ..config.settings import Settings, claude_dir, config_dir, find_project_root
 from ..core.commands import MAX_FILE_CHARS, parse_file, split_tools
 from ..core.hooks import HookRunner
-from ..core.permissions import PermissionPolicy
+from ..core.permissions import FILE_EDIT_TOOLS, PermissionPolicy
 from ..core.prompt import build_subagent_prompt, load_memory_files
 from ..middleware.permission import STOP_KEY
 from ..models.chat import ModelBundle, build_chat_model
@@ -305,6 +305,7 @@ class SubagentRun:
     state: ev.SubagentState = "queued"
     steps: int = 0
     tool_uses: int = 0
+    edits: int = 0  # Write and Edit calls (a command can change files too: not counted)
     tokens: int = 0
     activity: str = ""
     report: str = ""
@@ -577,6 +578,7 @@ class SubagentResult:
     structured: Any = None  # with `response_format`: the parsed structured output
     stopped: bool = False  # the user denied one of its tool calls (no feedback)
     user_stopped: bool = False  # the user pressed Stop on this subagent (the turn goes on)
+    edits: int = 0  # how many Write and Edit calls it made (a team round that made none stops)
 
 
 async def run_subagent(
@@ -698,7 +700,9 @@ async def run_agent(
     )
     run.report, run.activity, run.ended_at = report, "", time.monotonic()
     _emit(writer, run.status())
-    return SubagentResult(report, structured, stopped, user_stopped=run.stop_requested)
+    return SubagentResult(
+        report, structured, stopped, user_stopped=run.stop_requested, edits=run.edits
+    )
 
 
 async def _release(rt: SubagentRuntime, call_id: str) -> None:
@@ -725,6 +729,7 @@ def _follow(writer: Writer, rt: SubagentRuntime, run: SubagentRun, msg: Any, rep
             run.steps += 1
             for c in msg.tool_calls:
                 run.tool_uses += 1
+                run.edits += c["name"] in FILE_EDIT_TOOLS
                 run.activity = _label(rt, c)
                 _emit(
                     writer,

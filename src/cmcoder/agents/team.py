@@ -68,13 +68,19 @@ REPORT_CHARS = 6_000  # of one role's report passed on to the next role
 PM_PROMPT = """\
 You are the team's product manager. Read the relevant code to understand what
 exists. Write docs/stories/<feature>.md with: goal, user stories, acceptance
-criteria (each one testable), out of scope, open questions. Do not change code."""
+criteria (each one testable), out of scope, open questions, and "Where in the
+code": the files and functions this feature touches (path and name), from your
+reading, so the developer and the tester start there instead of searching the
+whole project. Do not change code."""
 
 DEVELOPER_PROMPT = """\
-You are the team's developer. Implement exactly what the task describes; keep
-changes minimal and in the existing style of the code. Build or run the project
-after your change and fix what breaks. Report every file you changed (path and
-what changed), how you checked it, and anything left open."""
+You are the team's developer. Read the stories file first and start from the files
+it points to: do not explore the whole project. Implement exactly what the task
+describes; keep changes minimal and in the existing style of the code. Make your
+first edit within about 30 tool calls: if you cannot find where the change belongs
+by then, stop and say what blocks you. Build or run the project after your change
+and fix what breaks. Report every file you changed (path and what changed), how
+you checked it, and anything left open."""
 
 TESTER_PROMPT = """\
 You are the team's tester. First find how this project runs its tests (CMCODER.md,
@@ -126,6 +132,18 @@ class Stories(BaseModel):
     )
 
 
+class DeveloperReport(BaseModel):
+    """What you did."""
+
+    summary: str = Field(description="What you changed and how you checked it")
+    files_changed: list[str] = Field(
+        default_factory=list, description="Every file you changed or created (paths)"
+    )
+    blocked: str = Field(
+        "", description="Empty, unless you could not make the change: say what stopped you"
+    )
+
+
 class Failure(BaseModel):
     test: str = Field(description="The failing test (or check)")
     error: str = Field(description="The exact error output, shortened")
@@ -155,6 +173,7 @@ class TeamState(TypedDict):
     changes: NotRequired[Annotated[list[str], operator.add]]  # each developer round's report
     test: NotRequired[TestReport | None]
     devops: NotRequired[str]
+    stopped: NotRequired[str]  # why the team ended before testing (no change, or blocked)
 
 
 @dataclass
@@ -258,8 +277,26 @@ async def developer(state: TeamState, runtime: Runtime[TeamContext]) -> dict[str
     else:
         task += "Implement it."
         description = "implement the feature"
-    result = await run_role(runtime.context, "developer", f"developer-{round_}", description, task)
-    return {"round": round_, "changes": [result.report or "(no report)"]}
+    result = await run_role(
+        runtime.context,
+        "developer",
+        f"developer-{round_}",
+        description,
+        task,
+        DeveloperReport,
+    )
+    report = result.structured
+    if isinstance(report, DeveloperReport):
+        said, files, blocked = report.summary, report.files_changed, report.blocked.strip()
+    else:  # no report (usually its step limit): what it wrote last, and its edits as proof
+        said, files, blocked = result.report, [], ""
+    out: dict[str, Any] = {"round": round_, "changes": [said or "(no report)"]}
+    # Testing code nobody changed, and "fixing" it again, is how a request runs for hours.
+    if blocked:
+        out["stopped"] = f"the developer could not make the change: {blocked}"
+    elif not files and result.edits == 0:
+        out["stopped"] = "the developer changed no files"
+    return out
 
 
 async def tester(state: TeamState, runtime: Runtime[TeamContext]) -> dict[str, Any]:
@@ -303,6 +340,10 @@ def route_start(state: TeamState) -> Literal["pm", "developer"]:
     return "developer" if state.get("stories_file") else "pm"
 
 
+def route_after_developer(state: TeamState) -> Literal["tester", "__end__"]:
+    return "__end__" if state.get("stopped") else "tester"
+
+
 def route_after_test(state: TeamState) -> Literal["developer", "devops", "__end__"]:
     test = state.get("test")
     if test is not None and test.verdict == "untested":
@@ -321,7 +362,7 @@ def build_team_graph() -> Any:
     graph.add_node("devops", devops)
     graph.add_conditional_edges(START, route_start)
     graph.add_edge("pm", "developer")
-    graph.add_edge("developer", "tester")
+    graph.add_conditional_edges("developer", route_after_developer)
     graph.add_conditional_edges("tester", route_after_test)
     graph.add_edge("devops", END)
     # No checkpointer: inside the Team tool it uses the main graph's.
@@ -336,7 +377,9 @@ def team_summary(state: TeamState) -> str:
     test = state.get("test")
     stories = state.get("stories")
     rounds, limit = state.get("round", 0), state.get("max_rounds", 3)
-    if test is None:
+    if stopped := state.get("stopped"):
+        outcome = f"STOPPED: {stopped}. Nothing was tested."
+    elif test is None:
         outcome = "The team stopped before testing."
     elif test.verdict == "pass":
         outcome = f"PASS after {rounds} developer round(s)."

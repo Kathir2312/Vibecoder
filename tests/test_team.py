@@ -121,7 +121,7 @@ async def test_out_of_rounds_stops_with_the_failure(mock_server, project: Path) 
     server = mock_server(
         [
             call("Team", feature="f", stories_file="docs/stories/f.md"),  # skips the PM
-            {"content": "Did it."},  # developer
+            call("DeveloperReport", summary="Did it.", files_changed=["f.py"]),  # developer
             call("TestReport", verdict="fail", summary="Broken.", failures=[]),  # tester
             {"content": "The team couldn't finish."},  # the lead (no devops, no retry)
         ]
@@ -178,7 +178,7 @@ async def test_a_tester_that_gives_no_verdict_ends_the_loop_untested(
     server = mock_server(
         [
             team_call("t1", feature="f", stories_file="docs/stories/f.md"),
-            {"content": "Did it."},  # developer
+            call("DeveloperReport", summary="Did it.", files_changed=["f.py"]),  # developer
             {"content": "I looked around and ran out of steps."},  # tester: no TestReport
             {"content": "The change is untested."},  # the lead
         ]
@@ -198,7 +198,7 @@ async def test_the_tester_can_say_it_has_nothing_to_run(mock_server, project: Pa
     server = mock_server(
         [
             team_call("t1", feature="f", stories_file="docs/stories/f.md"),
-            {"content": "Did it."},
+            call("DeveloperReport", summary="Did it.", files_changed=["f.py"]),
             call("TestReport", verdict="untested", summary="There is no test project."),
             {"content": "No tests exist."},
         ]
@@ -221,7 +221,7 @@ async def test_the_team_runs_once_per_request_and_again_in_the_next(
     server = mock_server(
         [
             team_call("t1", feature="f", stories_file="docs/stories/f.md"),
-            {"content": "Did it."},  # developer
+            call("DeveloperReport", summary="Did it.", files_changed=["f.py"]),  # developer
             call("TestReport", verdict="fail", summary="Broken.", failures=[]),  # tester
             team_call(
                 "t2", feature="f, once more", stories_file="docs/stories/f.md"
@@ -229,7 +229,7 @@ async def test_the_team_runs_once_per_request_and_again_in_the_next(
             {"content": "It still fails; here is what is left."},  # the lead, after the refusal
             # the next request
             team_call("t3", feature="f, as discussed", stories_file="docs/stories/f.md"),
-            {"content": "Fixed it."},  # developer
+            call("DeveloperReport", summary="Fixed it.", files_changed=["f.py"]),  # developer
             call("TestReport", verdict="pass", summary="All green."),  # tester
             {"content": "Done."},  # the lead
         ]
@@ -261,3 +261,72 @@ async def test_the_team_command_asks_for_one_run_without_planning_first(
         await session.agent.close()
     assert sent is not None and sent.endswith("add an export button")
     assert "without planning" in sent and "do not run the team again" in sent
+
+
+async def test_a_developer_that_changes_nothing_stops_the_team(mock_server, project: Path) -> None:
+    """The screenshot's other loop: a developer that explored for 71 steps and edited nothing,
+    a tester that failed the unchanged code, and the developer sent back again."""
+    server = mock_server(
+        [
+            team_call("t1", feature="f", stories_file="docs/stories/f.md"),
+            call("Read", file_path="docs/stories/f.md"),  # the developer only looks around
+            {"content": "I read the code; I am not sure where the change belongs."},
+            {"content": "The developer changed nothing."},  # the lead
+        ]
+    )
+    session = make_session(server.base_url, project, settings=TEAM_ON)
+    try:
+        events = await run_turn(session, "build f with the team")
+    finally:
+        await session.agent.close()
+    (result,) = team_results(events)
+    assert result.startswith("Team result: STOPPED: the developer changed no files.")
+    assert "Nothing was tested." in result and "do not start the team again" in result
+    assert len(server.requests) == 4  # lead, developer (two calls), lead: no tester
+
+
+async def test_a_blocked_developer_says_why_and_stops_the_team(mock_server, project: Path) -> None:
+    server = mock_server(
+        [
+            team_call("t1", feature="f", stories_file="docs/stories/f.md"),
+            call(
+                "DeveloperReport", summary="Looked.", files_changed=[], blocked="no database here"
+            ),
+            {"content": "Blocked."},
+        ]
+    )
+    session = make_session(server.base_url, project, settings=TEAM_ON)
+    try:
+        events = await run_turn(session, "build f with the team")
+    finally:
+        await session.agent.close()
+    (result,) = team_results(events)
+    assert "STOPPED: the developer could not make the change: no database here" in result
+    assert len(server.requests) == 3
+
+
+async def test_edits_count_even_when_the_developer_ends_without_a_report(
+    mock_server, project: Path
+) -> None:
+    """A developer out of steps after real edits still gets its work tested."""
+    server = mock_server(
+        [
+            team_call("t1", feature="f", stories_file="docs/stories/f.md"),
+            call("Write", file_path="f.py", content="x = 1\n"),
+            {"content": "Wrote f.py."},  # no DeveloperReport
+            call("TestReport", verdict="pass", summary="Fine."),
+            {"content": "Done."},
+        ]
+    )
+
+    async def ask(req: ev.PermissionRequest) -> dict:
+        return {"allow": True}
+
+    session = make_session(server.base_url, project, ask=ask, settings=TEAM_ON)
+    try:
+        events = await run_turn(session, "build f with the team")
+    finally:
+        await session.agent.close()
+    (result,) = team_results(events)
+    assert result.startswith("Team result: PASS")
+    assert (project / "f.py").exists()
